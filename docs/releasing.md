@@ -20,8 +20,8 @@
 4. Crea y publica un tag con la versión de Desktop:
 
    ```bash
-   git tag v1.1.0
-   git push origin v1.1.0
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
 
 Los workflows publican EXE/MSI en Windows y DMG en macOS. La ejecución manual
