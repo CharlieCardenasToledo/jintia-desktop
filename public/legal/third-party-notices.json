@@ -1,11 +1,10 @@
 {
   "schemaVersion": 1,
   "generatedFrom": [
-    "app/desktop/package-lock.json",
-    "app/desktop/src-tauri/Cargo.lock",
-    "app/desktop/src-tauri/Cargo.toml",
-    "skill/templates/elegantbook-clasico/elegantbook.cls",
-    "skill/templates/kaohandt-marginal/kaohandt.cls"
+    "package-lock.json",
+    "src-tauri/Cargo.lock",
+    "src-tauri/Cargo.toml",
+    "skill.lock.json"
   ],
   "packages": [
     {
@@ -702,6 +701,12 @@
       "ecosystem": "cargo",
       "name": "tauri-plugin-opener",
       "version": "2.5.4",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "toml_edit",
+      "version": "0.19.15",
       "license": "MIT OR Apache-2.0"
     },
     {

@@ -1,70 +1,33 @@
-# Publicar una versión
+# Publicar Jintia Desktop
 
-## Preparación
+1. Actualiza `CHANGELOG.md` y las tres versiones de Desktop.
+2. Si corresponde, sincroniza una release oficial de la skill:
 
-1. Mueve las entradas relevantes de `Sin publicar` a la nueva versión.
-2. Sincroniza la versión pública de la skill, el plugin y la aplicación cuando
-   corresponda.
-3. Ejecuta desde `app/desktop/`:
+   ```bash
+   npm run skill:sync -- --tag=vX.Y.Z
+   ```
+
+3. Ejecuta:
 
    ```bash
    npm ci
+   npm run skill:verify
    npm test
    npm run build
    cargo test --manifest-path src-tauri/Cargo.toml
    ```
 
-4. Valida `skill/SKILL.md` y los esquemas JSON.
-5. Comprueba los enlaces y las capturas del README.
+4. Crea y publica un tag con la versión de Desktop:
 
-## Publicación
+   ```bash
+   git tag v1.1.0
+   git push origin v1.1.0
+   ```
 
-Los workflows aceptan tags `v*`:
+Los workflows publican EXE/MSI en Windows y DMG en macOS. La ejecución manual
+solo conserva artifacts de Actions; GitHub Release requiere un tag.
 
-```bash
-git tag v10.5.0
-git push origin v10.5.0
-```
-
-- Windows publica NSIS `.exe` y MSI.
-- macOS publica un DMG Apple Silicon.
-
-Una ejecución manual mediante `workflow_dispatch` crea artifacts de Actions,
-pero los pasos de GitHub Release solo se ejecutan para tags.
-
-## Firma de Windows con SignPath
-
-Mientras `SIGNPATH_ENABLED` no sea `true`, el workflow identifica y publica los
-instaladores como no firmados. No actives la variable antes de que SignPath
-apruebe el proyecto y configure el artifact.
-
-Después de la aprobación:
-
-1. Instala la GitHub App de SignPath con acceso a este repositorio.
-2. Crea estas variables de Actions:
-
-   - `SIGNPATH_ENABLED=true`
-   - `SIGNPATH_ORGANIZATION_ID`
-   - `SIGNPATH_PROJECT_SLUG`
-   - `SIGNPATH_SIGNING_POLICY_SLUG`
-
-3. Crea el secreto `SIGNPATH_API_TOKEN`.
-4. Configura en SignPath el EXE y MSI, sus metadatos y la aprobación manual.
-5. Ejecuta manualmente el workflow antes de crear un tag.
-6. Aprueba la solicitud en SignPath.
-7. Confirma que el paso `Verify signed artifacts` devuelve `Status: Valid`.
-
-El workflow conserva los artifacts sin firmar durante siete días para que
-SignPath pueda verificar su origen. Cuando la integración está activa, solo
-los archivos devueltos y verificados desde SignPath se publican en la release.
-
-## Después de publicar
-
-1. Comprueba que ambos jobs terminaron correctamente.
-2. Descarga e instala cada artifact.
-3. Verifica que los enlaces directos del README coincidan con los nombres
-   publicados.
-4. Añade notas de limitaciones conocidas.
-
-El DMG actual no está firmado ni notarizado. No anuncies firma de código hasta
-que el workflow la implemente y se haya verificado en un artifact publicado.
+Windows se publica sin firma mientras `SIGNPATH_ENABLED` no sea `true`. No
+actives esa variable hasta completar la configuración descrita en
+`CODE_SIGNING_POLICY.md`. El DMG tampoco debe anunciarse como firmado o
+notarizado hasta que el pipeline lo verifique.

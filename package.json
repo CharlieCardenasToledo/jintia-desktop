@@ -1,19 +1,22 @@
 {
   "name": "jintia-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Aplicación de escritorio de Jintia para configurar el entorno, organizar cursos e instalar Jintia Skill",
   "author": "Charlie Cárdenas Toledo",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/CharlieCardenasToledo/instructional-designer-skill.git",
-    "directory": "app/desktop"
+    "url": "git+https://github.com/CharlieCardenasToledo/jintia-desktop.git"
   },
   "scripts": {
     "dev": "vite",
     "dev:web": "vite --mode mock",
     "build": "vite build",
+    "skill:sync": "node scripts/sync-skill-release.mjs",
+    "skill:verify": "node scripts/check-skill-release.mjs",
+    "licenses:generate": "node scripts/generate-third-party-notices.mjs",
+    "licenses:check": "node scripts/generate-third-party-notices.mjs --check",
     "test": "node --test tests/static-contracts.test.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
@@ -35,6 +38,6 @@
     "vite": "8.1.5"
   },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=22.13.0"
   }
 }

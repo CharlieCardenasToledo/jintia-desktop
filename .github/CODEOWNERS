@@ -4,6 +4,7 @@
 /PRIVACY.md @CharlieCardenasToledo
 /SECURITY.md @CharlieCardenasToledo
 
-# Application and bundled skill
-/app/desktop/ @CharlieCardenasToledo
-/skill/ @CharlieCardenasToledo
+# Application and locked skill payload
+/src/ @CharlieCardenasToledo
+/src-tauri/ @CharlieCardenasToledo
+/skill.lock.json @CharlieCardenasToledo

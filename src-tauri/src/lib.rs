@@ -9,6 +9,7 @@ mod palette;
 mod paths;
 mod payload;
 mod pdfs;
+mod release;
 mod toolchain;
 
 use models::{
@@ -27,9 +28,10 @@ async fn check_dependencies() -> Vec<DependencyStatus> {
 
 #[tauri::command]
 async fn get_visual_install_profiles() -> serde_json::Value {
-    serde_json::from_str(include_str!(
-        "../../../../skill/config/visual-install-profiles.json"
-    ))
+    serde_json::from_str(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/jintia-skill/config/visual-install-profiles.json"
+    )))
     .unwrap_or_else(|_| serde_json::json!({ "version": 1, "profiles": [] }))
 }
 

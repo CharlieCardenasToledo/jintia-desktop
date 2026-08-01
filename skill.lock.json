@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "repository": "CharlieCardenasToledo/instructional-designer-skill",
+  "tag": "v10.9.1",
+  "skillVersion": "10.9.1",
+  "minimumDesktopVersion": "1.1.0",
+  "manifest": {
+    "file": "jintia-release-manifest.json",
+    "sha256": "2a27677df031e96f763cf2f1b950db98e8db703309c3ef164b6a0fe115999b6d"
+  },
+  "mcp": {
+    "package": "@charlie.act7/gemini-notebook-mcp",
+    "version": "2.3.3",
+    "node": ">=22.13.0",
+    "npmIntegrity": "sha512-+USWTG9F07fWz6qxamEXk16Btt6ME/KJxihZJPCB5ODVoNRnxx9cPOAyujcHF4bHvzDRkLrhKtvKBzbs+nzjeA=="
+  },
+  "artifacts": {
+    "skill": {
+      "file": "jintia-skill-10.9.1.zip",
+      "sha256": "301921d6baaff7d0d8eb2a8500138958acea3cb5c8d880c2642eb952d424aab4",
+      "bytes": 161812,
+      "installRoot": "jintia-skill"
+    },
+    "openaiPlugin": {
+      "file": "jintia-openai-plugin-10.9.1.zip",
+      "sha256": "f343a152caccfccfd6beb1b5e104f8cfebaea9e10ef938323d82354f4f497607",
+      "bytes": 166024,
+      "installRoot": "jintia"
+    }
+  }
+}

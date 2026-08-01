@@ -3,23 +3,23 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
-const repositoryRoot = new URL('../../../', import.meta.url);
 
-test('Jintia es la identidad canónica en la aplicación, la skill y los instaladores', async () => {
-  const [main, onboarding, html, tauriText, appPackageText, skill, pluginText, paths, payload] = await Promise.all([
+test('Jintia es la identidad canónica en la aplicación y los instaladores', async () => {
+  const [main, onboarding, html, tauriText, appPackageText, brandText, lockText, paths, payload] = await Promise.all([
     readFile(new URL('src/main.js', root), 'utf8'),
     readFile(new URL('src/onboarding.js', root), 'utf8'),
     readFile(new URL('index.html', root), 'utf8'),
     readFile(new URL('src-tauri/tauri.conf.json', root), 'utf8'),
     readFile(new URL('package.json', root), 'utf8'),
-    readFile(new URL('skill/SKILL.md', repositoryRoot), 'utf8'),
-    readFile(new URL('skill/.claude-plugin/plugin.json', repositoryRoot), 'utf8'),
+    readFile(new URL('src/brand.json', root), 'utf8'),
+    readFile(new URL('skill.lock.json', root), 'utf8'),
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
   ]);
   const tauri = JSON.parse(tauriText);
   const appPackage = JSON.parse(appPackageText);
-  const plugin = JSON.parse(pluginText);
+  const brand = JSON.parse(brandText);
+  const lock = JSON.parse(lockText);
 
   assert.match(main, />Jintia</);
   assert.match(main, /Diseña el camino del aprendizaje/);
@@ -29,8 +29,8 @@ test('Jintia es la identidad canónica en la aplicación, la skill y los instala
   assert.equal(tauri.productName, 'Jintia Desktop');
   assert.equal(tauri.identifier, 'com.charliecardenas.jintia');
   assert.equal(appPackage.name, 'jintia-desktop');
-  assert.match(skill, /^name:\s*jintia-skill$/m);
-  assert.equal(plugin.name, 'jintia-skill');
+  assert.equal(brand.brandName, 'Jintia');
+  assert.equal(lock.skillVersion, '10.9.1');
   assert.match(paths, /\.join\("jintia-skill"\)/);
   assert.match(paths, /legacy_skill_dir/);
   assert.match(payload, /SKILL_VERSION/);
@@ -39,25 +39,27 @@ test('Jintia es la identidad canónica en la aplicación, la skill y los instala
 });
 
 test('la arquitectura separa la app de escritorio y el paquete instalable de la skill', async () => {
-  const [payload, config, windowsWorkflow, macosWorkflow] = await Promise.all([
-    readFile(new URL('app/desktop/src-tauri/src/payload.rs', repositoryRoot), 'utf8'),
-    readFile(new URL('app/desktop/src-tauri/src/config.rs', repositoryRoot), 'utf8'),
-    readFile(new URL('.github/workflows/release-windows.yml', repositoryRoot), 'utf8'),
-    readFile(new URL('.github/workflows/release-macos.yml', repositoryRoot), 'utf8'),
+  const [payload, config, build, lockText, windowsWorkflow, macosWorkflow] = await Promise.all([
+    readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/build.rs', root), 'utf8'),
+    readFile(new URL('skill.lock.json', root), 'utf8'),
+    readFile(new URL('.github/workflows/release-windows.yml', root), 'utf8'),
+    readFile(new URL('.github/workflows/release-macos.yml', root), 'utf8'),
   ]);
+  const lock = JSON.parse(lockText);
 
-  assert.match(payload, /skill\/SKILL\.md/);
-  assert.match(payload, /skill\/requirements\.txt/);
-  assert.match(payload, /skill\/references/);
-  assert.match(payload, /skill\/scripts/);
-  assert.match(payload, /skill\/templates/);
-  assert.match(payload, /skill\/config/);
-  assert.match(config, /skill\/templates/);
-  assert.match(windowsWorkflow, /working-directory:\s*app\/desktop/);
-  assert.match(macosWorkflow, /working-directory:\s*app\/desktop/);
+  assert.equal(lock.repository, 'CharlieCardenasToledo/instructional-designer-skill');
+  assert.match(lock.artifacts.skill.sha256, /^[a-f0-9]{64}$/);
+  assert.match(lock.artifacts.openaiPlugin.sha256, /^[a-f0-9]{64}$/);
+  assert.match(payload, /\$OUT_DIR\/jintia-skill/);
+  assert.match(config, /\$OUT_DIR\/jintia-skill\/templates/);
+  assert.match(build, /skill\.lock\.json/);
+  assert.match(build, /fn verify/);
+  assert.match(build, /enclosed_name/);
 
-  for (const source of [payload, config, windowsWorkflow, macosWorkflow]) {
-    assert.doesNotMatch(source, /desktop-manager/);
+  for (const source of [payload, config, build, windowsWorkflow, macosWorkflow]) {
+    assert.doesNotMatch(source, /\.\.\/\.\.\/\.\.\/skill|app\/desktop/);
   }
 });
 
@@ -69,7 +71,7 @@ test('el modo mock no anuncia plantillas que el backend no incorpora', async () 
 
 test('la firma SignPath solo publica artifacts verificados cuando está activada', async () => {
   const workflow = await readFile(
-    new URL('.github/workflows/release-windows.yml', repositoryRoot),
+    new URL('.github/workflows/release-windows.yml', root),
     'utf8',
   );
   assert.match(workflow, /id:\s*upload-unsigned-artifact/);
@@ -82,17 +84,8 @@ test('la firma SignPath solo publica artifacts verificados cuando está activada
   assert.match(workflow, /Windows artifacts in this release are not digitally signed/);
 });
 
-test('la configuración institucional generada coincide con el esquema público', async () => {
-  const [configSource, schemaText, exampleText] = await Promise.all([
-    readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
-    readFile(new URL('skill/config/institution.schema.json', repositoryRoot), 'utf8'),
-    readFile(new URL('skill/config/institution.example.json', repositoryRoot), 'utf8'),
-  ]);
-  const schema = JSON.parse(schemaText);
-  const example = JSON.parse(exampleText);
-  assert.ok(schema.properties.institution.properties.website);
-  assert.ok(schema.properties.institution.required.includes('website'));
-  assert.equal(example.branding.logoPath, '');
+test('la configuración institucional generada conserva el contrato consumido por la skill', async () => {
+  const configSource = await readFile(new URL('src-tauri/src/config.rs', root), 'utf8');
   assert.match(configSource, /"website": clean\(&config\.website\)/);
   assert.match(configSource, /"logoPath": ""/);
   assert.doesNotMatch(configSource, /"includeGradedActivities": config\.include_graded_activities/);
@@ -343,18 +336,19 @@ test('Entorno detecta motores visuales opcionales sin instalarlos silenciosament
   assert.doesNotMatch(course, /"Graphviz"\s*=>|"Mermaid CLI"\s*=>|"PlantUML"\s*=>/);
 });
 
-test('Entorno ofrece perfiles visuales versionados sin instalación automática', async () => {
-  const [api, settings, lib, profilesText] = await Promise.all([
+test('Entorno ofrece perfiles visuales desde la release bloqueada sin instalación automática', async () => {
+  const [api, settings, lib, lockText] = await Promise.all([
     readFile(new URL('src/api.js', root), 'utf8'),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
     readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
-    readFile(new URL('../../skill/config/visual-install-profiles.json', root), 'utf8'),
+    readFile(new URL('skill.lock.json', root), 'utf8'),
   ]);
-  const profiles = JSON.parse(profilesText);
-  assert.deepEqual(profiles.profiles.map(profile => profile.id), ['minimum', 'core', 'full']);
-  assert.ok(profiles.profiles.every(profile => profile.tools.every(tool => tool.version)));
+  const lock = JSON.parse(lockText);
+  assert.equal(lock.schemaVersion, 1);
+  assert.equal(lock.minimumDesktopVersion, '1.1.0');
   assert.match(api, /getVisualInstallProfiles/);
   assert.match(lib, /get_visual_install_profiles/);
+  assert.match(lib, /OUT_DIR[\s\S]*visual-install-profiles\.json/);
   assert.match(settings, /jintia\.visualProfile/);
   assert.match(settings, /Capacidades deshabilitadas/);
 });
@@ -662,44 +656,6 @@ test('onboarding y Plantillas comparten una guía semanal de demostración reali
   assert.match(course, /\\begin\{equation\}/);
   assert.match(course, /\\marginconcept\{Criterio\}/);
   assert.match(course, /Autoevaluación/);
-  assert.match(await readFile(new URL('../../skill/templates/kaohandt-marginal/preamble.tex', root), 'utf8'), /\\usepackage\{tikz\}/);
-});
-
-test('las notas marginales de Kaohandt no insertan párrafos dentro de marginnote', async () => {
-  const preamble = await readFile(new URL('../../skill/templates/kaohandt-marginal/preamble.tex', root), 'utf8');
-  assert.match(preamble, /\\newcommand\{\\marginconcept\}\[2\]\{\\marginnote\{[^\n]+\}\}/);
-  assert.doesNotMatch(preamble, /\\marginnote\{[^\n]*\\par/);
-  assert.doesNotMatch(preamble, /\\marginnote\{[^\n]*\\\\/);
-  assert.match(preamble, /\\newenvironment\{guidetable\}/);
-  assert.match(preamble, /\\newenvironment\{guidefigure\}/);
-  assert.doesNotMatch(preamble, /\\newenvironment\{guidetable\}[^\n]*\\begin\{table\}/);
-});
-
-test('la skill exige wrappers portables para figuras y tablas en ambas plantillas', async () => {
-  const [skill, figures, latexReference, elegantMeta, kaoMeta, linter] = await Promise.all([
-    readFile(new URL("skill/SKILL.md", repositoryRoot), "utf8"),
-    readFile(new URL("skill/references/figuras-tikz.md", repositoryRoot), "utf8"),
-    readFile(new URL("skill/references/plantilla-latex.md", repositoryRoot), "utf8"),
-    readFile(new URL("skill/templates/elegantbook-clasico/meta.json", repositoryRoot), "utf8"),
-    readFile(new URL("skill/templates/kaohandt-marginal/meta.json", repositoryRoot), "utf8"),
-    readFile(new URL("skill/scripts/latex-linter.js", repositoryRoot), "utf8"),
-  ]);
-  assert.match(skill, /guidefigurecaption/);
-  assert.match(skill, /guidetablecaption/);
-  assert.match(figures, /\\begin\{guidefigure\}/);
-  assert.doesNotMatch(figures, /\\begin\{figure\}/);
-  assert.match(latexReference, /\\begin\{guidetable\}/);
-  assert.equal(JSON.parse(elegantMeta).validation.portableFloatContract, true);
-  assert.equal(JSON.parse(kaoMeta).validation.portableFloatContract, true);
-  assert.match(linter, /validatePortableFloatContract/);
-});
-
-test('el validador comparte MiKTeX nativo con Jintia antes de recurrir a WSL', async () => {
-  const validator = await readFile(new URL("skill/scripts/latex-validator.js", repositoryRoot), "utf8");
-  const nativeBranch = validator.indexOf("commandExists('pdflatex') && commandExists('biber')");
-  const wslBranch = validator.indexOf("run('wsl.exe'");
-  assert.ok(nativeBranch >= 0);
-  assert.ok(wslBranch > nativeBranch);
 });
 
 test('Configuración distingue una skill instalada de una skill actualizada', async () => {
@@ -709,7 +665,7 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
     readFile(new URL("src/onboarding.js", root), "utf8"),
     readFile(new URL("src/pages/settings.js", root), "utf8"),
   ]);
-  assert.match(payload, /pub const SKILL_VERSION/);
+  assert.match(payload, /pub use crate::release::SKILL_VERSION/);
   assert.match(payload, /pub fn skill_is_current/);
   assert.match(models, /skill_current/);
   assert.match(onboarding, /Paquete listo para importar en Claude/);
@@ -717,21 +673,18 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
 });
 
 test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () => {
-  const [manifestText, mcpText, payload, paths, onboarding, api] = await Promise.all([
-    readFile(new URL("openai-plugin/.codex-plugin/plugin.json", repositoryRoot), "utf8"),
-    readFile(new URL("openai-plugin/.mcp.json", repositoryRoot), "utf8"),
+  const [lockText, payload, paths, onboarding, api] = await Promise.all([
+    readFile(new URL("skill.lock.json", root), "utf8"),
     readFile(new URL("src-tauri/src/payload.rs", root), "utf8"),
     readFile(new URL("src-tauri/src/paths.rs", root), "utf8"),
     readFile(new URL("src/onboarding.js", root), "utf8"),
     readFile(new URL("src/api.js", root), "utf8"),
   ]);
-  const manifest = JSON.parse(manifestText);
-  const mcp = JSON.parse(mcpText);
-  assert.equal(manifest.name, "jintia");
-  assert.equal(manifest.version, "10.9.0");
-  assert.equal(manifest.skills, "./skills/");
-  assert.equal(manifest.mcpServers, "./.mcp.json");
-  assert.equal(mcp.notebooklm.command, "npx");
+  const lock = JSON.parse(lockText);
+  assert.equal(lock.skillVersion, "10.9.1");
+  assert.equal(lock.artifacts.openaiPlugin.installRoot, "jintia");
+  assert.equal(lock.mcp.package, "@charlie.act7/gemini-notebook-mcp");
+  assert.equal(lock.mcp.version, "2.3.3");
   assert.match(payload, /materialize_openai_plugin/);
   assert.match(payload, /register_openai_marketplace/);
   assert.match(paths, /\.codex.*plugins.*jintia/s);
@@ -745,18 +698,13 @@ test('el paquete OpenAI incluye los contratos agents de la skill', async () => {
   assert.match(payload, /target\.join\("agents"\)/);
 });
 
-test('los payloads incluyen el runtime autocontenido y metadatos de Codex', async () => {
-  const [payload, openaiYaml] = await Promise.all([
-    readFile(new URL("src-tauri/src/payload.rs", root), "utf8"),
-    readFile(new URL("skill/agents/openai.yaml", repositoryRoot), "utf8"),
-  ]);
+test('los payloads incluyen el runtime autocontenido de la release', async () => {
+  const payload = await readFile(new URL("src-tauri/src/payload.rs", root), "utf8");
   assert.match(payload, /static RUNTIME/);
   assert.match(payload, /SKILL_PACKAGE_JSON/);
   assert.match(payload, /target\.join\("runtime"\)/);
   assert.match(payload, /target\.join\("package\.json"\)/);
   assert.match(payload, /add_dir_to_zip\(&mut zip, &RUNTIME/);
-  assert.match(openaiYaml, /display_name: "Jintia"/);
-  assert.match(openaiYaml, /\$jintia-skill/);
 });
 
 test('Ayuda cubre el flujo real del producto y ofrece FAQ local buscable', async () => {
@@ -887,24 +835,6 @@ test('Desktop comparte la detección de harnesses con la CLI', async () => {
   assert.match(settings, /btn-detect-harnesses/);
   assert.match(settings, /detectAgentHarnesses/);
   assert.match(settings, /data-harness-operation/);
-});
-
-test('la skill expone contratos de delegación especializados sin duplicar el router', async () => {
-  const skill = await readFile(new URL('../../skill/SKILL.md', root), 'utf8');
-  const agents = await Promise.all([
-    readFile(new URL('../../skill/agents/jintia-researcher.md', root), 'utf8'),
-    readFile(new URL('../../skill/agents/jintia-instructional-reviewer.md', root), 'utf8'),
-    readFile(new URL('../../skill/agents/jintia-visual-producer.md', root), 'utf8'),
-    readFile(new URL('../../skill/agents/jintia-finish-reviewer.md', root), 'utf8'),
-  ]);
-  assert.match(skill, /Delegación opcional/);
-  assert.match(skill, /agents\/jintia-researcher\.md/);
-  for (const agent of agents) {
-    assert.match(agent, /## Misión/);
-    assert.match(agent, /## Entrada/);
-    assert.match(agent, /## Salida/);
-    assert.match(agent, /## Límites/);
-  }
 });
 
 test('las asignaturas usan Documentos por defecto y permiten cambiar la ubicación', async () => {

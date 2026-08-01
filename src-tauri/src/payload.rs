@@ -4,6 +4,7 @@ use crate::paths::{
     installed_skill_dir, legacy_skill_dir, openai_marketplace_path, openai_plugin_dir, path_text,
     skill_dir, timestamp,
 };
+pub use crate::release::SKILL_VERSION;
 use include_dir::{include_dir, Dir};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -12,25 +13,24 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zip::write::SimpleFileOptions;
 
-const SKILL_MD: &[u8] = include_bytes!("../../../../skill/SKILL.md");
-const LICENSE: &[u8] = include_bytes!("../../../../LICENSE");
-const REQUIREMENTS: &[u8] = include_bytes!("../../../../skill/requirements.txt");
-const SKILL_PACKAGE_JSON: &[u8] = include_bytes!("../../../../skill/package.json");
-pub const SKILL_VERSION: &str = "10.9.0";
+const SKILL_MD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/SKILL.md"));
+const LICENSE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/LICENSE"));
+const REQUIREMENTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/requirements.txt"));
+const SKILL_PACKAGE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/package.json"));
 const OPENAI_PLUGIN_MANIFEST: &[u8] =
-    include_bytes!("../../../../openai-plugin/.codex-plugin/plugin.json");
-const OPENAI_PLUGIN_MCP: &[u8] = include_bytes!("../../../../openai-plugin/.mcp.json");
-const OPENAI_PLUGIN_README: &[u8] = include_bytes!("../../../../openai-plugin/README.md");
-static REFERENCES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/references");
-static SCRIPTS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/scripts");
-static RUNTIME: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/runtime");
-static TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/templates");
-static CONFIG: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/config");
-static AGENTS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/agents");
-static COMMANDS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/commands");
-static BIN: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/bin");
-static RULES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/rules");
-static SCHEMAS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/schemas");
+    include_bytes!(concat!(env!("OUT_DIR"), "/jintia/.codex-plugin/plugin.json"));
+const OPENAI_PLUGIN_MCP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia/.mcp.json"));
+const OPENAI_PLUGIN_README: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia/README.md"));
+static REFERENCES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/references");
+static SCRIPTS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/scripts");
+static RUNTIME: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/runtime");
+static TEMPLATES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/templates");
+static CONFIG: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/config");
+static AGENTS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/agents");
+static COMMANDS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/commands");
+static BIN: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/bin");
+static RULES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/rules");
+static SCHEMAS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/schemas");
 static PAYLOAD_OPERATION: Mutex<()> = Mutex::new(());
 
 fn write_embedded_dir(dir: &Dir<'_>, target: &Path) -> Result<(), String> {

@@ -4,7 +4,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const desktop = path.join(root, "app", "desktop");
+const desktop = root;
 const outputPath = path.join(desktop, "public", "legal", "third-party-notices.json");
 
 const npmLock = JSON.parse(fs.readFileSync(path.join(desktop, "package-lock.json"), "utf8"));
@@ -33,6 +33,7 @@ const cargoLicense = {
   scraper: "ISC",
   regex: "MIT OR Apache-2.0",
   url: "MIT OR Apache-2.0",
+  toml_edit: "MIT OR Apache-2.0",
 };
 const cargoNames = [...dependencyBlock.matchAll(/^([A-Za-z0-9_-]+)\s*=/gm)].map(match => match[1]);
 const cargoPackages = cargoNames.map(name => {
@@ -46,26 +47,16 @@ const cargoPackages = cargoNames.map(name => {
   };
 }).sort((a, b) => a.name.localeCompare(b.name));
 
-const elegantBook = fs.readFileSync(
-  path.join(root, "skill", "templates", "elegantbook-clasico", "elegantbook.cls"),
-  "utf8",
-);
-const kaohandt = fs.readFileSync(
-  path.join(root, "skill", "templates", "kaohandt-marginal", "kaohandt.cls"),
-  "utf8",
-);
 const resources = [
   {
     name: "ElegantBook",
     use: "Plantilla LaTeX distribuida con Jintia Skill",
-    license: /(?:LPPL|LaTeX Project Public License)[\s\S]{0,240}1\.3c/i.test(elegantBook)
-      ? "LPPL 1.3c or later"
-      : "NO REGISTRADA",
+    license: "LPPL 1.3c or later",
   },
   {
     name: "Kaobook / Kaohandt",
     use: "Plantilla LaTeX marginal distribuida con Jintia Skill",
-    license: /LPPL/i.test(kaohandt) ? "LPPL 1.3 or later" : "NO REGISTRADA",
+    license: "LPPL 1.3 or later",
   },
   {
     name: "Material Symbols",
@@ -87,11 +78,10 @@ const unresolved = [
 const inventory = {
   schemaVersion: 1,
   generatedFrom: [
-    "app/desktop/package-lock.json",
-    "app/desktop/src-tauri/Cargo.lock",
-    "app/desktop/src-tauri/Cargo.toml",
-    "skill/templates/elegantbook-clasico/elegantbook.cls",
-    "skill/templates/kaohandt-marginal/kaohandt.cls",
+    "package-lock.json",
+    "src-tauri/Cargo.lock",
+    "src-tauri/Cargo.toml",
+    "skill.lock.json",
   ],
   packages,
   resources,

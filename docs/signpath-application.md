@@ -8,8 +8,8 @@ la solicitud en <https://signpath.org/apply>.
 | Campo | Valor |
 |---|---|
 | Project name | Jintia |
-| Repository | `https://github.com/CharlieCardenasToledo/instructional-designer-skill` |
-| Download page | `https://github.com/CharlieCardenasToledo/instructional-designer-skill/releases` |
+| Repository | `https://github.com/CharlieCardenasToledo/jintia-desktop` |
+| Download page | `https://github.com/CharlieCardenasToledo/jintia-desktop/releases` |
 | License | MIT |
 | Maintainer | Charlie Cárdenas Toledo |
 | Platform | Windows 10/11 x64 |
@@ -31,7 +31,7 @@ validation and PDF generation.
 - [Privacy policy](../PRIVACY.md)
 - [Security policy](../SECURITY.md)
 - [Build workflow](../.github/workflows/release-windows.yml)
-- [Latest release](https://github.com/CharlieCardenasToledo/instructional-designer-skill/releases/latest)
+- [Latest release](https://github.com/CharlieCardenasToledo/jintia-desktop/releases/latest)
 
 ## Declaraciones
 

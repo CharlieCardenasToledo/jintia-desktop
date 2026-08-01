@@ -6,7 +6,7 @@
 escritorio como la skill de diseño instruccional.
 
 - GitHub: [@CharlieCardenasToledo](https://github.com/CharlieCardenasToledo)
-- Proyecto: [Jintia](https://github.com/CharlieCardenasToledo/instructional-designer-skill)
+- Proyecto: [Jintia Desktop](https://github.com/CharlieCardenasToledo/jintia-desktop)
 
 ## Contribuciones
 

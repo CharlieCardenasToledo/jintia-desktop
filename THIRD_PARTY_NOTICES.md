@@ -18,7 +18,7 @@ originales.
 
 El inventario verificable generado desde `package-lock.json`, `Cargo.lock` y
 los recursos empaquetados se encuentra en
-`app/desktop/public/legal/third-party-notices.json`.
+`public/legal/third-party-notices.json`.
 
 ## Herramientas visuales opcionales no distribuidas
 
@@ -39,6 +39,6 @@ Claude y Anthropic son marcas de Anthropic PBC. Google, Gemini y NotebookLM
 son marcas de Google LLC. Jintia es un proyecto independiente y no está
 afiliado, patrocinado ni respaldado por esas empresas.
 
-Consulta también `app/desktop/public/legal/trademarks.md` y las licencias
+Consulta también `public/legal/trademarks.md` y las licencias
 incluidas en las distribuciones de cada dependencia. Si detectas una
 atribución incompleta, repórtala en el sistema de issues del proyecto.

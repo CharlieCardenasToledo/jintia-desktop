@@ -15,7 +15,7 @@ use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Mutex;
 
-static TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../../skill/templates");
+static TEMPLATES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/templates");
 const DEFAULT_TEMPLATE: &str = "elegantbook-clasico";
 static CONFIG_WRITE_OPERATION: Mutex<()> = Mutex::new(());
 

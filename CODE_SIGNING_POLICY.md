@@ -15,7 +15,7 @@ Free code signing provided by
 
 - Project: Jintia
 - Repository:
-  <https://github.com/CharlieCardenasToledo/instructional-designer-skill>
+  <https://github.com/CharlieCardenasToledo/jintia-desktop>
 - License: MIT
 - Maintainer: [Charlie Cárdenas Toledo](https://github.com/CharlieCardenasToledo)
 

@@ -1,0 +1,3 @@
+src-tauri/resources/*.zip binary
+src-tauri/resources/jintia-release-manifest.json text eol=lf
+skill.lock.json text eol=lf

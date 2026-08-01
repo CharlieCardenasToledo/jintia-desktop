@@ -1,23 +1,15 @@
 # Pruebas
 
-## Aplicación Desktop
-
 ```bash
-cd app/desktop
+npm ci
+npm run skill:verify
 npm test
 npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-## Skill y toolchain
+`skill:verify` comprueba el manifest y los SHA-256 de ambos payloads. Las pruebas
+JavaScript cubren contratos de UI y empaquetado; las pruebas Rust cubren la
+lógica nativa y fuerzan la extracción verificada que usa el build real.
 
-```bash
-npm --prefix skill test
-node --check skill/bin/jintia.js
-node --check skill/scripts/rules-runner.js
-node --check skill/scripts/state-manager.js
-node --check skill/scripts/hook-runner.js
-```
-
-La matriz visual de GitHub Actions valida los motores reales en Ubuntu, macOS
-y Windows. Si Windows falla durante la instalación de MiKTeX, el fallo ocurre
-antes de las pruebas de la skill y debe distinguirse de un error del código.
+Las pruebas internas de Jintia Skill se ejecutan en su propio repositorio.

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "skillVersion": "10.9.1",
+  "minimumDesktopVersion": "1.1.0",
+  "source": {
+    "repository": "CharlieCardenasToledo/instructional-designer-skill",
+    "commit": "52eb7a59fa7b2b988d31dfb00ffda7b046f9c8c6"
+  },
+  "compatibility": [
+    "claude",
+    "codex",
+    "chatgpt"
+  ],
+  "mcp": {
+    "package": "@charlie.act7/gemini-notebook-mcp",
+    "version": "2.3.3",
+    "node": ">=22.13.0",
+    "npmIntegrity": "sha512-+USWTG9F07fWz6qxamEXk16Btt6ME/KJxihZJPCB5ODVoNRnxx9cPOAyujcHF4bHvzDRkLrhKtvKBzbs+nzjeA=="
+  },
+  "artifacts": {
+    "skill": {
+      "file": "jintia-skill-10.9.1.zip",
+      "sha256": "301921d6baaff7d0d8eb2a8500138958acea3cb5c8d880c2642eb952d424aab4",
+      "bytes": 161812,
+      "installRoot": "jintia-skill"
+    },
+    "openaiPlugin": {
+      "file": "jintia-openai-plugin-10.9.1.zip",
+      "sha256": "f343a152caccfccfd6beb1b5e104f8cfebaea9e10ef938323d82354f4f497607",
+      "bytes": 166024,
+      "installRoot": "jintia"
+    }
+  }
+}

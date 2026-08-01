@@ -96,7 +96,7 @@ Competidores ofrecen LMS genéricos (Moodle, Canvas) o herramientas pedagógicas
 - CHANGELOG.md: historial de versiones.
 - THIRD_PARTY_NOTICES.md: atribuciones.
 
-**Repository:** `github.com/CharlieCardenasToledo/instructional-designer-skill`
+**Repository:** `github.com/CharlieCardenasToledo/jintia-desktop`
 
 **Absent or undecided:**
 - User research data (testing con docentes reales).

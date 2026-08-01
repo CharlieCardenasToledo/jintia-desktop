@@ -1,3 +1,5 @@
+import { APP_META } from "../appMeta.js";
+
 /**
  * tauri-core.mock.js — Reemplazo de "@tauri-apps/api/core" para correr la app
  * en un navegador normal (sin Tauri) durante desarrollo/QA visual.
@@ -30,7 +32,7 @@ const state = {
     regressionReason: null,
   },
   dependencies: [
-    { name: "Node.js", installed: true, version: "v20.11.0", required: true, note: "", command: "node -v" },
+    { name: "Node.js", installed: true, version: "v22.13.0", required: true, note: "", command: "node -v" },
     { name: "Git", installed: true, version: "2.43.0", required: false, note: "", command: "git --version" },
     { name: "Python", installed: true, version: "3.11.4", required: true, note: "", command: "python --version" },
     { name: "Compilador LaTeX", installed: BYPASS, version: BYPASS ? "2024.1 (mock)" : null, required: true, note: "", command: "pdflatex --version" },
@@ -38,8 +40,8 @@ const state = {
   setup: {
     skill_installed: BYPASS,
     skill_current: BYPASS,
-    skill_version: BYPASS ? "10.9.0" : "",
-    available_skill_version: "10.9.0",
+    skill_version: BYPASS ? APP_META.skillVersion : "",
+    available_skill_version: APP_META.skillVersion,
     openai_plugin_installed: BYPASS,
     openai_plugin_current: BYPASS,
     openai_plugin_path: BYPASS ? "/mock/home/.codex/plugins/jintia" : "",
@@ -169,7 +171,7 @@ const handlers = {
     });
   },
   export_openai_plugin_zip: ({ destinationDir }) => {
-    const path = `${destinationDir || "/mock/exports"}/jintia-openai-plugin-10.9.0.zip`;
+    const path = `${destinationDir || "/mock/exports"}/jintia-openai-plugin-${APP_META.skillVersion}.zip`;
     return actionResult(true, "Plugin universal exportado (mock).", { path });
   },
   configure_mcp: ({ target }) => {

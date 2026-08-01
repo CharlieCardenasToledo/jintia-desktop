@@ -1,4 +1,5 @@
-import brand from "../../../skill/config/brand.json";
+import brand from "./brand.json";
+import skillLock from "../skill.lock.json";
 
 /**
  * Fuente canónica de identidad y enlaces públicos de Jintia.
@@ -8,7 +9,7 @@ export const APP_META = Object.freeze({
   brandName: "Jintia",
   desktopName: "Jintia Desktop",
   skillName: "Jintia Skill",
-  skillVersion: "10.9.0",
+  skillVersion: skillLock.skillVersion,
   creator: "Charlie Cárdenas Toledo",
   creatorUrl: "https://github.com/CharlieCardenasToledo",
   tagline: "Diseña el camino del aprendizaje.",
@@ -19,10 +20,10 @@ export const APP_META = Object.freeze({
   originDisclaimer: brand.disclaimer,
   copyright: "© 2026 Charlie Cárdenas Toledo",
   license: "MIT",
-  repository: "https://github.com/CharlieCardenasToledo/instructional-designer-skill",
-  issues: "https://github.com/CharlieCardenasToledo/instructional-designer-skill/issues",
-  licenseUrl: "https://github.com/CharlieCardenasToledo/instructional-designer-skill/blob/master/LICENSE",
-  privacyUrl: "https://github.com/CharlieCardenasToledo/instructional-designer-skill/blob/master/PRIVACY.md",
+  repository: "https://github.com/CharlieCardenasToledo/jintia-desktop",
+  issues: "https://github.com/CharlieCardenasToledo/jintia-desktop/issues",
+  licenseUrl: "https://github.com/CharlieCardenasToledo/jintia-desktop/blob/main/LICENSE",
+  privacyUrl: "https://github.com/CharlieCardenasToledo/jintia-desktop/blob/main/PRIVACY.md",
   // notebooklm.google.com sigue resolviendo (Google renombró NotebookLM a
   // "Gemini Notebook" en 2026-07 y movió el dominio canónico), pero este es
   // el que se ofrece al usuario para no mandarlo a un alias.
