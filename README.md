@@ -39,7 +39,7 @@ npm run tauri:dev
 Las releases de la skill son el único contrato entre ambos repositorios:
 
 ```bash
-npm run skill:sync -- --tag=v10.9.1
+npm run skill:sync -- --tag=vX.Y.Z
 npm run skill:verify
 npm test
 cargo test --manifest-path src-tauri/Cargo.toml
