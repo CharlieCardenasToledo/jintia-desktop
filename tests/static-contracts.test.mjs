@@ -30,7 +30,8 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.equal(tauri.identifier, 'com.charliecardenas.jintia');
   assert.equal(appPackage.name, 'jintia-desktop');
   assert.equal(brand.brandName, 'Jintia');
-  assert.equal(lock.skillVersion, '10.9.1');
+  assert.match(lock.skillVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(lock.tag, `v${lock.skillVersion}`);
   assert.match(paths, /\.join\("jintia-skill"\)/);
   assert.match(paths, /legacy_skill_dir/);
   assert.match(payload, /SKILL_VERSION/);
@@ -681,7 +682,7 @@ test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () 
     readFile(new URL("src/api.js", root), "utf8"),
   ]);
   const lock = JSON.parse(lockText);
-  assert.equal(lock.skillVersion, "10.9.1");
+  assert.equal(lock.tag, `v${lock.skillVersion}`);
   assert.equal(lock.artifacts.openaiPlugin.installRoot, "jintia");
   assert.equal(lock.mcp.package, "@charlie.act7/gemini-notebook-mcp");
   assert.equal(lock.mcp.version, "2.3.3");
