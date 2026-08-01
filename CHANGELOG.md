@@ -5,6 +5,15 @@ y versionado semántico.
 
 ## Sin publicar
 
+## 1.1.1 — 2026-08-01
+
+### Corregido
+
+- Actualizados los instaladores para incorporar la release verificada de
+  Jintia Skill 10.9.2.
+- La sincronización elimina los ZIP obsoletos después de verificar los nuevos
+  artefactos y su manifest.
+
 ## 1.1.0 — 2026-08-01
 
 ### Cambiado

@@ -1,6 +1,6 @@
 {
   "name": "jintia-desktop",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "description": "Aplicación de escritorio de Jintia para configurar el entorno, organizar cursos e instalar Jintia Skill",
   "author": "Charlie Cárdenas Toledo",
