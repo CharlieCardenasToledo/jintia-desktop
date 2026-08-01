@@ -47,6 +47,13 @@ for (const key of ["skill", "openaiPlugin"]) {
 
 await replace(manifestFile, manifestBytes);
 for (const { entry, bytes } of Object.values(artifacts)) await replace(entry.file, bytes);
+for (const entry of Object.values(current.artifacts || {})) {
+  if (entry?.file && !Object.values(manifest.artifacts).some(next => next.file === entry.file)) {
+    await unlink(new URL(entry.file, resources)).catch(error => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+}
 
 const next = {
   schemaVersion: 1,
