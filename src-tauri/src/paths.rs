@@ -248,6 +248,15 @@ pub fn portable_python_exe() -> PathBuf {
     portable_runtimes_dir().join("python").join("python.exe")
 }
 
+pub fn portable_skill_bin() -> PathBuf {
+    let skill_dir = portable_runtimes_dir().join("jintia");
+    if cfg!(target_os = "windows") {
+        skill_dir.join("skill").join("bin").join("jintia.js")
+    } else {
+        skill_dir.join("skill").join("bin").join("jintia")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

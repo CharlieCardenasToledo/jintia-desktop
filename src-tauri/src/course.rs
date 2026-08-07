@@ -137,6 +137,19 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             },
             command: "python --version".to_string(),
         },
+        DependencyStatus {
+            name: "Jintia Skill".to_string(),
+            installed: crate::runtimes::resolve_skill().is_some(),
+            version: None,
+            required: true,
+            installable: true,
+            note: if crate::runtimes::portable_skill_installed() {
+                "Usando Jintia portable de esta app.".to_string()
+            } else {
+                "Motor editorial para renderizar guías. Descárgalo desde Configuración > Entorno.".to_string()
+            },
+            command: "jintia contract".to_string(),
+        },
     ];
 
     // El compilador LaTeX es opcional. La skill puede renderizar a través de
@@ -224,6 +237,11 @@ pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
     // Python se descarga como portable via comando Tauri (solo Windows)
     if name == "Python" {
         return ActionResult::error("Usa el botón 'Descargar Python portable' en el panel de dependencias.");
+    }
+
+    // Jintia Skill se descarga como portable via comando Tauri
+    if name == "Jintia Skill" {
+        return ActionResult::error("Usa el botón 'Descargar Jintia Skill' en el panel de dependencias.");
     }
 
     #[cfg(target_os = "windows")]

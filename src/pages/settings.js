@@ -982,7 +982,9 @@ async function loadDeps() {
                 ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-node>Descargar Node.js portable</button>`
                 : dep.name === "Python"
                   ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-python>Descargar Python portable</button>`
-                  : `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-dep-name="${escapeHtml(dep.name)}">Instalar</button>`
+                  : dep.name === "Jintia Skill"
+                    ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-skill>Descargar Jintia Skill</button>`
+                    : `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-dep-name="${escapeHtml(dep.name)}">Instalar</button>`
               : dep.installed
                 ? `<span class="${ui.badge.success}">OK</span>`
                 : `<span class="${ui.badge.muted}">Instalación manual</span>`}
@@ -1070,6 +1072,43 @@ async function loadDeps() {
         if (unlistenProgress) unlistenProgress();
         btn.disabled = false;
         btn.textContent = "Descargar Python portable";
+      }
+    });
+
+    container.querySelector("[data-download-skill]")?.addEventListener("click", async () => {
+      const btn = container.querySelector("[data-download-skill]");
+      btn.disabled = true;
+      btn.textContent = "Descargando…";
+      toast("Detectando Jintia en npm…", "loading", 120000);
+
+      let unlistenProgress;
+      try {
+        unlistenProgress = await window.__TAURI__.event.listen("skill-download-progress", ({ payload }) => {
+          if (payload.phase === "detecting") {
+            toast("Detectando versión de Jintia en npm…", "loading", 120000);
+          } else if (payload.phase === "downloading") {
+            toast(`Descargando Jintia (${Math.round(payload.percent)}%)…`, "loading", 120000);
+          } else if (payload.phase === "extracting") {
+            toast("Extrayendo Jintia…", "loading", 120000);
+          } else if (payload.phase === "configuring") {
+            toast("Configurando Jintia…", "loading", 120000);
+          }
+        });
+
+        const result = await window.__TAURI__.tauri.invoke("download_skill_runtime");
+        if (result.success) {
+          toast(result.message, "success", 5000);
+          loadDeps();
+          loadSetupStatus();
+        } else {
+          toast(result.message, "error", 6000);
+        }
+      } catch (e) {
+        toast(`Error: ${e}`, "error", 6000);
+      } finally {
+        if (unlistenProgress) unlistenProgress();
+        btn.disabled = false;
+        btn.textContent = "Descargar Jintia Skill";
       }
     });
 

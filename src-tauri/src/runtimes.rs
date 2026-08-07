@@ -595,3 +595,179 @@ fn fetch_python_checksum() -> Result<String, String> {
                 .ok_or_else(|| "Checksum vacío en archivo".to_string())
         })
 }
+
+// ==================== SKILL RUNTIME ====================
+
+pub fn portable_skill_installed() -> bool {
+    paths::portable_skill_bin().is_file()
+}
+
+pub fn resolve_skill() -> Option<String> {
+    let checker = if cfg!(target_os = "windows") {
+        "where.exe"
+    } else {
+        "which"
+    };
+
+    if Command::new(checker)
+        .arg("jintia")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return Some("jintia".to_string());
+    }
+
+    let portable = paths::portable_skill_bin();
+    if portable.is_file() {
+        return Some(portable.to_string_lossy().into_owned());
+    }
+
+    None
+}
+
+fn fetch_npm_package_info(package: &str) -> Result<(String, String), String> {
+    let url = format!("https://registry.npmjs.org/{}/latest", package);
+    let response = reqwest::blocking::get(&url)
+        .map_err(|e| format!("Error descargando metadata npm: {e}"))?;
+    let text = response.text()
+        .map_err(|e| format!("Error leyendo metadata: {e}"))?;
+    let json: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Error parseando npm metadata: {e}"))?;
+
+    let version = json["version"]
+        .as_str()
+        .ok_or("Version not found in npm metadata")?
+        .to_string();
+    let tarball = json["dist"]["tarball"]
+        .as_str()
+        .ok_or("Tarball URL not found in npm metadata")?
+        .to_string();
+
+    Ok((version, tarball))
+}
+
+pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
+    let runtimes_dir = paths::portable_runtimes_dir();
+    let skill_dir = runtimes_dir.join("jintia");
+
+    fs::create_dir_all(&runtimes_dir)
+        .map_err(|e| format!("Error creando directorio: {e}"))?;
+
+    emit_skill_progress(app, "detecting", 0.0, "Detectando versión de Jintia en npm...");
+
+    let (version, tarball_url) = fetch_npm_package_info("jintia")?;
+
+    let tmp_file = runtimes_dir.join(format!(".jintia-download-{}.tmp", version));
+
+    emit_skill_progress(app, "downloading", 5.0, &format!("Descargando Jintia {version}..."));
+
+    let mut response = reqwest::blocking::get(&tarball_url)
+        .map_err(|e| format!("Error descargando Jintia: {e}"))?;
+
+    let total_size = response.content_length().unwrap_or(50_000_000u64);
+    let mut file = fs::File::create(&tmp_file)
+        .map_err(|e| format!("Error creando archivo temporal: {e}"))?;
+
+    let mut downloaded: u64 = 0;
+    let mut buffer = [0; 1024 * 64];
+
+    loop {
+        match response.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                file.write_all(&buffer[..n])
+                    .map_err(|e| format!("Error escribiendo descarga: {e}"))?;
+                downloaded += n as u64;
+                let percent = 5.0 + (downloaded as f32 / total_size as f32) * 85.0;
+                emit_skill_progress(
+                    app,
+                    "downloading",
+                    percent,
+                    &format!("Descargando Jintia ({:.1}%)", percent),
+                );
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp_file);
+                emit_skill_progress(app, "error", 0.0, &format!("Error en descarga: {e}"));
+                return Err(format!("Error descargando: {e}"));
+            }
+        }
+    }
+
+    drop(file);
+
+    emit_skill_progress(app, "extracting", 92.0, "Extrayendo Jintia...");
+
+    if skill_dir.exists() {
+        fs::remove_dir_all(&skill_dir)
+            .map_err(|e| format!("Error removiendo instalación anterior: {e}"))?;
+    }
+
+    extract_skill_tgz(&tmp_file, &runtimes_dir)?;
+    let _ = fs::remove_file(&tmp_file);
+
+    emit_skill_progress(app, "configuring", 96.0, "Configurando Jintia...");
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let jintia_bin = paths::portable_skill_bin();
+        Command::new("chmod")
+            .arg("+x")
+            .arg(&jintia_bin)
+            .output()
+            .ok();
+    }
+
+    emit_skill_progress(app, "done", 100.0, "Jintia instalado correctamente.");
+
+    Ok(())
+}
+
+fn extract_skill_tgz(tgz_path: &std::path::Path, dest_dir: &std::path::Path) -> Result<(), String> {
+    let output = Command::new("tar")
+        .arg("-xzf")
+        .arg(tgz_path)
+        .arg("-C")
+        .arg(dest_dir)
+        .output()
+        .map_err(|e| format!("Error ejecutando tar: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Error extrayendo tgz: {}", stderr));
+    }
+
+    let entries = fs::read_dir(dest_dir)
+        .map_err(|e| format!("Error leyendo directorio: {e}"))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Error en entrada de directorio: {e}"))?;
+        let path = entry.path();
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+        if filename.starts_with("package") && path.is_dir() {
+            let dst = dest_dir.join("jintia");
+            if dst.exists() {
+                fs::remove_dir_all(&dst)
+                    .map_err(|e| format!("Error removiendo directorio anterior: {e}"))?;
+            }
+            fs::rename(&path, &dst)
+                .map_err(|e| format!("Error renombrando directorio: {e}"))?;
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+fn emit_skill_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
+    let _ = app.emit(
+        "skill-download-progress",
+        serde_json::json!({
+            "phase": phase,
+            "percent": percent,
+            "message": message,
+        }),
+    );
+}
