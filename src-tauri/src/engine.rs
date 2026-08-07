@@ -30,7 +30,10 @@ pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, Stri
     let mut cmd_args = vec![entrypoint.to_string_lossy().into_owned()];
     cmd_args.extend(args.iter().map(|s| s.to_string()));
 
-    match Command::new("node").args(&cmd_args).output() {
+    let node_bin = crate::runtimes::resolve_node()
+        .ok_or_else(|| "Node.js no disponible. Descárgalo desde Configuración > Entorno.".to_string())?;
+
+    match Command::new(&node_bin).args(&cmd_args).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();

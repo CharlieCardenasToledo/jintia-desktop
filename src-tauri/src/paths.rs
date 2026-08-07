@@ -227,6 +227,23 @@ pub fn path_text(path: &Path) -> String {
     stripped.replace('\\', "/")
 }
 
+pub fn portable_runtimes_dir() -> PathBuf {
+    app_config_dir()
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string()))
+        })
+        .join("runtimes")
+}
+
+pub fn portable_node_exe() -> PathBuf {
+    let node_dir = portable_runtimes_dir().join("node");
+    if cfg!(target_os = "windows") {
+        node_dir.join("node.exe")
+    } else {
+        node_dir.join("bin").join("node")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

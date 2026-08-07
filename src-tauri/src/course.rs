@@ -4,7 +4,7 @@ use crate::paths::{
     safe_segment, timestamp,
 };
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -92,12 +92,9 @@ fn version(command: &str, args: &[&str]) -> Option<String> {
 
 pub fn check_dependencies() -> Vec<DependencyStatus> {
 
-    let node = command_exists("node");
-    let npx = command_exists(if cfg!(target_os = "windows") {
-        "npx.cmd"
-    } else {
-        "npx"
-    });
+    let node_bin = crate::runtimes::resolve_node();
+    let node = node_bin.is_some();
+    let portable = crate::runtimes::portable_node_installed();
     let python_command = if command_exists("python3") {
         "python3"
     } else {
@@ -109,11 +106,15 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
     let mut dependencies = vec![
         DependencyStatus {
             name: "Node.js".to_string(),
-            installed: node && npx,
-            version: version("node", &["--version"]),
+            installed: node,
+            version: crate::runtimes::node_version(),
             required: true,
             installable: true,
-            note: "Necesario para que la app funcione correctamente.".to_string(),
+            note: if portable {
+                "Usando Node.js portable de Jintia.".to_string()
+            } else {
+                "Necesario para que la app funcione correctamente.".to_string()
+            },
             command: "node --version".to_string(),
         },
         DependencyStatus {
@@ -203,7 +204,7 @@ pub fn check_dependencies_cached() -> Vec<DependencyStatus> {
     check_dependencies()
 }
 
-pub fn install_dependency(name: String, confirmed: bool) -> ActionResult {
+pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
     // Una instalación puede cambiar el estado del entorno. La siguiente
     // verificación debe inspeccionarlo de nuevo.
     invalidate_dependency_cache();
@@ -213,10 +214,14 @@ pub fn install_dependency(name: String, confirmed: bool) -> ActionResult {
         return ActionResult::error("LaTeX es opcional. Instálalo manualmente según tu SO si lo necesitas.");
     }
 
+    // Node.js se descarga como portable via comando Tauri
+    if name == "Node.js" {
+        return ActionResult::error("Usa el botón 'Descargar Node.js portable' en el panel de dependencias.");
+    }
+
     #[cfg(target_os = "windows")]
     {
         let package = match name.as_str() {
-            "Node.js" => "OpenJS.NodeJS.LTS",
             "Git" => "Git.Git",
             "Python" => "Python.Python.3.13",
             _ => return ActionResult::error(format!("Dependencia desconocida: {name}")),

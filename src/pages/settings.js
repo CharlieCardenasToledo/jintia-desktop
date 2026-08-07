@@ -978,7 +978,9 @@ async function loadDeps() {
           </div>
           <div class="${ui.list.right}">
             ${!dep.installed && dep.installable !== false
-              ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-dep-name="${escapeHtml(dep.name)}">Instalar</button>`
+              ? dep.name === "Node.js"
+                ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-node>Descargar Node.js portable</button>`
+                : `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-dep-name="${escapeHtml(dep.name)}">Instalar</button>`
               : dep.installed
                 ? `<span class="${ui.badge.success}">OK</span>`
                 : `<span class="${ui.badge.muted}">Instalación manual</span>`}
@@ -997,6 +999,39 @@ async function loadDeps() {
           if (r.success) { loadDeps(); loadSetupStatus(); }
         } catch (e) { toast(`Error: ${e}`, "error"); }
       });
+    });
+
+    container.querySelector("[data-download-node]")?.addEventListener("click", async () => {
+      const btn = container.querySelector("[data-download-node]");
+      btn.disabled = true;
+      btn.textContent = "Descargando…";
+      toast("Descargando Node.js portable…", "loading", 120000);
+
+      let unlistenProgress;
+      try {
+        unlistenProgress = await window.__TAURI__.event.listen("node-download-progress", ({ payload }) => {
+          if (payload.phase === "downloading") {
+            toast(`Descargando Node.js (${Math.round(payload.percent)}%)…`, "loading", 120000);
+          } else if (payload.phase === "extracting") {
+            toast("Extrayendo Node.js…", "loading", 120000);
+          }
+        });
+
+        const result = await window.__TAURI__.tauri.invoke("download_node_runtime");
+        if (result.success) {
+          toast(result.message, "success", 5000);
+          loadDeps();
+          loadSetupStatus();
+        } else {
+          toast(result.message, "error", 6000);
+        }
+      } catch (e) {
+        toast(`Error: ${e}`, "error", 6000);
+      } finally {
+        if (unlistenProgress) unlistenProgress();
+        btn.disabled = false;
+        btn.textContent = "Descargar Node.js portable";
+      }
     });
 
     container.querySelector("#visual-install-profile")?.addEventListener("change", event => {

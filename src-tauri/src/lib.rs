@@ -11,6 +11,7 @@ mod paths;
 mod payload;
 mod pdfs;
 mod release;
+mod runtimes;
 mod toolchain;
 
 use models::{
@@ -25,6 +26,26 @@ async fn check_dependencies() -> Vec<DependencyStatus> {
     tauri::async_runtime::spawn_blocking(course::check_dependencies)
         .await
         .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn download_node_runtime(app: tauri::AppHandle) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        runtimes::download_portable_node(&app)
+            .map(|_| ActionResult::ok("Node.js portable instalado correctamente."))
+            .unwrap_or_else(|e| ActionResult::error(e))
+    }).await
+    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
+
+#[tauri::command]
+async fn get_node_runtime_status() -> serde_json::Value {
+    serde_json::json!({
+        "hasGlobal": runtimes::resolve_node().map(|p| p == "node").unwrap_or(false),
+        "hasPortable": runtimes::portable_node_installed(),
+        "resolvedPath": runtimes::resolve_node(),
+        "version": runtimes::node_version(),
+    })
 }
 
 #[tauri::command]
@@ -361,6 +382,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             check_dependencies,
+            download_node_runtime,
+            get_node_runtime_status,
             get_visual_install_profiles,
             install_dependency,
             get_onboarding_status,
