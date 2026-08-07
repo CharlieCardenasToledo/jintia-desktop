@@ -1,13 +1,12 @@
 use crate::engine;
 use crate::models::ToolchainReport;
-use crate::payload;
 use std::path::Path;
 
-/// Ejecuta una operación Jintia a través del Engine Adapter.
-///
-/// Operaciones válidas: doctor, audit, validate, compile, y otras que añada la Skill.
 pub fn run(operation: String, target: Option<String>, json: Option<bool>, strict: Option<bool>) -> ToolchainReport {
-    let skill_path = payload::installed_skill_path();
+    let skill_path = match crate::runtimes::resolve_skill() {
+        Some(p) => p,
+        None => return ToolchainReport::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
+    };
     let mut args: Vec<&str> = vec![&operation];
 
     if let Some(target) = target.as_deref() {
@@ -62,7 +61,10 @@ pub fn manage_harness(
         return ToolchainReport::error("El alcance debe ser project o global.".to_string());
     }
 
-    let skill_path = payload::installed_skill_path();
+    let skill_path = match crate::runtimes::resolve_skill() {
+        Some(p) => p,
+        None => return ToolchainReport::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
+    };
     let mut args: Vec<String> = vec![
         "harness".to_string(),
         operation.clone(),

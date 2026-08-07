@@ -398,8 +398,10 @@ pub fn create_course_structure(
         Err(error) => return ActionResult::error(error),
     };
 
-    // Delegar la creación de estructura a la Skill vía jintia init
-    let skill_path = crate::payload::installed_skill_path();
+    let skill_path = match crate::runtimes::resolve_skill() {
+        Some(p) => p,
+        None => return ActionResult::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
+    };
     let course_path_str = course.to_string_lossy().to_string();
     let args = [
         "init",
@@ -951,8 +953,17 @@ pub fn check_migration_needed(
         };
     }
 
-    // Invocar jintia migrate --dry-run --json
-    let skill_path = crate::payload::installed_skill_path();
+    let skill_path = match crate::runtimes::resolve_skill() {
+        Some(p) => p,
+        None => {
+            return crate::models::MigrationStatus {
+                needs_migration: true,
+                latex_dirs_found: latex_dirs,
+                tex_files_found: tex_files,
+                dry_run_report: None,
+            };
+        }
+    };
     let course_path_str = root.to_string_lossy().to_string();
     let args = ["migrate", &course_path_str, "--dry-run", "--json"];
 
@@ -975,7 +986,10 @@ pub fn run_migration(course_path: String) -> ActionResult {
         return ActionResult::error("La carpeta del proyecto no existe.");
     }
 
-    let skill_path = crate::payload::installed_skill_path();
+    let skill_path = match crate::runtimes::resolve_skill() {
+        Some(p) => p,
+        None => return ActionResult::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
+    };
     let course_path_str = root.to_string_lossy().to_string();
     let args = ["migrate", &course_path_str, "--json"];
 

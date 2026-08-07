@@ -65,6 +65,18 @@ export async function installDependency(name, confirmed = false) {
   return invoke("install_dependency", { name, confirmed });
 }
 
+export async function downloadNodeRuntime(app) {
+  return invoke("download_node_runtime");
+}
+
+export async function downloadPythonRuntime(app) {
+  return invoke("download_python_runtime");
+}
+
+export async function downloadSkillRuntime(app) {
+  return invoke("download_skill_runtime");
+}
+
 export async function resetOnboarding() {
   return invoke("reset_onboarding");
 }
@@ -175,10 +187,6 @@ export async function revealGeneratedPdf(path, projects) {
 
 export async function generateSyllabus(payload) {
   return invoke("generate_syllabus", payload);
-}
-
-export async function compileSyllabusPdf(payload) {
-  return invoke("compile_syllabus_pdf", { previewTemplateId: null, ...payload });
 }
 
 // ── Sistema de plantillas LaTeX ───────────────────────────────────────────

@@ -166,10 +166,11 @@ test('institución, perfil académico y plantilla viven en un solo paso fusionad
 
 test('el onboarding presenta el flujo de producción editorial aprobado', async () => {
   const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
-  assert.match(source, /Sílabo[\s\S]*Análisis[\s\S]*Fuentes[\s\S]*Estructura[\s\S]*Validación[\s\S]*Compilación[\s\S]*PDF/);
+  assert.match(source, /Sílabo[\s\S]*Análisis[\s\S]*Fuentes[\s\S]*Estructura[\s\S]*Validación[\s\S]*Generación/);
   assert.match(source, /No diseña la guía ni reemplaza tu criterio docente/);
   assert.match(source, /Preparando la prueba/);
-  assert.match(source, /Preparar[\s\S]*Comprobar[\s\S]*Crear[\s\S]*Compilar[\s\S]*Validar/);
+  // compileSyllabusPdf eliminado; paso final ahora verifica entorno con getSetupStatus
+  assert.match(source, /Preparar[\s\S]*Comprobar[\s\S]*Crear[\s\S]*Verificar[\s\S]*Listo/);
 });
 
 test('el copy del onboarding no repite jerga técnica ni referencias obsoletas al esquema de 10 pasos', async () => {
@@ -277,7 +278,8 @@ test('el onboarding reutiliza validaciones y artefactos correctos', async () => 
   assert.match(source, /rememberSuccessfulLoad\("notebooklm-auth"\)/);
   assert.match(source, /prepareOnboardingStep\(4, \{ force: true \}\)/);
   assert.doesNotMatch(navigation, /force:\s*(?:dest|destination|next)/);
-  assert.match(source, /reuseIfValid:\s*true/);
+  // compileSyllabusPdf eliminado; paso final llama generateSyllabus + getSetupStatus
+  assert.match(source, /generateSyllabus[\s\S]{0,200}testBasePath/);
 });
 
 test('la barra inferior tiene un botón principal con texto visible y puntos con área de clic ampliada', async () => {

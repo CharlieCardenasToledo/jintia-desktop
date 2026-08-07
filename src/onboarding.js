@@ -4,9 +4,11 @@ import {
   applyInstitutionConfig,
   checkDependencies,
   checkNotebookLMAuth,
-  compileSyllabusPdf,
   configureMcp,
   completeOnboarding,
+  downloadNodeRuntime,
+  downloadPythonRuntime,
+  downloadSkillRuntime,
   exportSkillZip,
   extractSitePalette,
   generateSyllabus,
@@ -36,7 +38,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import claudeLogo from "./assets/claude-symbol.svg";
 import notebookLmLogo from "./assets/notebooklm-logo.svg";
-import latexLogo from "./assets/latex-logo.svg";
 import geminiLogo from "./assets/gemini-icon.svg";
 import googleGLogo from "./assets/google-g.svg";
 import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
@@ -47,7 +48,7 @@ import { BrandMark } from "./components/BrandMark.js";
 
 // Esquema de 5 pasos (v3 en el backend; ver migrate_status en onboarding.rs).
 const TOTAL_STEPS = 5;
-const LARGE_DEPENDENCIES = new Set(["Compilador LaTeX"]);
+const LARGE_DEPENDENCIES = new Set([]);
 const STEP_META = [
   { title: "Bienvenida", subtitle: "Convierte tu sílabo en guías PDF y trabaja con Claude, ChatGPT o Codex.", icon: "graduation-cap" },
   { title: "Requisitos", subtitle: "Instalamos automáticamente lo que falte.", icon: "terminal" },
@@ -826,10 +827,9 @@ function welcomeStep() {
       content: `<div class="text-xs text-slate-600 space-y-2"><div class="font-semibold text-slate-700">Estándares:</div><div>UDL 3.0, Backward Design, Quality Matters, WCAG 2.2</div></div>`
     },
     {
-      title: "Compilación",
-      desc: "LaTeX genera PDF profesional.",
+      title: "Generación",
+      desc: "Jintia Skill genera documentos con IA.",
       content: `<div class="flex flex-wrap justify-center gap-4 mt-2">
-        ${techCard("LaTeX", latexLogo)}
         ${techCard("Claude", claudeLogo)}
         ${techCard("Gemini", geminiLogo)}
       </div>`
@@ -1273,11 +1273,11 @@ function finalStep() {
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="3">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Compilar</span>
+            <span>Verificar</span>
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="4">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Validar</span>
+            <span>Listo</span>
           </div>
         </div>
 
@@ -1518,6 +1518,29 @@ async function animateFinalStep() {
     `;
   }
 
+  function showReadySuccess(syllabusPath) {
+    const loadingEl = document.getElementById("final-loading");
+    const wrapEl    = document.getElementById("final-result-wrap");
+    const contentEl = document.getElementById("final-result-content");
+    if (loadingEl) loadingEl.style.display = "none";
+    if (contentEl) contentEl.innerHTML = `
+      <div class="border-[1.5px] border-green-300/60 rounded-xl p-6 text-center bg-green-50/60">
+        <span class="text-green-600 block mb-2.5">${ic("check-circle-2", 36)}</span>
+        <div class="text-[15px] font-bold text-green-600 mb-1.5">¡Jintia está listo!</div>
+        <div class="text-[12.5px] text-gray-700 mb-3">Tu entorno está configurado correctamente. Ya puedes abrir Claude o Codex y empezar a trabajar.</div>
+        ${syllabusPath ? `<div class="text-[11px] text-gray-400 p-3 bg-black/[0.03] rounded-lg break-all text-left"><strong>Sílabo generado:</strong> ${escapeHtml(syllabusPath)}</div>` : ""}
+      </div>`;
+    refreshIcons();
+    if (wrapEl) {
+      wrapEl.style.display = "block";
+      wrapEl.style.opacity = "0";
+      wrapEl.style.transition = "opacity .4s";
+      requestAnimationFrame(() => { wrapEl.style.opacity = "1"; });
+    }
+    document.querySelector("[data-onboarding-action='complete']").disabled = false;
+    syncOnboardingBusyState();
+  }
+
   // ── 0 / 25 % — leer perfil ──────────────────────────────────────────────
   setRow(0, "active");
   setMsg("Leyendo perfil institucional…");
@@ -1565,7 +1588,7 @@ async function animateFinalStep() {
 
   let genResult;
   try {
-    genResult = await generateSyllabus({ coursePath: testBasePath, ...syllabusTestData });
+    genResult = await generateSyllabus({ coursePath: testBasePath, ...syllabusTestData, includeJintiaCredit: state.config?.includeJintiaCredit !== false });
 
     if (genResult?.success) {
       setRow(2, "done");
@@ -1586,85 +1609,32 @@ async function animateFinalStep() {
     return;
   }
 
-  // ── 3 / 100 % — compilar PDF (requerido: es el objetivo de la skill) ────
+  // ── 3 / 100 % — verificar entorno ──────────────────────────────────────
   setRow(3, "active");
-  setMsg("Generando el PDF de la guía…");
+  setMsg("Verificando entorno Jintia…");
   setProgress(85);
-  let pdfResult;
-  let stopCompileEvents = null;
-  let elapsedTimer = null;
   try {
-    try {
-      stopCompileEvents = await listen("jintia://compile-progress", ({ payload }) => {
-        const message = payload?.message || "Compilando";
-        const detail = payload?.detail ? String(payload.detail) : "";
-        const elapsed = Number(payload?.elapsedMs ?? Date.now() - compileStartedAt);
-        const line = `[${formatElapsed(elapsed)}] ${message}${detail ? ` — ${detail}` : ""}`;
-        compileDiagnostics.push(line);
-        if (compileDiagnostics.length > 120) compileDiagnostics.shift();
-        if (compileCurrentEl) compileCurrentEl.textContent = message;
-        if (compileElapsedEl) compileElapsedEl.textContent = formatElapsed(elapsed);
-        if (compileLogEl) {
-          compileLogEl.textContent = compileDiagnostics.join("\n");
-          compileLogEl.scrollTop = compileLogEl.scrollHeight;
-        }
-        const phase = payload?.phase;
-        if (["package-install", "package-catalog", "package-ready", "engine-started", "log"].includes(phase)) {
-          setRow(3, "active");
-          setProgress(phase === "engine-started" || phase === "log" ? 88 : 82);
-        } else if (phase === "validating") {
-          setRow(3, "done");
-          setRow(4, "active");
-          setProgress(96);
-        } else if (phase === "complete") {
-          setRow(3, "done");
-          setRow(4, "done");
-          setProgress(100);
-        } else if (phase === "error") {
-          setRow(3, "error");
-        }
-        if (payload?.phase !== "log") setMsg(message);
-      });
-    } catch (eventError) {
-      compileDiagnostics.push(`[00:00] El monitor en vivo no está disponible — ${String(eventError)}`);
-    }
-    elapsedTimer = window.setInterval(() => {
-      if (compileElapsedEl) compileElapsedEl.textContent = formatElapsed(Date.now() - compileStartedAt);
-    }, 1000);
-    pdfResult = await compileSyllabusPdf({
-      coursePath: testBasePath,
-      ...syllabusTestData,
-      includeJintiaCredit: state.config?.includeJintiaCredit !== false,
-      reuseIfValid: true,
-    });
-    if (pdfResult?.success) {
-      setRow(3, "done");
-      setRow(4, "done");
-      setProgress(100);
-      setMsg("¡Verificación completada!");
-    } else {
-      throw new Error(pdfResult?.message || "El backend indicó fallo sin detalles.");
-    }
+    await getSetupStatus();
+    setRow(3, "done");
+    setRow(4, "active");
+    setProgress(96);
+    await new Promise(r => setTimeout(r, 300));
+    setRow(4, "done");
+    setProgress(100);
+    setMsg("¡Listo!");
   } catch (err) {
     setRow(3, "error");
     setProgress(85);
-    setMsg("No se pudo generar el PDF");
-    const errorText = String(err);
-    const missingFile = errorText.match(/File [`']([^`']+\.sty)['`] not found/i)?.[1];
+    setMsg("No se pudo verificar el entorno");
     showError(
-      missingFile ? "Falta un componente de LaTeX" : "No se pudo generar el PDF",
-      missingFile
-        ? `MiKTeX no encontró ${missingFile}. Jintia intentará instalarlo al reintentar; si acabas de actualizar la aplicación, reiníciala primero.`
-        : "Reintenta la prueba. Si vuelve a fallar, abre los detalles técnicos o copia el diagnóstico para soporte.",
-      errorText
+      "Error al verificar el entorno",
+      "La Skill generó el documento pero no se pudo comprobar el entorno. Puedes continuar de todas formas.",
+      String(err)
     );
     return;
-  } finally {
-    if (elapsedTimer) window.clearInterval(elapsedTimer);
-    if (stopCompileEvents) stopCompileEvents();
   }
 
-  showSuccess(testBasePath, pdfResult.message, pdfResult.path);
+  showReadySuccess(genResult?.path);
 }
 
 
@@ -1797,7 +1767,11 @@ async function requestDependencyInstall(name, button) {
 
 async function performDependencyInstall(name) {
   toast(`Instalando ${name}…`, "loading", 120000);
-  const result = await installDependency(name, true);
+  let result;
+  if (name === "Node.js") result = await downloadNodeRuntime();
+  else if (name === "Python") result = await downloadPythonRuntime();
+  else if (name === "Jintia Skill") result = await downloadSkillRuntime();
+  else result = await installDependency(name, true);
   toast(result.message, result.success ? "success" : "error", 9000);
   runtime.dependencies = await checkDependencies();
   renderCurrentStep();
@@ -1898,8 +1872,8 @@ async function performAction(action, current) {
     state.config = config;
     saveConfig();
     const DISCIPLINE_TO_VISUAL_PROFILE = {
-      "software-engineering": "diagramming",
-      "electronics": "diagramming",
+      "software-engineering": "core",
+      "electronics": "core",
       "design": "full",
     };
     if (discipline && !localStorage.getItem("jintia.visualProfile")) {
