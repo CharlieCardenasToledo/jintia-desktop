@@ -589,7 +589,7 @@ test('Configuración ejecuta el diagnóstico de la toolchain mediante un comando
 
 test('Plantillas separa selección, vista previa y activación confirmada', async () => {
   const templates = await readFile(new URL('src/pages/templates.js', root), 'utf8');
-  assert.match(templates, /compileSyllabusPdf/);
+  // compileSyllabusPdf se eliminó; preview ahora delega a skill CLI via API
   assert.match(templates, /previewTemplateId:\s*templateId/);
   assert.match(templates, /convertFileSrc/);
   assert.match(templates, /<iframe/);
@@ -616,13 +616,7 @@ test('el backend compila la vista previa sin cambiar la plantilla activa', async
   assert.match(config, /pub fn template_assets_fingerprint/);
 });
 
-test('la salida de pdflatex tolera la codificación local de Windows', async () => {
-  const course = await readFile(new URL('src-tauri/src/course.rs', root), 'utf8');
-  assert.match(course, /read_until\(b'\\n'/);
-  assert.match(course, /String::from_utf8_lossy\(&line_bytes\)/);
-  assert.match(course, /String::from_utf8_lossy\(&stderr_bytes\)/);
-  assert.doesNotMatch(course, /BufReader::new\(stdout\)\.lines\(\)/);
-});
+// ELIMINADO: Test sobre manejo de pdflatex (ya no es relevante, compilación delegada a skill)
 
 test('Plantillas muestra el catálogo completo sin cortar resultados', async () => {
   const templates = await readFile(new URL('src/pages/templates.js', root), 'utf8');
@@ -643,19 +637,10 @@ test('onboarding y Plantillas comparten una guía semanal de demostración reali
   assert.match(sample, /Pensamiento crítico y decisiones profesionales/);
   assert.match(sample, /Facione, P\. A\./);
   assert.doesNotMatch(sample, /Apellido, [A-Z]\./);
-  assert.match(course, /append_demo_week/);
-  assert.match(course, /\\title\{\{Guía Didáctica Semanal\}\}/);
-  assert.match(course, /\\chapter\{Toma de Decisiones Basada en Evidencia\}/);
-  assert.match(course, /active_template == "kaohandt-marginal"[\s\S]*\\guidesection\{Toma de Decisiones Basada en Evidencia\}/);
-  assert.match(course, /\\guidesection\{Semana 1: De la Intuición a una Decisión Justificable\}/);
+  // El contenido de demostración ya no se genera desde Rust LaTeX;
+  // Desktop ahora delega a `jintia init` que crea una estructura JSON pura
+  assert.match(course, /build_syllabus_md/);
   assert.match(course, /Transferencia a cualquier profesión/);
-  assert.match(course, /\\begin\{guidefigure\}/);
-  assert.match(course, /\\begin\{tikzpicture\}/);
-  assert.match(course, /\\guidefigurecaption\{Ruta de una decisión profesional justificable\.\}\{fig:ruta-decision\}/);
-  assert.match(course, /\\begin\{guidetable\}/);
-  assert.match(course, /\\begin\{tabularx\}/);
-  assert.match(course, /\\begin\{equation\}/);
-  assert.match(course, /\\marginconcept\{Criterio\}/);
   assert.match(course, /Autoevaluación/);
 });
 
@@ -729,21 +714,16 @@ test('Ayuda navega a la sección visible de Configuración, no a un panel oculto
 });
 
 test('la prueba final transmite progreso y permite copiar un diagnóstico', async () => {
-  const [onboarding, course, lib] = await Promise.all([
+  const [onboarding, lib] = await Promise.all([
     readFile(new URL('src/onboarding.js', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
   ]);
-  assert.match(onboarding, /listen\("jintia:\/\/compile-progress"/);
-  assert.match(onboarding, /id="compile-live-log"/);
+  // El mecanismo de progress events cambió: ya no usa emit_compile_progress
+  // porque la compilación fue delegada a la skill CLI
   assert.match(onboarding, /Copiar diagnóstico/);
   assert.match(onboarding, /Reportar problema/);
-  assert.match(course, /emit_compile_progress/);
-  assert.match(course, /"package-install"/);
-  assert.match(course, /fixtounicode/);
-  assert.match(course, /active_template == "kaohandt-marginal"/);
-  assert.match(course, /\\documentclass\[10pt,oneside\]\{\{kaohandt\}\}/);
-  assert.match(lib, /app:\s*tauri::AppHandle/);
+  assert.match(lib, /run_migration/);
+  assert.match(lib, /check_migration_needed/);
 });
 
 test('el editor de silabo protege borradores y usa estados editoriales explicitos', async () => {
