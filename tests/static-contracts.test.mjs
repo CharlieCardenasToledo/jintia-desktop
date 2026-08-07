@@ -1194,6 +1194,106 @@ test('los paquetes Node disciplinares usan el runtime portable y su prefix', asy
   );
 });
 
+test('Mermaid CLI se detecta desde el Node portable antes del PATH global', async () => {
+  const [runtimes, course] =
+    await Promise.all([
+      readFile(
+        new URL(
+          'src-tauri/src/runtimes.rs',
+          root
+        ),
+        'utf8'
+      ),
+      readFile(
+        new URL(
+          'src-tauri/src/course.rs',
+          root
+        ),
+        'utf8'
+      ),
+    ]);
+
+  const resolverStart =
+    runtimes.indexOf(
+      'pub fn resolve_node_cli'
+    );
+
+  const resolverEnd =
+    runtimes.indexOf(
+      'pub fn node_cli_version',
+      resolverStart
+    );
+
+  assert.ok(
+    resolverStart >= 0,
+    'resolve_node_cli debe existir'
+  );
+
+  assert.ok(
+    resolverEnd > resolverStart,
+    'debe poder aislarse resolve_node_cli'
+  );
+
+  const resolver = runtimes.slice(
+    resolverStart,
+    resolverEnd
+  );
+
+  assert.match(
+    resolver,
+    /portable_node_bin_dir/
+  );
+
+  assert.match(
+    resolver,
+    /where\.exe|which/
+  );
+
+  assert.ok(
+    resolver.indexOf(
+      'portable_node_bin_dir'
+    ) <
+      resolver.indexOf('where.exe'),
+    'el CLI portable debe comprobarse antes del PATH global'
+  );
+
+  assert.match(
+    course,
+    /resolve_node_cli\("mmdc"\)/
+  );
+
+  assert.match(
+    course,
+    /node_cli_version\(\s*"mmdc",\s*&\["--version"\]/
+  );
+
+  assert.doesNotMatch(
+    course,
+    /\(\s*"Mermaid CLI",\s*"mmdc",/
+  );
+
+  const mermaidStart =
+    course.indexOf(
+      'name: "Mermaid CLI".to_string()'
+    );
+
+  assert.ok(
+    mermaidStart >= 0,
+    'Mermaid CLI debe tener un DependencyStatus específico'
+  );
+
+  const mermaidBlock =
+    course.slice(
+      mermaidStart,
+      mermaidStart + 1200
+    );
+
+  assert.match(
+    mermaidBlock,
+    /required:\s*false/
+  );
+});
+
 test('cada invoke() en api.js tiene su handler en generate_handler![] de lib.rs', async () => {
   const [api, lib] = await Promise.all([
     readFile(new URL('src/api.js', root), 'utf8'),

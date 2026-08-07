@@ -629,6 +629,97 @@ pub fn vivliostyle_version() -> Option<String> {
     })
 }
 
+pub fn resolve_node_cli(command: &str) -> Option<PathBuf> {
+    let portable_name = if cfg!(target_os = "windows") {
+        format!("{command}.cmd")
+    } else {
+        command.to_string()
+    };
+
+    let portable = paths::portable_node_bin_dir()
+        .join(portable_name);
+
+    if portable.is_file() {
+        return Some(portable);
+    }
+
+    let checker = if cfg!(target_os = "windows") {
+        "where.exe"
+    } else {
+        "which"
+    };
+
+    let output = Command::new(checker)
+        .arg(command)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(
+        &output.stdout
+    );
+
+    stdout
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| PathBuf::from(line.trim()))
+}
+
+pub fn node_cli_version(
+    command: &str,
+    args: &[&str],
+) -> Option<String> {
+    let executable =
+        resolve_node_cli(command)?;
+
+    let output = if cfg!(target_os = "windows")
+        && executable
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("cmd")
+            })
+    {
+        Command::new("cmd")
+            .arg("/C")
+            .arg(&executable)
+            .args(args)
+            .output()
+            .ok()?
+    } else {
+        Command::new(&executable)
+            .args(args)
+            .output()
+            .ok()?
+    };
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let bytes = if output.stdout.is_empty() {
+        output.stderr
+    } else {
+        output.stdout
+    };
+
+    String::from_utf8(bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .lines()
+                .find(|line| {
+                    !line.trim().is_empty()
+                })
+                .map(|line| {
+                    line.trim().to_string()
+                })
+        })
+}
+
 pub fn install_vivliostyle() -> Result<(), String> {
     let npm = npm_exe().ok_or_else(|| "Node portable no está instalado.".to_string())?;
     let prefix = paths::portable_node_prefix();

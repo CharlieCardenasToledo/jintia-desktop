@@ -181,7 +181,6 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
 
     let optional_visual_tools = [
         ("Graphviz", "dot", &["-V"][..], "Redes, mapas conceptuales y grafos."),
-        ("Mermaid CLI", "mmdc", &["--version"][..], "Flujos y decisiones simples."),
         ("PlantUML", "plantuml", &["-version"][..], "UML y diagramas técnicos formales."),
         ("D2", "d2", &["--version"][..], "Diagramas declarativos y cronologías."),
         ("Vega-Lite CLI", "vl2svg", &["--version"][..], "Gráficos cuantitativos reproducibles."),
@@ -199,6 +198,35 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             command: format!("{command} {}", version_args.join(" ")),
         },
     ));
+
+    let mermaid =
+        crate::runtimes::resolve_node_cli("mmdc");
+
+    dependencies.push(DependencyStatus {
+        name: "Mermaid CLI".to_string(),
+        installed: mermaid.is_some(),
+        version: crate::runtimes::node_cli_version(
+            "mmdc",
+            &["--version"],
+        ),
+        required: false,
+        installable: false,
+        note: if let Some(path) = mermaid {
+            if path.starts_with(
+                crate::paths::portable_node_bin_dir()
+            ) {
+                "Usando Mermaid CLI administrado por Jintia."
+                    .to_string()
+            } else {
+                "Mermaid CLI disponible en el sistema."
+                    .to_string()
+            }
+        } else {
+            "Flujos y decisiones simples. Capacidad visual opcional; se instala automáticamente cuando el perfil de la disciplina la requiere."
+                .to_string()
+        },
+        command: "mmdc --version".to_string(),
+    });
     let chrome = chrome_executable();
     dependencies.push(DependencyStatus {
         name: "Google Chrome".to_string(),
