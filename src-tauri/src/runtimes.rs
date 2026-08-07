@@ -258,15 +258,199 @@ fn emit_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
 
 // ==================== PYTHON RUNTIME ====================
 
-const PYTHON_VERSION: &str = "3.13.0";
-const GET_PIP_URL: &str = "https://bootstrap.pypa.io/get-pip.py";
+const PYTHON_VERSION: &str = "3.13.15";
+const PYTHON_STANDALONE_RELEASE: &str = "20260807";
 
-fn python_download_url() -> Option<&'static str> {
-    #[cfg(target_os = "windows")]
-    return Some("https://www.python.org/ftp/python/3.13.0/python-3.13.0-embed-amd64.zip");
+fn python_standalone_target() -> Result<&'static str, String> {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        return Ok("x86_64-pc-windows-msvc");
+    }
 
-    #[cfg(not(target_os = "windows"))]
-    return None;
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return Ok("aarch64-apple-darwin");
+    }
+
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        return Ok("x86_64-apple-darwin");
+    }
+
+    #[allow(unreachable_code)]
+    Err("Python administrado no está disponible para esta plataforma.".to_string())
+}
+
+fn python_asset_filename() -> Result<String, String> {
+    let target = python_standalone_target()?;
+    Ok(format!(
+        "cpython-{PYTHON_VERSION}+{PYTHON_STANDALONE_RELEASE}-{target}-install_only_stripped.tar.gz"
+    ))
+}
+
+struct PythonStandaloneAsset {
+    filename: String,
+    url: String,
+    sha256: String,
+}
+
+fn resolve_python_asset() -> Result<PythonStandaloneAsset, String> {
+    let filename = python_asset_filename()?;
+
+    let api_url = format!(
+        "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{PYTHON_STANDALONE_RELEASE}"
+    );
+
+    let response = reqwest::blocking::Client::new()
+        .get(&api_url)
+        .header("User-Agent", "jintia-desktop")
+        .send()
+        .map_err(|e| format!("Error consultando releases de Python: {e}"))?
+        .text()
+        .map_err(|e| format!("Error leyendo respuesta de releases: {e}"))?;
+
+    let json: serde_json::Value = serde_json::from_str(&response)
+        .map_err(|e| format!("Error parseando respuesta de GitHub: {e}"))?;
+
+    let assets = json["assets"]
+        .as_array()
+        .ok_or("Respuesta de GitHub sin campo 'assets'")?;
+
+    let asset = assets
+        .iter()
+        .find(|a| a["name"].as_str() == Some(&filename))
+        .ok_or_else(|| format!("Asset '{filename}' no encontrado en release {PYTHON_STANDALONE_RELEASE}"))?;
+
+    let url = asset["browser_download_url"]
+        .as_str()
+        .ok_or("Asset sin browser_download_url")?
+        .to_string();
+
+    let digest_raw = asset["digest"]
+        .as_str()
+        .ok_or_else(|| format!("Asset '{filename}' no tiene campo 'digest' — SHA-256 obligatorio"))?;
+
+    let sha256 = digest_raw
+        .strip_prefix("sha256:")
+        .ok_or_else(|| format!("digest no comienza con 'sha256:' — se obtuvo: {digest_raw}"))?
+        .to_string();
+
+    if sha256.len() != 64 {
+        return Err(format!("sha256 con longitud inesperada: {}", sha256.len()));
+    }
+
+    Ok(PythonStandaloneAsset { filename, url, sha256 })
+}
+
+fn extract_python_tar_gz(
+    archive_path: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    let file = fs::File::open(archive_path)
+        .map_err(|e| format!("No se pudo abrir el runtime Python: {e}"))?;
+
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+
+    let canonical_dest = destination
+        .canonicalize()
+        .unwrap_or_else(|_| destination.to_path_buf());
+
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("Error leyendo entradas del archive: {e}"))?
+    {
+        let mut entry = entry.map_err(|e| format!("Error en entrada del archive: {e}"))?;
+        let entry_path = entry
+            .path()
+            .map_err(|e| format!("Ruta inválida en archive: {e}"))?
+            .to_path_buf();
+
+        if entry_path.is_absolute() {
+            return Err(format!(
+                "Ruta absoluta rechazada en archive: {}",
+                entry_path.display()
+            ));
+        }
+
+        let components: Vec<_> = entry_path.components().collect();
+        for component in &components {
+            if matches!(component, std::path::Component::ParentDir) {
+                return Err(format!(
+                    "Path traversal rechazado en archive: {}",
+                    entry_path.display()
+                ));
+            }
+        }
+
+        let out = destination.join(&entry_path);
+
+        let canonical_out = out
+            .parent()
+            .and_then(|p| p.canonicalize().ok())
+            .map(|p| p.join(out.file_name().unwrap_or_default()))
+            .unwrap_or_else(|| out.clone());
+
+        if !canonical_out.starts_with(&canonical_dest) {
+            return Err(format!(
+                "Ruta fuera del directorio destino rechazada: {}",
+                entry_path.display()
+            ));
+        }
+
+        entry
+            .unpack(&out)
+            .map_err(|e| format!("No se pudo extraer Python: {e}"))?;
+    }
+
+    Ok(())
+}
+
+fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
+    let python_exe = if cfg!(target_os = "windows") {
+        prefix.join("python.exe")
+    } else {
+        prefix.join("bin").join("python3")
+    };
+
+    if !python_exe.is_file() {
+        return Err(format!(
+            "Ejecutable Python no encontrado en {}",
+            python_exe.display()
+        ));
+    }
+
+    let version_out = Command::new(&python_exe)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("No se pudo ejecutar python --version: {e}"))?;
+
+    let version_text = String::from_utf8_lossy(
+        if version_out.stdout.is_empty() {
+            &version_out.stderr
+        } else {
+            &version_out.stdout
+        }
+    );
+
+    if !version_text.trim().starts_with("Python 3.13.") {
+        return Err(format!(
+            "Versión de Python inesperada: {}",
+            version_text.trim()
+        ));
+    }
+
+    let pip_out = Command::new(&python_exe)
+        .args(["-m", "pip", "--version"])
+        .output()
+        .map_err(|e| format!("No se pudo ejecutar python -m pip --version: {e}"))?;
+
+    if !pip_out.status.success() {
+        let stderr = String::from_utf8_lossy(&pip_out.stderr);
+        return Err(format!("pip no está operativo: {}", stderr.trim()));
+    }
+
+    Ok(())
 }
 
 pub fn resolve_python() -> Option<String> {
@@ -287,23 +471,16 @@ pub fn resolve_python() -> Option<String> {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        let portable = paths::portable_python_exe();
-        if portable.is_file() {
-            return Some(portable.to_string_lossy().into_owned());
-        }
+    let portable = paths::portable_python_exe();
+    if portable.is_file() {
+        return Some(portable.to_string_lossy().into_owned());
     }
 
     None
 }
 
 pub fn portable_python_installed() -> bool {
-    #[cfg(target_os = "windows")]
-    return paths::portable_python_exe().is_file();
-
-    #[cfg(not(target_os = "windows"))]
-    return false;
+    paths::portable_python_exe().is_file()
 }
 
 pub fn python_version() -> Option<String> {
@@ -325,196 +502,114 @@ pub fn python_version() -> Option<String> {
 }
 
 pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
-    #[cfg(not(target_os = "windows"))]
-    return Err("Python portable solo está disponible en Windows".to_string());
+    let runtimes_dir = paths::portable_runtimes_dir();
+    fs::create_dir_all(&runtimes_dir)
+        .map_err(|e| format!("Error creando directorio: {e}"))?;
 
-    #[cfg(target_os = "windows")]
-    {
-        let runtimes_dir = paths::portable_runtimes_dir();
-        let python_dir = runtimes_dir.join("python");
-        let tmp_file = runtimes_dir.join(format!(".python-download-{}.tmp", PYTHON_VERSION));
+    emit_python_progress(app, "resolving", 0.0, "Resolviendo asset de Python...");
 
-        fs::create_dir_all(&runtimes_dir)
-            .map_err(|e| format!("Error creando directorio: {e}"))?;
+    let asset = resolve_python_asset()?;
 
-        emit_python_progress(app, "downloading", 0.0, "Descargando Python 3.13.0...");
+    let tmp_archive = runtimes_dir.join(format!(".python-download-{}.tmp", PYTHON_VERSION));
 
-        let url = python_download_url()
-            .ok_or("Python portable no disponible para esta plataforma")?;
-        let mut response = reqwest::blocking::get(url)
-            .map_err(|e| format!("Error descargando Python: {e}"))?;
+    emit_python_progress(app, "downloading", 5.0, &format!("Descargando {}...", asset.filename));
 
-        let total_size = response.content_length().unwrap_or(12_000_000u64);
-        let mut file = fs::File::create(&tmp_file)
-            .map_err(|e| format!("Error creando archivo temporal: {e}"))?;
+    let mut response = reqwest::blocking::get(&asset.url)
+        .map_err(|e| format!("Error descargando Python: {e}"))?;
 
-        let mut downloaded: u64 = 0;
-        let mut buffer = [0; 1024 * 64];
+    let total_size = response.content_length().unwrap_or(30_000_000u64);
+    let mut file = fs::File::create(&tmp_archive)
+        .map_err(|e| format!("Error creando archivo temporal: {e}"))?;
 
-        loop {
-            match response.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(n) => {
-                    file.write_all(&buffer[..n])
-                        .map_err(|e| format!("Error escribiendo descarga: {e}"))?;
-                    downloaded += n as u64;
-                    let percent = (downloaded as f32 / total_size as f32) * 100.0;
-                    emit_python_progress(
-                        app,
-                        "downloading",
-                        percent,
-                        &format!("Descargando Python ({:.1}%)", percent),
-                    );
-                }
-                Err(e) => {
-                    let _ = fs::remove_file(&tmp_file);
-                    emit_python_progress(app, "error", 0.0, &format!("Error en descarga: {e}"));
-                    return Err(format!("Error descargando: {e}"));
-                }
+    let mut downloaded: u64 = 0;
+    let mut buffer = [0; 1024 * 64];
+
+    loop {
+        match response.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                file.write_all(&buffer[..n])
+                    .map_err(|e| format!("Error escribiendo descarga: {e}"))?;
+                downloaded += n as u64;
+                let percent = 5.0 + (downloaded as f32 / total_size as f32) * 55.0;
+                emit_python_progress(
+                    app,
+                    "downloading",
+                    percent,
+                    &format!("Descargando Python ({:.1}%)", percent),
+                );
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp_archive);
+                emit_python_progress(app, "error", 0.0, &format!("Error en descarga: {e}"));
+                return Err(format!("Error descargando: {e}"));
             }
         }
-
-        drop(file);
-
-        emit_python_progress(app, "verifying", 50.0, "Verificando integridad del archivo...");
-        let expected_checksum = fetch_python_checksum().unwrap_or_default();
-        if !expected_checksum.is_empty() {
-            verify_sha256(&tmp_file, &expected_checksum).map_err(|e| {
-                let _ = fs::remove_file(&tmp_file);
-                e
-            })?;
-        }
-
-        emit_python_progress(app, "extracting", 55.0, "Extrayendo Python...");
-
-        if python_dir.exists() {
-            fs::remove_dir_all(&python_dir)
-                .map_err(|e| format!("Error removiendo instalación anterior: {e}"))?;
-        }
-
-        extract_python_zip(&tmp_file, &runtimes_dir)?;
-        let _ = fs::remove_file(&tmp_file);
-
-        emit_python_progress(app, "configuring", 70.0, "Configurando Python...");
-        enable_python_site(&python_dir)?;
-
-        emit_python_progress(app, "installing_pip", 80.0, "Instalando pip...");
-        install_python_pip(&python_dir)?;
-
-        emit_python_progress(app, "done", 100.0, "Python instalado correctamente.");
-
-        Ok(())
     }
-}
 
-#[cfg(target_os = "windows")]
-fn extract_python_zip(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> Result<(), String> {
-    use zip::ZipArchive;
+    drop(file);
 
-    let file = fs::File::open(zip_path)
-        .map_err(|e| format!("Error abriendo ZIP: {e}"))?;
+    emit_python_progress(app, "verifying", 62.0, "Verificando SHA-256...");
+    verify_sha256(&tmp_archive, &asset.sha256).map_err(|e| {
+        let _ = fs::remove_file(&tmp_archive);
+        e
+    })?;
 
-    let mut archive = ZipArchive::new(file)
-        .map_err(|e| format!("Error leyendo ZIP: {e}"))?;
+    let stage_dir = runtimes_dir.join(format!(".python-stage-{}", PYTHON_VERSION));
+    if stage_dir.exists() {
+        fs::remove_dir_all(&stage_dir)
+            .map_err(|e| format!("Error limpiando staging: {e}"))?;
+    }
+    fs::create_dir_all(&stage_dir)
+        .map_err(|e| format!("Error creando staging: {e}"))?;
 
-    let mut top_dir: Option<String> = None;
+    emit_python_progress(app, "extracting", 65.0, "Extrayendo Python...");
+    extract_python_tar_gz(&tmp_archive, &stage_dir).map_err(|e| {
+        let _ = fs::remove_file(&tmp_archive);
+        let _ = fs::remove_dir_all(&stage_dir);
+        e
+    })?;
 
-    for i in 0..archive.len() {
-        let mut file = archive
-            .by_index(i)
-            .map_err(|e| format!("Error leyendo entrada ZIP: {e}"))?;
+    let _ = fs::remove_file(&tmp_archive);
 
-        let outpath = dest_dir.join(file.name());
+    // El archive tiene estructura python/... dentro del tar
+    let staged_python = stage_dir.join("python");
+    if !staged_python.is_dir() {
+        let _ = fs::remove_dir_all(&stage_dir);
+        return Err("El archive no contiene el directorio 'python/' esperado".to_string());
+    }
 
-        if let Some(p) = file.name().split('/').next() {
-            if top_dir.is_none() && p.contains("python") {
-                top_dir = Some(p.to_string());
+    emit_python_progress(app, "validating", 85.0, "Validando runtime Python...");
+    validate_python_runtime(&staged_python).map_err(|e| {
+        let _ = fs::remove_dir_all(&stage_dir);
+        e
+    })?;
+
+    let python_dir = paths::portable_python_prefix();
+    let backup_dir = runtimes_dir.join(format!(".python-backup-{}", paths::timestamp()));
+
+    if python_dir.exists() {
+        fs::rename(&python_dir, &backup_dir)
+            .map_err(|e| format!("Error preparando reemplazo de Python: {e}"))?;
+    }
+
+    match fs::rename(&staged_python, &python_dir) {
+        Ok(_) => {
+            if backup_dir.exists() {
+                let _ = fs::remove_dir_all(&backup_dir);
             }
+            let _ = fs::remove_dir_all(&stage_dir);
         }
-
-        if file.is_dir() {
-            fs::create_dir_all(&outpath)
-                .map_err(|e| format!("Error creando directorio: {e}"))?;
-        } else {
-            if let Some(p) = outpath.parent() {
-                fs::create_dir_all(p)
-                    .map_err(|e| format!("Error creando directorio padre: {e}"))?;
+        Err(e) => {
+            if backup_dir.exists() {
+                let _ = fs::rename(&backup_dir, &python_dir);
             }
-            let mut outfile = fs::File::create(&outpath)
-                .map_err(|e| format!("Error creando archivo: {e}"))?;
-            std::io::copy(&mut file, &mut outfile)
-                .map_err(|e| format!("Error extrayendo archivo: {e}"))?;
+            let _ = fs::remove_dir_all(&stage_dir);
+            return Err(format!("Error activando Python: {e}"));
         }
     }
 
-    if let Some(top) = top_dir {
-        let src = dest_dir.join(&top);
-        let dst = dest_dir.join("python");
-        if src.exists() && src != dst {
-            fs::rename(&src, &dst)
-                .map_err(|e| format!("Error renombrando directorio: {e}"))?;
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn enable_python_site(python_dir: &std::path::Path) -> Result<(), String> {
-    let pth_path = python_dir.join("python313._pth");
-
-    if !pth_path.exists() {
-        return Ok(());
-    }
-
-    let content = fs::read_to_string(&pth_path)
-        .map_err(|e| format!("Error leyendo ._pth: {e}"))?;
-
-    let modified = content.lines()
-        .map(|line| {
-            if line.trim() == "#import site" {
-                "import site".to_string()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    fs::write(&pth_path, modified)
-        .map_err(|e| format!("Error escribiendo ._pth: {e}"))?;
-
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn install_python_pip(python_dir: &std::path::Path) -> Result<(), String> {
-    let get_pip_path = python_dir.join("get-pip.py");
-    let python_exe = python_dir.join("python.exe");
-
-    let pip_script = reqwest::blocking::get(GET_PIP_URL)
-        .map_err(|e| format!("Error descargando get-pip.py: {e}"))?
-        .text()
-        .map_err(|e| format!("Error leyendo get-pip.py: {e}"))?;
-
-    fs::write(&get_pip_path, &pip_script)
-        .map_err(|e| format!("Error escribiendo get-pip.py: {e}"))?;
-
-    let output = Command::new(&python_exe)
-        .args(&[
-            get_pip_path.to_string_lossy().as_ref(),
-            "--no-warn-script-location",
-        ])
-        .output()
-        .map_err(|e| format!("Error ejecutando get-pip.py: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("get-pip.py falló: {}", stderr));
-    }
-
-    let _ = fs::remove_file(&get_pip_path);
-
+    emit_python_progress(app, "done", 100.0, "Python instalado correctamente.");
     Ok(())
 }
 
@@ -928,23 +1023,6 @@ fn fetch_node_checksum() -> Result<String, String> {
     }
 
     Err(format!("Checksum no encontrado para {filename}"))
-}
-
-#[cfg(target_os = "windows")]
-fn fetch_python_checksum() -> Result<String, String> {
-    let url = format!(
-        "https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip.sha256"
-    );
-    reqwest::blocking::get(&url)
-        .map_err(|e| format!("Error descargando checksum Python: {e}"))?
-        .text()
-        .map_err(|e| format!("Error leyendo checksum Python: {e}"))
-        .and_then(|t| {
-            t.split_whitespace()
-                .next()
-                .map(|s| s.to_string())
-                .ok_or_else(|| "Checksum vacío en archivo".to_string())
-        })
 }
 
 // ==================== SKILL RUNTIME ====================

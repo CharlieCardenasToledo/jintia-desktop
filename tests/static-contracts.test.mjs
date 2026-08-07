@@ -1438,3 +1438,105 @@ test('cada invoke() en api.js tiene su handler en generate_handler![] de lib.rs'
     `invoke() en api.js sin handler en lib.rs: ${missing.join(', ')}`
   );
 });
+
+test('Python administrado está disponible en Windows y macOS sin instaladores globales', async () => {
+  const [paths, runtimes, cargo] =
+    await Promise.all([
+      readFile(
+        new URL(
+          'src-tauri/src/paths.rs',
+          root
+        ),
+        'utf8'
+      ),
+      readFile(
+        new URL(
+          'src-tauri/src/runtimes.rs',
+          root
+        ),
+        'utf8'
+      ),
+      readFile(
+        new URL(
+          'src-tauri/Cargo.toml',
+          root
+        ),
+        'utf8'
+      ),
+    ]);
+
+  assert.match(
+    paths,
+    /pub fn portable_python_prefix\(\)/
+  );
+
+  assert.match(
+    paths,
+    /join\("bin"\)[\s\S]*join\("python3"\)/
+  );
+
+  assert.match(
+    runtimes,
+    /aarch64-apple-darwin/
+  );
+
+  assert.match(
+    runtimes,
+    /x86_64-apple-darwin/
+  );
+
+  assert.match(
+    runtimes,
+    /x86_64-pc-windows-msvc/
+  );
+
+  assert.match(
+    runtimes,
+    /install_only_stripped\.tar\.gz/
+  );
+
+  assert.match(
+    runtimes,
+    /PYTHON_STANDALONE_RELEASE/
+  );
+
+  assert.match(
+    runtimes,
+    /sha256:/
+  );
+
+  assert.match(
+    runtimes,
+    /GzDecoder/
+  );
+
+  assert.match(
+    runtimes,
+    /tar::Archive/
+  );
+
+  assert.doesNotMatch(
+    runtimes,
+    /Python portable solo está disponible en Windows/
+  );
+
+  assert.doesNotMatch(
+    runtimes,
+    /GET_PIP_URL/
+  );
+
+  assert.doesNotMatch(
+    runtimes,
+    /get-pip\.py/
+  );
+
+  assert.match(
+    cargo,
+    /^flate2\s*=/m
+  );
+
+  assert.match(
+    cargo,
+    /^tar\s*=/m
+  );
+});

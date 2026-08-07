@@ -331,7 +331,16 @@ pub fn portable_vivliostyle_bin() -> PathBuf {
 }
 
 pub fn portable_python_exe() -> PathBuf {
-    portable_runtimes_dir().join("python").join("python.exe")
+    let root = portable_runtimes_dir().join("python");
+    if cfg!(target_os = "windows") {
+        root.join("python.exe")
+    } else {
+        root.join("bin").join("python3")
+    }
+}
+
+pub fn portable_python_prefix() -> PathBuf {
+    portable_runtimes_dir().join("python")
 }
 
 pub fn portable_skill_bin() -> PathBuf {
