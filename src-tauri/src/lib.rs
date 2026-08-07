@@ -471,6 +471,7 @@ pub fn run() {
         ])
         .setup(|_app| {
             paths::migrate_app_dir_if_needed();
+            paths::migrate_runtimes_dir_if_needed();
             Ok(())
         })
         .run(tauri::generate_context!())

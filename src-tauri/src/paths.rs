@@ -275,10 +275,27 @@ pub fn path_text(path: &Path) -> String {
     stripped.replace('\\', "/")
 }
 
+pub fn portable_runtimes_base_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .ok_or("LOCALAPPDATA not set")?;
+        return Ok(base.join(APP_DIR_NAME));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        app_config_dir()
+    }
+}
+
 pub fn portable_runtimes_dir() -> PathBuf {
-    app_config_dir()
+    portable_runtimes_base_dir()
         .unwrap_or_else(|_| {
-            std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string()))
+            std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."))
         })
         .join("runtimes")
 }
@@ -302,6 +319,25 @@ pub fn portable_skill_bin() -> PathBuf {
         skill_dir.join("skill").join("bin").join("jintia.js")
     } else {
         skill_dir.join("skill").join("bin").join("jintia")
+    }
+}
+
+pub fn migrate_runtimes_dir_if_needed() {
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = match std::env::var_os("APPDATA") {
+            Some(val) => PathBuf::from(val),
+            None => return,
+        };
+        let legacy_runtimes = appdata.join(APP_DIR_NAME).join("runtimes");
+        let new_runtimes = match portable_runtimes_base_dir() {
+            Ok(base) => base.join("runtimes"),
+            Err(_) => return,
+        };
+
+        if legacy_runtimes.exists() && !new_runtimes.exists() {
+            let _ = fs::rename(&legacy_runtimes, &new_runtimes);
+        }
     }
 }
 
