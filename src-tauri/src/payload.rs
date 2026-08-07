@@ -24,7 +24,7 @@ const OPENAI_PLUGIN_README: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ji
 static REFERENCES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/references");
 static SCRIPTS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/scripts");
 static RUNTIME: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/runtime");
-static TEMPLATES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/templates");
+static THEMES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/themes");
 static CONFIG: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/config");
 static AGENTS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/agents");
 static COMMANDS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/commands");
@@ -67,7 +67,7 @@ fn materialize_payload(target: &Path, installed: Option<&Path>) -> Result<(), St
     write_embedded_dir(&REFERENCES, &target.join("references"))?;
     write_embedded_dir(&SCRIPTS, &target.join("scripts"))?;
     write_embedded_dir(&RUNTIME, &target.join("runtime"))?;
-    write_embedded_dir(&TEMPLATES, &target.join("templates"))?;
+    write_embedded_dir(&THEMES, &target.join("themes"))?;
     write_embedded_dir(&CONFIG, &target.join("config"))?;
     write_embedded_dir(&AGENTS, &target.join("agents"))?;
     write_embedded_dir(&COMMANDS, &target.join("commands"))?;
@@ -120,7 +120,7 @@ fn installed_payload_matches(target: &Path) -> bool {
         && embedded_dir_matches(&REFERENCES, &target.join("references"), target, false)
         && embedded_dir_matches(&SCRIPTS, &target.join("scripts"), target, false)
         && embedded_dir_matches(&RUNTIME, &target.join("runtime"), target, false)
-        && embedded_dir_matches(&TEMPLATES, &target.join("templates"), target, false)
+        && embedded_dir_matches(&THEMES, &target.join("themes"), target, false)
         && embedded_dir_matches(&CONFIG, &target.join("config"), target, true)
         && embedded_dir_matches(&AGENTS, &target.join("agents"), target, false)
         && embedded_dir_matches(&COMMANDS, &target.join("commands"), target, false)
@@ -454,7 +454,7 @@ fn payload_fingerprint(installed: Option<&Path>) -> String {
     SKILL_VERSION.hash(&mut hasher);
     hash_embedded_dir(&REFERENCES, &mut hasher, installed, false);
     hash_embedded_dir(&SCRIPTS, &mut hasher, installed, false);
-    hash_embedded_dir(&TEMPLATES, &mut hasher, installed, false);
+    hash_embedded_dir(&THEMES, &mut hasher, installed, false);
     hash_embedded_dir(&CONFIG, &mut hasher, installed, true);
     hash_embedded_dir(&AGENTS, &mut hasher, installed, false);
     hash_embedded_dir(&COMMANDS, &mut hasher, installed, false);
@@ -529,7 +529,7 @@ pub fn export_skill_zip(destination_dir: String) -> ActionResult {
         add_dir_to_zip(&mut zip, &REFERENCES, "references")?;
         add_dir_to_zip(&mut zip, &SCRIPTS, "scripts")?;
         add_dir_to_zip(&mut zip, &RUNTIME, "runtime")?;
-        add_dir_to_zip(&mut zip, &TEMPLATES, "templates")?;
+        add_dir_to_zip(&mut zip, &THEMES, "themes")?;
         add_dir_to_zip(&mut zip, &CONFIG, "config")?;
         add_dir_to_zip(&mut zip, &AGENTS, "agents")?;
         add_dir_to_zip(&mut zip, &COMMANDS, "commands")?;
@@ -641,7 +641,7 @@ pub fn export_openai_plugin_zip(destination_dir: String) -> ActionResult {
         add_dir_to_zip(&mut zip, &REFERENCES, &format!("{prefix}/references"))?;
         add_dir_to_zip(&mut zip, &SCRIPTS, &format!("{prefix}/scripts"))?;
         add_dir_to_zip(&mut zip, &RUNTIME, &format!("{prefix}/runtime"))?;
-        add_dir_to_zip(&mut zip, &TEMPLATES, &format!("{prefix}/templates"))?;
+        add_dir_to_zip(&mut zip, &THEMES, &format!("{prefix}/templates"))?;
         add_dir_to_zip(&mut zip, &CONFIG, &format!("{prefix}/config"))?;
         add_dir_to_zip(&mut zip, &AGENTS, &format!("{prefix}/agents"))?;
         add_dir_to_zip(&mut zip, &COMMANDS, &format!("{prefix}/commands"))?;

@@ -152,13 +152,14 @@ pub struct NotebookEntry {
 pub struct TemplateMeta {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(rename = "previewType")]
-    pub preview_type: String,
+    #[serde(default)]
     pub featured: bool,
-    #[serde(rename = "documentClass")]
-    pub document_class: String,
+    #[serde(default)]
+    pub version: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

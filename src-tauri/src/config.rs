@@ -12,11 +12,10 @@ use include_dir::{include_dir, Dir};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Mutex;
 
-static TEMPLATES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/templates");
-const DEFAULT_TEMPLATE: &str = "elegantbook-clasico";
+static THEMES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/themes");
+const DEFAULT_THEME: &str = "jintia-clasico";
 static CONFIG_WRITE_OPERATION: Mutex<()> = Mutex::new(());
 
 fn clean(value: &str) -> String {
@@ -44,23 +43,21 @@ fn validate_institution(config: &InstitutionConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn active_template_from_settings() -> String {
+fn active_theme_from_settings() -> String {
     let path = app_config_dir().ok().map(|dir| dir.join("settings.json"));
     path.and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .and_then(|value| value.get("activeTemplate")?.as_str().map(str::to_string))
-        .filter(|id| template_exists(id))
-        .unwrap_or_else(|| DEFAULT_TEMPLATE.to_string())
+        .filter(|id| theme_exists(id))
+        .unwrap_or_else(|| DEFAULT_THEME.to_string())
 }
 
-pub fn template_exists(id: &str) -> bool {
+pub fn theme_exists(id: &str) -> bool {
     !id.is_empty()
         && id
             .chars()
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
-        && TEMPLATES.get_file(format!("{id}/meta.json")).is_some()
-        && TEMPLATES.get_file(format!("{id}/template.md")).is_some()
-        && TEMPLATES.get_file(format!("{id}/preamble.tex")).is_some()
+        && THEMES.get_file(format!("{id}/meta.json")).is_some()
 }
 
 pub struct ActiveInstitution {
@@ -111,48 +108,6 @@ pub fn active_institution() -> ActiveInstitution {
     }
 }
 
-const TEMPLATE_CONTRACT_FILES: &[&str] = &["meta.json", "template.md", "skeleton.tex"];
-
-/// Copia el preámbulo y los archivos adicionales de la plantilla activa
-/// (clases .cls, .sty, etc.) a la carpeta de compilación: así no se depende
-/// de que el sistema del usuario ya tenga instaladas clases LaTeX poco
-/// comunes como `elegantbook`, y el PDF generado usa el mismo preámbulo
-/// visual (colores, bloques) que usa la skill para las guías reales.
-pub fn copy_template_assets(template_id: &str, dest_dir: &std::path::Path) -> Result<(), String> {
-    let Some(template_dir) = TEMPLATES.get_dir(template_id) else {
-        return Err(format!("Plantilla desconocida o incompleta: {template_id}"));
-    };
-    let primary_rgb = active_institution().primary_rgb;
-    for file in template_dir.files() {
-        let Some(name) = file.path().file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if TEMPLATE_CONTRACT_FILES.contains(&name) {
-            continue;
-        }
-        let bytes = if name == "preamble.tex" {
-            String::from_utf8_lossy(file.contents())
-                .replace("{{PRIMARY_RGB}}", &primary_rgb)
-                .into_bytes()
-        } else {
-            file.contents().to_vec()
-        };
-        fs::write(dest_dir.join(name), bytes)
-            .map_err(|error| format!("No se pudo copiar {name} de la plantilla: {error}"))?;
-    }
-    Ok(())
-}
-
-pub fn template_assets_fingerprint(template_id: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    if let Some(template_dir) = TEMPLATES.get_dir(template_id) {
-        for file in template_dir.files() {
-            file.path().hash(&mut hasher);
-            file.contents().hash(&mut hasher);
-        }
-    }
-    format!("{:016x}", hasher.finish())
-}
 
 pub fn apply_institution(config: InstitutionConfig) -> ActionResult {
     let _operation = match CONFIG_WRITE_OPERATION.lock() {
@@ -172,7 +127,7 @@ pub fn apply_institution(config: InstitutionConfig) -> ActionResult {
         }
     }
 
-    let active_template = active_template_from_settings();
+    let active_template = active_theme_from_settings();
     let value = json!({
         "schemaVersion": 1,
         "institution": {
@@ -294,14 +249,14 @@ pub fn save_notebooks(entries: Vec<NotebookEntry>) -> ActionResult {
 }
 
 pub fn list_templates() -> Vec<TemplateMeta> {
-    let mut templates = TEMPLATES
+    let mut templates = THEMES
         .dirs()
         .filter_map(|dir| {
             let id = dir.path().file_name()?.to_str()?;
-            TEMPLATES.get_file(format!("{id}/meta.json"))
+            THEMES.get_file(format!("{id}/meta.json"))
         })
         .filter_map(|file| serde_json::from_slice::<TemplateMeta>(file.contents()).ok())
-        .filter(|meta| template_exists(&meta.id))
+        .filter(|meta| theme_exists(&meta.id))
         .collect::<Vec<_>>();
     templates.sort_by(|a, b| {
         b.featured
@@ -312,7 +267,7 @@ pub fn list_templates() -> Vec<TemplateMeta> {
 }
 
 pub fn get_active_template() -> String {
-    active_template_from_settings()
+    active_theme_from_settings()
 }
 
 pub fn institution_is_configured() -> bool {
@@ -337,13 +292,12 @@ mod tests {
     use super::list_templates;
 
     #[test]
-    fn embedded_templates_are_available() {
+    fn embedded_themes_are_available() {
         let ids = list_templates()
             .into_iter()
-            .map(|template| template.id)
+            .map(|theme| theme.id)
             .collect::<Vec<_>>();
-        assert!(ids.contains(&"elegantbook-clasico".to_string()));
-        assert!(ids.contains(&"kaohandt-marginal".to_string()));
+        assert!(ids.contains(&"jintia-clasico".to_string()));
     }
 }
 
@@ -352,8 +306,8 @@ pub fn set_active_template(template_id: String) -> ActionResult {
         Ok(operation) => operation,
         Err(_) => return ActionResult::error("El estado interno de plantillas está bloqueado."),
     };
-    if !template_exists(&template_id) {
-        return ActionResult::error(format!("Plantilla desconocida o incompleta: {template_id}"));
+    if !theme_exists(&template_id) {
+        return ActionResult::error(format!("Tema desconocido: {template_id}"));
     }
     let settings = json!({ "schemaVersion": 1, "activeTemplate": template_id });
     let settings_path = match app_config_dir() {

@@ -163,8 +163,8 @@ fn first_invalid_step(
             "los datos de tu institución o perfil académico ya no están guardados",
         ));
     }
-    if !config::template_exists(&config::get_active_template()) {
-        return Some((3, "la plantilla que tenías elegida ya no está disponible"));
+    if !config::theme_exists(&config::get_active_template()) {
+        return Some((3, "el tema que tenías elegido ya no está disponible"));
     }
     if !target_ready(&status.selected_target) {
         return Some((
@@ -235,8 +235,8 @@ pub fn advance(step: u8, selected_target: Option<String>) -> OnboardingResult {
                     "Completa los datos de tu institución y tu perfil antes de continuar."
                         .to_string(),
                 )
-            } else if !config::template_exists(&config::get_active_template()) {
-                Err("Elige una plantilla para continuar.".to_string())
+            } else if !config::theme_exists(&config::get_active_template()) {
+                Err("Elige un tema para continuar.".to_string())
             } else {
                 Ok(())
             }

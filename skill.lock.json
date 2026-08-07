@@ -6,7 +6,7 @@
   "minimumDesktopVersion": "1.1.0",
   "manifest": {
     "file": "jintia-release-manifest.json",
-    "sha256": "848fa0ee1b22120322e75e08852c54b007a02b862d5ee38c2e8e997c55c06187"
+    "sha256": "4e50b882a3bb1ed414ce3dfa556450f53992fc04117655a684c9d071a6dd8aeb"
   },
   "mcp": {
     "package": "@charlie.act7/gemini-notebook-mcp",
@@ -17,14 +17,14 @@
   "artifacts": {
     "skill": {
       "file": "jintia-skill-11.5.1.zip",
-      "sha256": "991d43751ac59f081799a3ad9cf88c2ba79c4ba1fb318ef59f41680f60e043c8",
-      "bytes": 176511,
+      "sha256": "1efb8f8ad1986ea99ecbbc37ca6b368f7388f763bbd536b7125ea72c6852cddb",
+      "bytes": 189571,
       "installRoot": "jintia-skill"
     },
     "openaiPlugin": {
       "file": "jintia-openai-plugin-11.5.1.zip",
-      "sha256": "5b03b9ddf70bf890b930d7d607fca6ba392a785c4c25892072384a002bd49499",
-      "bytes": 181131,
+      "sha256": "0186cc528c5899132623623d1ca6bdf5c7758e1bd3fa27a2e6c7d3ce45ad7660",
+      "bytes": 194555,
       "installRoot": "jintia"
     }
   }

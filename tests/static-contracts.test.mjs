@@ -54,7 +54,7 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   assert.match(lock.artifacts.skill.sha256, /^[a-f0-9]{64}$/);
   assert.match(lock.artifacts.openaiPlugin.sha256, /^[a-f0-9]{64}$/);
   assert.match(payload, /\$OUT_DIR\/jintia-skill/);
-  assert.match(config, /\$OUT_DIR\/jintia-skill\/templates/);
+  assert.match(config, /\$OUT_DIR\/jintia-skill\/themes/);
   assert.match(build, /skill\.lock\.json/);
   assert.match(build, /fn verify/);
   assert.match(build, /enclosed_name/);
