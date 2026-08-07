@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use tauri::AppHandle;
 use tauri::Emitter;
+use sha2::{Digest, Sha256};
+use hex;
 
 const NODE_VERSION: &str = "22.13.0";
 
@@ -115,6 +117,15 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
     }
 
     drop(file);
+
+    emit_progress(app, "verifying", 100.0, "Verificando integridad del archivo...");
+    let expected_checksum = fetch_node_checksum().unwrap_or_default();
+    if !expected_checksum.is_empty() {
+        verify_sha256(&tmp_file, &expected_checksum).map_err(|e| {
+            let _ = fs::remove_file(&tmp_file);
+            e
+        })?;
+    }
 
     emit_progress(app, "extracting", 100.0, "Extrayendo Node.js...");
 
@@ -361,7 +372,16 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
 
         drop(file);
 
-        emit_python_progress(app, "extracting", 50.0, "Extrayendo Python...");
+        emit_python_progress(app, "verifying", 50.0, "Verificando integridad del archivo...");
+        let expected_checksum = fetch_python_checksum().unwrap_or_default();
+        if !expected_checksum.is_empty() {
+            verify_sha256(&tmp_file, &expected_checksum).map_err(|e| {
+                let _ = fs::remove_file(&tmp_file);
+                e
+            })?;
+        }
+
+        emit_python_progress(app, "extracting", 55.0, "Extrayendo Python...");
 
         if python_dir.exists() {
             fs::remove_dir_all(&python_dir)
@@ -503,4 +523,75 @@ fn emit_python_progress(app: &AppHandle, phase: &str, percent: f32, message: &st
             "message": message,
         }),
     );
+}
+
+// ==================== CHECKSUM VERIFICATION ====================
+
+fn verify_sha256(file_path: &std::path::Path, expected_hex: &str) -> Result<(), String> {
+    let mut file = fs::File::open(file_path)
+        .map_err(|e| format!("Error abriendo archivo para verificar: {e}"))?;
+
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 1024 * 64];
+
+    loop {
+        let n = file.read(&mut buffer)
+            .map_err(|e| format!("Error leyendo para checksum: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+
+    let actual = hex::encode(hasher.finalize());
+    let expected = expected_hex.trim().to_lowercase();
+
+    if actual != expected {
+        return Err(format!(
+            "Checksum inválido. Esperado: {}…, Actual: {}…",
+            &expected[..16.min(expected.len())],
+            &actual[..16.min(actual.len())]
+        ));
+    }
+
+    Ok(())
+}
+
+fn fetch_node_checksum() -> Result<String, String> {
+    let url = format!("https://nodejs.org/dist/v{NODE_VERSION}/SHASUMS256.txt");
+    let text = reqwest::blocking::get(&url)
+        .map_err(|e| format!("Error descargando checksums: {e}"))?
+        .text()
+        .map_err(|e| format!("Error leyendo checksums: {e}"))?;
+
+    let filename = node_download_url()
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+
+    for line in text.lines() {
+        let parts: Vec<&str> = line.splitn(2, "  ").collect();
+        if parts.len() == 2 && parts[1].trim() == filename {
+            return Ok(parts[0].trim().to_string());
+        }
+    }
+
+    Err(format!("Checksum no encontrado para {filename}"))
+}
+
+#[cfg(target_os = "windows")]
+fn fetch_python_checksum() -> Result<String, String> {
+    let url = format!(
+        "https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip.sha256"
+    );
+    reqwest::blocking::get(&url)
+        .map_err(|e| format!("Error descargando checksum Python: {e}"))?
+        .text()
+        .map_err(|e| format!("Error leyendo checksum Python: {e}"))
+        .and_then(|t| {
+            t.split_whitespace()
+                .next()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "Checksum vacío en archivo".to_string())
+        })
 }
