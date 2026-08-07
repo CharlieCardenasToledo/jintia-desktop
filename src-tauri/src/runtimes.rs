@@ -526,6 +526,28 @@ fn emit_python_progress(app: &AppHandle, phase: &str, percent: f32, message: &st
     );
 }
 
+// ==================== PIP PACKAGES ====================
+
+pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+    let python_exe = paths::portable_python_exe();
+    if !python_exe.is_file() {
+        return Err("Python portable no está instalado.".to_string());
+    }
+    let output = Command::new(&python_exe)
+        .args(["-m", "pip", "install", "--quiet"])
+        .args(packages)
+        .output()
+        .map_err(|e| format!("Error ejecutando pip: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("pip install falló: {stderr}"));
+    }
+    Ok(())
+}
+
 // ==================== CHECKSUM VERIFICATION ====================
 
 fn verify_sha256(file_path: &std::path::Path, expected_hex: &str) -> Result<(), String> {

@@ -726,6 +726,17 @@ pub fn installed_skill_version() -> String {
         .unwrap_or_default()
 }
 
+pub fn portable_skill_version() -> Option<String> {
+    let pkg_path = crate::paths::portable_runtimes_dir()
+        .join("jintia")
+        .join("skill")
+        .join("package.json");
+    fs::read_to_string(&pkg_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["version"].as_str().map(|s| s.to_string()))
+}
+
 pub fn skill_is_current() -> bool {
     installed_skill_dir()
         .ok()

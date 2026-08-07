@@ -210,6 +210,10 @@ export async function getCapabilitiesProfiles() {
   return invoke("get_capabilities_profiles");
 }
 
+export async function installProfilePackages(packages) {
+  return invoke("install_profile_packages", { packages });
+}
+
 // ── Preview LaTeX local ──────────────────────────────────────────────────
 // ── Diálogos ─────────────────────────────────────────────────────────────
 export async function pickDirectory(title, defaultPath = undefined) {

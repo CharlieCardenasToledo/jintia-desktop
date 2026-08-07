@@ -417,6 +417,17 @@ async fn run_migration(project_path: String) -> ActionResult {
 }
 
 #[tauri::command]
+async fn install_profile_packages(packages: Vec<String>) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        runtimes::install_pip_packages(&packages)
+            .map(|_| ActionResult::ok("Paquetes del perfil instalados correctamente."))
+            .unwrap_or_else(|e| ActionResult::error(e))
+    })
+    .await
+    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
+
+#[tauri::command]
 async fn get_capabilities_profiles() -> serde_json::Value {
     tauri::async_runtime::spawn_blocking(|| {
         let skill_path = match crate::runtimes::resolve_skill() {
@@ -484,6 +495,7 @@ pub fn run() {
             set_active_template,
             run_skill_tool,
             get_capabilities_profiles,
+            install_profile_packages,
             check_migration_needed,
             run_migration,
         ])

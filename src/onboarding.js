@@ -26,6 +26,8 @@ import {
   runNotebookLMAuth,
   setActiveTemplate,
   getCapabilitiesProfiles,
+  getDefaultCourseRoot,
+  installProfilePackages,
 } from "./api.js";
 import { escapeHtml } from "./dom.js";
 import { state, saveConfig } from "./state.js";
@@ -855,7 +857,23 @@ function welcomeStep() {
     }
   ];
 
+  const workspacePath = state.config.courseRoot || "";
+  const workspaceLabel = workspacePath
+    ? escapeHtml(workspacePath)
+    : "Documentos / Jintia (predeterminada)";
+
   return `<section>
+    <div class="${CALLOUT} !mb-4 !items-center !gap-3 !p-3">
+      ${ic("folder", 16)}
+      <div class="flex-1 min-w-0">
+        <span class="font-semibold text-slate-700">Carpeta de trabajo: </span>
+        <span id="onb-workspace-label" class="text-slate-500 break-all">${workspaceLabel}</span>
+      </div>
+      <button type="button" id="onb-change-workspace" class="${BTN_SECONDARY} flex-shrink-0 text-xs !h-7 !px-2.5">
+        ${ic("folder-open", 13)} Cambiar
+      </button>
+    </div>
+
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl mx-auto mb-6">
       ${feature("brain", "Convierte tu sílabo", "Sube el sílabo de tu materia y quedará estructurado como guía.")}
       ${feature("layout-dashboard", "Organiza por semanas", "Cada semana queda con sus temas, actividades y bibliografía.")}
@@ -1648,6 +1666,22 @@ function bindStepEvents(current) {
     if (preview) preview.style.background = event.target.value;
     if (label) label.textContent = event.target.value;
   });
+  if (current === 1) {
+    root.querySelector("#onb-change-workspace")?.addEventListener("click", async () => {
+      let defaultPath = state.config.courseRoot;
+      if (!defaultPath) {
+        const result = await getDefaultCourseRoot().catch(() => null);
+        defaultPath = result?.path || undefined;
+      }
+      const picked = await pickDirectory("Elige la carpeta de trabajo de Jintia", defaultPath);
+      if (picked) {
+        state.config.courseRoot = picked;
+        saveConfig();
+        const label = root.querySelector("#onb-workspace-label");
+        if (label) label.textContent = picked;
+      }
+    });
+  }
   if (current === 2) revealFocusedDependency();
   if (current === 3) {
     root.querySelector("#onb-extract-palette")?.addEventListener("click", () => runOnboardingOperation(
@@ -1770,12 +1804,29 @@ async function performDependencyInstall(name) {
   toast(`Instalando ${name}…`, "loading", 120000);
   let result;
   if (name === "Node.js") result = await downloadNodeRuntime();
-  else if (name === "Python") result = await downloadPythonRuntime();
+  else if (name === "Python") {
+    result = await downloadPythonRuntime();
+    if (result.success) await installDisciplinePackages();
+  }
   else if (name === "Jintia Skill") result = await downloadSkillRuntime();
   else result = await installDependency(name, true);
   toast(result.message, result.success ? "success" : "error", 9000);
   runtime.dependencies = await checkDependencies();
   renderCurrentStep();
+}
+
+async function installDisciplinePackages() {
+  const discipline = state.config.discipline ?? "";
+  if (!discipline) return;
+  try {
+    const caps = await getCapabilitiesProfiles();
+    const profileId = caps?.disciplines?.[discipline];
+    const packages = profileId ? (caps?.profiles?.[profileId]?.pip ?? []) : [];
+    if (packages.length > 0) {
+      toast("Instalando paquetes del perfil…", "loading", 60000);
+      await installProfilePackages(packages);
+    }
+  } catch { /* no bloqueante — pip falló silenciosamente */ }
 }
 
 // Dentro del paso 2, las flechas Atrás/Continuar del pie primero recorren
