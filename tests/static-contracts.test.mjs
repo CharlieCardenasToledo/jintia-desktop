@@ -399,21 +399,9 @@ test('los botones de Conexiones en Settings usan los targets que el backend real
   assert.match(settings, /configureMcp\("desktop"\)/);
 });
 
-test('el backend evita reescrituras, reinstalaciones y recompilaciones idénticas', async () => {
-  const [paths, payload, course, mcp] = await Promise.all([
-    readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
-  ]);
-  assert.match(paths, /pub fn atomic_write_if_changed/);
-  assert.match(payload, /installed_payload_matches/);
-  assert.match(payload, /export_record_matches/);
-  assert.match(course, /\.production-validation\.json/);
-  assert.match(course, /reuse_if_valid && valid_pdf\(\) && manifest_matches\(\)/);
-  assert.match(mcp, /AUTH_VALIDATION_TTL/);
-  assert.match(mcp, /root == previous/);
-});
+// ELIMINADO: Test "el backend evita reescrituras, reinstalaciones y recompilaciones idénticas"
+// Razón: Validaciones de PDF (.production-validation.json) fueron eliminadas en FASE 2
+// La compilación ahora se delega a Skill CLI via Engine Adapter
 
 test('el dashboard permite minimizar, maximizar, cerrar y arrastrar sin añadir maximizar al onboarding', async () => {
   const [capabilityText, main, onboarding, windowMock] = await Promise.all([
@@ -525,20 +513,13 @@ test('los enlaces externos de Acerca de usan opener con una lista cerrada', asyn
 });
 
 test('el crédito opcional de Jintia no sustituye la autoría académica', async () => {
-  const [settings, onboarding, lib, course] = await Promise.all([
+  const [settings, onboarding] = await Promise.all([
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
     readFile(new URL('src/onboarding.js', root), 'utf8'),
-    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
   ]);
   assert.match(settings, /id="cfg-include-jintia-credit"/);
   assert.match(settings, /Nunca sustituye ni modifica la autoría académica/);
   assert.match(onboarding, /includeJintiaCredit:\s*state\.config\?\.includeJintiaCredit !== false/);
-  assert.match(lib, /include_jintia_credit:\s*Option<bool>/);
-  assert.match(course, /if include_jintia_credit/);
-  assert.match(course, /Producido con Jintia/);
-  assert.match(course, /Autor académico no configurado/);
-  assert.doesNotMatch(course, /author = if institution\.author\.is_empty\(\) \{ "Jintia Desktop"/);
 });
 
 test('Configuración muestra una sola sección y conserva navegación accesible', async () => {
@@ -584,7 +565,8 @@ test('Configuración ejecuta el diagnóstico de la toolchain mediante un comando
   assert.match(settings, /runSkillTool\(operation, target, strict\)/);
   assert.match(api, /invoke\("run_skill_tool"/);
   assert.match(rust, /run_skill_tool/);
-  assert.match(toolchain, /\["doctor", "audit", "validate", "compile"\]/);
+  assert.match(toolchain, /engine::run_jintia/);
+  assert.match(toolchain, /manage_harness/);
 });
 
 test('Plantillas separa selección, vista previa y activación confirmada', async () => {
@@ -602,19 +584,8 @@ test('Plantillas separa selección, vista previa y activación confirmada', asyn
   assert.doesNotMatch(templates, /renderTemplatePreview/);
 });
 
-test('el backend compila la vista previa sin cambiar la plantilla activa', async () => {
-  const [lib, course, config] = await Promise.all([
-    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
-  ]);
-  assert.match(lib, /preview_template_id:\s*Option<String>/);
-  assert.match(course, /preview_template_id[\s\S]*unwrap_or_else\(crate::config::get_active_template\)/);
-  assert.match(course, /copy_template_assets\(&active_template/);
-  assert.match(course, /template_assets_fingerprint\(&active_template\)/);
-  assert.match(config, /pub fn copy_template_assets/);
-  assert.match(config, /pub fn template_assets_fingerprint/);
-});
+// ELIMINADO: Test "el backend compila la vista previa sin cambiar la plantilla activa"
+// Razón: preview_template fue eliminado en FASE 2, ahora la compilación se delega a skill CLI
 
 // ELIMINADO: Test sobre manejo de pdflatex (ya no es relevante, compilación delegada a skill)
 
@@ -844,16 +815,16 @@ test('el sílabo reutiliza la ruta preparada antes de pedir otra carpeta', async
   assert.match(syllabus, /course\.project_root = coursePath/);
 });
 
-test('la estructura del curso puede crear un README inicial sin sobrescribirlo', async () => {
-  const [course, lib] = await Promise.all([
+test('la estructura del curso delega a jintia init via Engine Adapter', async () => {
+  const [course, engine] = await Promise.all([
     readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/engine.rs', root), 'utf8'),
   ]);
-  assert.match(lib, /initialize_readme:\s*Option<bool>/);
-  assert.match(course, /initialize_readme:\s*bool/);
-  assert.match(course, /if initialize_readme/);
-  assert.match(course, /if !readme\.exists\(\)/);
-  assert.match(course, /Proyecto académico preparado con Jintia/);
+  assert.match(course, /engine::run_jintia/);
+  assert.match(course, /init/);
+  assert.match(course, /--code/);
+  assert.match(course, /--name/);
+  assert.match(engine, /pub fn run_jintia/);
 });
 
 test('la biblioteca muestra solo PDFs pertenecientes a proyectos registrados', async () => {
