@@ -1,5 +1,6 @@
 import {
   applyInstitutionConfig, checkDependencies, getVisualInstallProfiles, installDependency,
+  downloadNodeRuntime, downloadPythonRuntime, downloadSkillRuntime,
   configureMcp, configureCodexMcp, getSetupStatus, checkNotebookLMAuth, runNotebookLMAuth,
   installSkill, exportSkillZip, installOpenAIPlugin, exportOpenAIPluginZip,
   pickDirectory,
@@ -13,9 +14,9 @@ import { ic, refreshIcons } from "../icons.js";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { ui, cx, liquidForBackground } from "../uiClasses.js";
 
-// "Instalar herramientas necesarias" solo cubre lo indispensable para
-// producir el PDF; Git queda fuera aunque aparezca en la lista de abajo.
-const BULK_INSTALL_TARGETS = new Set(["Node.js", "Python", "Compilador LaTeX"]);
+// "Instalar herramientas necesarias" solo cubre los runtimes portables necesarios
+// para ejecutar la Skill; Git queda fuera aunque aparezca en la lista de abajo.
+const BULK_INSTALL_TARGETS = new Set(["Node.js", "Python", "Jintia Skill"]);
 let _settingsSection = "inst-profile";
 const _busySettingsOps = new Set();
 
@@ -271,13 +272,12 @@ export async function renderSettings() {
             <div class="mt-4 grid gap-3 md:grid-cols-[10rem_minmax(0,1fr)_auto]">
               <label class="text-xs font-semibold text-app-muted">Operación
                 <select id="toolchain-operation" class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-app-text">
-                  <option value="audit">Auditar</option>
-                  <option value="validate">Validar LaTeX</option>
-                  <option value="compile">Compilar PDF</option>
+                  <option value="audit">Auditar curso</option>
+                  <option value="validate">Validar estructura</option>
                 </select>
               </label>
               <label class="text-xs font-semibold text-app-muted">Archivo objetivo
-                <input id="toolchain-target" class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-app-text" placeholder="C:\\Cursos\\mi-curso\\README.md o guia.tex" autocomplete="off">
+                <input id="toolchain-target" class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-app-text" placeholder="C:\\Cursos\\mi-curso\\README.md" autocomplete="off">
               </label>
               <label class="flex items-end gap-2 pb-2 text-xs font-semibold text-app-muted"><input id="toolchain-strict" type="checkbox" class="h-4 w-4 accent-teal-700"> Estricto</label>
             </div>
@@ -862,7 +862,7 @@ async function runToolchainOperation(event) {
   const strict = Boolean(document.getElementById("toolchain-strict")?.checked);
   const output = document.getElementById("toolchain-report");
   if (!target) {
-    output.textContent = "Escribe la ruta del README.md o de la guía .tex.";
+    output.textContent = "Escribe la ruta del README.md del curso.";
     toast("Falta el archivo objetivo", "error", 4000);
     document.getElementById("toolchain-target")?.focus();
     return;
@@ -1167,9 +1167,13 @@ async function loadDeps() {
       const names = targets.map(d => d.name).join(", ");
       if (!await confirm(`Se instalarán las herramientas necesarias para generar tus guías: ${names}. Esto puede tardar varios minutos. ¿Continuar?`)) return;
       for (const dep of targets) {
-        toast(`Instalando ${dep.name}…`, "loading", 30000);
+        toast(`Instalando ${dep.name}…`, "loading", 120000);
         try {
-          const r = await installDependency(dep.name, true);
+          let r;
+          if (dep.name === "Node.js") r = await downloadNodeRuntime();
+          else if (dep.name === "Python") r = await downloadPythonRuntime();
+          else if (dep.name === "Jintia Skill") r = await downloadSkillRuntime();
+          else r = await installDependency(dep.name, true);
           toast(r.message, r.success ? "success" : "error", 4000);
         } catch (e) { toast(`Error en ${dep.name}: ${e}`, "error"); }
       }
