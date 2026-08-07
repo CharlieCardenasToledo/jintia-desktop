@@ -214,8 +214,16 @@ export async function installProfilePackages(packages) {
   return invoke("install_profile_packages", { packages });
 }
 
-export async function initSelfTestCourse() {
-  return invoke("init_self_test_course");
+export async function runSkillSelfTest() {
+  return invoke("run_skill_self_test");
+}
+
+export async function installVivliostyleCli() {
+  return invoke("install_vivliostyle_cli");
+}
+
+export async function installNpmPackages(packages) {
+  return invoke("install_npm_packages", { packages });
 }
 
 // ── Preview LaTeX local ──────────────────────────────────────────────────

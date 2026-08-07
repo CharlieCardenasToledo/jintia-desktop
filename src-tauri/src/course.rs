@@ -150,6 +150,15 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             },
             command: "jintia contract".to_string(),
         },
+        DependencyStatus {
+            name: "Vivliostyle CLI".to_string(),
+            installed: command_exists("vivliostyle"),
+            version: version("vivliostyle", &["--version"]),
+            required: true,
+            installable: true,
+            note: "Compilador HTML→PDF. Se instala automáticamente con el Node portable.".to_string(),
+            command: "vivliostyle --version".to_string(),
+        },
     ];
 
     // El compilador LaTeX es opcional. La skill puede renderizar a través de
@@ -432,35 +441,16 @@ pub fn create_course_structure(
     }
 }
 
-pub fn init_self_test_course() -> ActionResult {
+pub fn run_self_test() -> serde_json::Value {
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => return ActionResult::error("Jintia Skill no está disponible. Instálala desde el paso de herramientas."),
+        None => return serde_json::json!({ "ok": false, "error": "Jintia Skill no está disponible." }),
     };
-    let sandbox = match crate::paths::portable_runtimes_dir().parent().map(|p| p.join("sandbox")) {
-        Some(p) => p,
-        None => return ActionResult::error("No se pudo determinar la carpeta sandbox."),
-    };
-    let course_dir = sandbox.join("test-course");
-    if course_dir.exists() {
-        let _ = std::fs::remove_dir_all(&course_dir);
-    }
-    if let Err(e) = std::fs::create_dir_all(&course_dir) {
-        return ActionResult::error(format!("No se pudo crear el directorio de prueba: {e}"));
-    }
-    let course_path_str = course_dir.to_string_lossy().to_string();
-    let args = ["init", &course_path_str, "--code", "TEST-001", "--name", "Prueba Jintia", "--json"];
-    match crate::engine::run_jintia(Path::new(&skill_path), &args) {
-        Ok(result) => {
-            if !result.success {
-                return ActionResult::error(format!("jintia init falló:\n{}", result.stderr));
-            }
-            let guide = course_dir.join("semanas").join("semana-01").join("guide.json");
-            let path = if guide.is_file() { path_text(&guide) } else { course_path_str };
-            ActionResult::ok("Curso de prueba inicializado.").with_path(path)
-        }
-        Err(e) => ActionResult::error(format!("No se pudo inicializar el curso de prueba: {e}")),
-    }
+    crate::engine::run_jintia_json::<serde_json::Value>(
+        Path::new(&skill_path),
+        &["self-test", "--json"],
+    )
+    .unwrap_or_else(|error| serde_json::json!({ "ok": false, "error": error }))
 }
 
 fn write_course_settings(course: &Path, include_graded_activities: bool) -> Result<(), String> {

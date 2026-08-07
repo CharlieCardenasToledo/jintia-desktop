@@ -114,9 +114,10 @@ fn validate_environment(dependencies: &[crate::models::DependencyStatus]) -> Res
     if !installed("Python") {
         return Err("Instala Python para poder continuar.".to_string());
     }
-    if !installed("Compilador LaTeX") {
+    if !installed("Vivliostyle CLI") {
         return Err(
-            "Instala el compilador LaTeX para poder generar el PDF de tu guía.".to_string(),
+            "Vivliostyle CLI no está disponible. Se instalará automáticamente con el Node portable."
+                .to_string(),
         );
     }
     Ok(())
@@ -149,9 +150,8 @@ fn first_invalid_step(
         course::check_dependencies_cached()
     };
     if validate_environment(&dependencies).is_err() {
-        // El motivo exacto (Node.js, Python o el compilador LaTeX) ya se
-        // muestra en la tarjeta correspondiente del paso 2; este mensaje
-        // solo explica por qué se regresó a ese paso.
+        // El motivo exacto se muestra en la tarjeta del paso 2;
+        // este mensaje solo explica por qué se regresó a ese paso.
         return Some((
             2,
             "falta una herramienta necesaria para que la app funcione",
@@ -326,7 +326,7 @@ mod tests {
     }
 
     fn dependency(name: &str, installed: bool) -> crate::models::DependencyStatus {
-        let required = matches!(name, "Node.js" | "Python" | "Compilador LaTeX");
+        let required = matches!(name, "Node.js" | "Python" | "Jintia Skill" | "Vivliostyle CLI");
         crate::models::DependencyStatus {
             name: name.to_string(),
             installed,
@@ -343,7 +343,7 @@ mod tests {
         let dependencies = vec![
             dependency("Node.js", false),
             dependency("Python", false),
-            dependency("Compilador LaTeX", false),
+            dependency("Vivliostyle CLI", false),
         ];
         assert!(validate_environment(&dependencies)
             .unwrap_err()
@@ -351,33 +351,30 @@ mod tests {
     }
 
     #[test]
-    fn environment_validation_requires_python_and_latex_explicitly() {
-        // El flujo obligatorio es Node.js + Python + compilador LaTeX; Docker
-        // ya no es una alternativa válida (ni aparece en check_dependencies).
+    fn environment_validation_requires_python_and_vivliostyle_explicitly() {
         let missing_python = vec![
             dependency("Node.js", true),
             dependency("Python", false),
-            dependency("Compilador LaTeX", true),
+            dependency("Vivliostyle CLI", true),
         ];
         assert_eq!(
             validate_environment(&missing_python).unwrap_err(),
             "Instala Python para poder continuar."
         );
 
-        let missing_latex = vec![
+        let missing_vivliostyle = vec![
             dependency("Node.js", true),
             dependency("Python", true),
-            dependency("Docker", true),
+            dependency("Vivliostyle CLI", false),
         ];
-        assert_eq!(
-            validate_environment(&missing_latex).unwrap_err(),
-            "Instala el compilador LaTeX para poder generar el PDF de tu guía."
-        );
+        assert!(validate_environment(&missing_vivliostyle)
+            .unwrap_err()
+            .contains("Vivliostyle CLI"));
 
         let ready = vec![
             dependency("Node.js", true),
             dependency("Python", true),
-            dependency("Compilador LaTeX", true),
+            dependency("Vivliostyle CLI", true),
         ];
         assert!(validate_environment(&ready).is_ok());
     }

@@ -19,7 +19,14 @@ pub struct EngineResult {
 /// println!("{}", result.stdout);
 /// ```
 pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, String> {
-    let entrypoint = skill_path.join("bin").join("jintia.js");
+    // skill_path puede ser:
+    //   - La ruta directa a jintia.js (instalación portable via resolve_skill())
+    //   - Un directorio que contiene bin/jintia.js (compatibilidad legacy)
+    let entrypoint = if skill_path.is_file() {
+        skill_path.to_path_buf()
+    } else {
+        skill_path.join("bin").join("jintia.js")
+    };
     if !entrypoint.is_file() {
         return Err(format!(
             "La skill no está instalada en {}. Instálala antes de ejecutar la toolchain.",
@@ -33,7 +40,23 @@ pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, Stri
     let node_bin = crate::runtimes::resolve_node()
         .ok_or_else(|| "Node.js no disponible. Descárgalo desde Configuración > Entorno.".to_string())?;
 
-    match Command::new(&node_bin).args(&cmd_args).output() {
+    // Asegurar que el directorio bin del Node portable esté en PATH
+    // para que la Skill encuentre Vivliostyle y otros binarios npm globales.
+    let base_path = std::env::var_os("PATH").unwrap_or_default();
+    let node_bin_dir = crate::paths::portable_node_exe()
+        .parent()
+        .map(|p| p.to_path_buf());
+    let patched_path = if let Some(dir) = node_bin_dir.filter(|d| d.exists()) {
+        let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(&base_path).collect();
+        if !dirs.contains(&dir) {
+            dirs.insert(0, dir);
+        }
+        std::env::join_paths(dirs).unwrap_or(base_path)
+    } else {
+        base_path
+    };
+
+    match Command::new(&node_bin).args(&cmd_args).env("PATH", patched_path).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();

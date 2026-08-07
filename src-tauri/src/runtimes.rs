@@ -548,6 +548,60 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+// ==================== NPM PACKAGES ====================
+
+fn npm_exe() -> Option<std::path::PathBuf> {
+    let node_exe = paths::portable_node_exe();
+    if !node_exe.is_file() {
+        return None;
+    }
+    let npm = node_exe
+        .parent()?
+        .join(if cfg!(windows) { "npm.cmd" } else { "npm" });
+    if npm.exists() { Some(npm) } else { None }
+}
+
+pub fn install_vivliostyle() -> Result<(), String> {
+    let npm = npm_exe().ok_or_else(|| "Node portable no está instalado.".to_string())?;
+    let output = if cfg!(windows) {
+        Command::new("cmd")
+            .args(["/C", npm.to_str().unwrap_or("npm"), "install", "--global", "@vivliostyle/cli"])
+            .output()
+    } else {
+        Command::new(&npm)
+            .args(["install", "--global", "@vivliostyle/cli"])
+            .output()
+    }
+    .map_err(|e| format!("No se pudo ejecutar npm: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("npm install @vivliostyle/cli falló: {stderr}"));
+    }
+    Ok(())
+}
+
+pub fn install_npm_packages(packages: &[String]) -> Result<(), String> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+    let npm = npm_exe().ok_or_else(|| "Node portable no está instalado.".to_string())?;
+    let output = if cfg!(windows) {
+        let mut args = vec!["/C".to_string(), npm.to_str().unwrap_or("npm").to_string(), "install".to_string(), "--global".to_string()];
+        args.extend_from_slice(packages);
+        Command::new("cmd").args(&args).output()
+    } else {
+        Command::new(&npm)
+            .args(["install", "--global"])
+            .args(packages)
+            .output()
+    }
+    .map_err(|e| format!("npm: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    Ok(())
+}
+
 // ==================== CHECKSUM VERIFICATION ====================
 
 fn verify_sha256(file_path: &std::path::Path, expected_hex: &str) -> Result<(), String> {

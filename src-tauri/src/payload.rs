@@ -641,7 +641,7 @@ pub fn export_openai_plugin_zip(destination_dir: String) -> ActionResult {
         add_dir_to_zip(&mut zip, &REFERENCES, &format!("{prefix}/references"))?;
         add_dir_to_zip(&mut zip, &SCRIPTS, &format!("{prefix}/scripts"))?;
         add_dir_to_zip(&mut zip, &RUNTIME, &format!("{prefix}/runtime"))?;
-        add_dir_to_zip(&mut zip, &THEMES, &format!("{prefix}/templates"))?;
+        add_dir_to_zip(&mut zip, &THEMES, &format!("{prefix}/themes"))?;
         add_dir_to_zip(&mut zip, &CONFIG, &format!("{prefix}/config"))?;
         add_dir_to_zip(&mut zip, &AGENTS, &format!("{prefix}/agents"))?;
         add_dir_to_zip(&mut zip, &COMMANDS, &format!("{prefix}/commands"))?;

@@ -417,10 +417,10 @@ async fn run_migration(project_path: String) -> ActionResult {
 }
 
 #[tauri::command]
-async fn init_self_test_course() -> ActionResult {
-    tauri::async_runtime::spawn_blocking(course::init_self_test_course)
+async fn run_skill_self_test() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(course::run_self_test)
         .await
-        .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+        .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": format!("{e}") }))
 }
 
 #[tauri::command]
@@ -428,6 +428,28 @@ async fn install_profile_packages(packages: Vec<String>) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
         runtimes::install_pip_packages(&packages)
             .map(|_| ActionResult::ok("Paquetes del perfil instalados correctamente."))
+            .unwrap_or_else(|e| ActionResult::error(e))
+    })
+    .await
+    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
+
+#[tauri::command]
+async fn install_vivliostyle_cli() -> ActionResult {
+    tauri::async_runtime::spawn_blocking(|| {
+        runtimes::install_vivliostyle()
+            .map(|_| ActionResult::ok("Vivliostyle CLI instalado correctamente."))
+            .unwrap_or_else(|e| ActionResult::error(e))
+    })
+    .await
+    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
+
+#[tauri::command]
+async fn install_npm_packages(packages: Vec<String>) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        runtimes::install_npm_packages(&packages)
+            .map(|_| ActionResult::ok("Paquetes npm instalados correctamente."))
             .unwrap_or_else(|e| ActionResult::error(e))
     })
     .await
@@ -503,7 +525,9 @@ pub fn run() {
             run_skill_tool,
             get_capabilities_profiles,
             install_profile_packages,
-            init_self_test_course,
+            install_vivliostyle_cli,
+            install_npm_packages,
+            run_skill_self_test,
             check_migration_needed,
             run_migration,
         ])

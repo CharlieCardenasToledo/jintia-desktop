@@ -27,7 +27,9 @@ import {
   setActiveTemplate,
   getCapabilitiesProfiles,
   getDefaultCourseRoot,
-  initSelfTestCourse,
+  runSkillSelfTest,
+  installVivliostyleCli,
+  installNpmPackages,
   installProfilePackages,
 } from "./api.js";
 import { escapeHtml } from "./dom.js";
@@ -1280,19 +1282,19 @@ function finalStep() {
         <div id="final-loading-steps" class="grid w-full max-w-sm grid-cols-5 gap-1" aria-label="Progreso de la prueba">
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="0">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Preparar</span>
+            <span>Validar</span>
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="1">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Comprobar</span>
+            <span>Renderizar</span>
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="2">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Crear</span>
+            <span>Vivliostyle</span>
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="3">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Verificar</span>
+            <span>PDF</span>
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="4">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
@@ -1560,112 +1562,55 @@ async function animateFinalStep() {
     syncOnboardingBusyState();
   }
 
-  // ── 0 / 25 % — inicializar curso de prueba ─────────────────────────────
+  // ── self-test unificado via jintia self-test --json ───────────────────
   setRow(0, "active");
-  setMsg("Preparando curso de prueba…");
-  setProgress(5);
+  setMsg("Ejecutando prueba de entorno Jintia…");
+  setProgress(10);
 
-  let testResult;
+  let selfTest;
   try {
-    testResult = await initSelfTestCourse();
-    if (!testResult?.success) throw new Error(testResult?.message || "No se pudo inicializar el curso de prueba.");
-    compileDiagnostics.push(`init: ${testResult.path ?? ""}`);
-    setRow(0, "done");
-    setProgress(25);
+    selfTest = await runSkillSelfTest();
   } catch (err) {
-    setRow(0, "error");
-    setRow(1, "error");
-    setRow(2, "error");
-    setRow(3, "error");
-    setProgress(10);
-    setMsg("No se pudo preparar la prueba");
+    selfTest = { ok: false, error: String(err) };
+  }
+
+  compileDiagnostics.push(`self-test: ${JSON.stringify(selfTest)}`);
+
+  const checks = selfTest?.checks ?? {};
+  const checkNames = ["validate", "render", "vivliostyle", "pdf"];
+  const rowMap = { validate: 0, render: 1, vivliostyle: 2, pdf: 3 };
+
+  // Animar filas según resultado de cada check
+  for (const key of checkNames) {
+    const rowIdx = rowMap[key];
+    if (rowIdx === undefined) continue;
+    if (checks[key] === "passed") {
+      setRow(rowIdx, "done");
+    } else if (checks[key] !== undefined) {
+      setRow(rowIdx, "error");
+    }
+  }
+  setProgress(90);
+
+  if (!selfTest?.ok) {
+    const vivliostyleMsg = checks.vivliostyle === "not_installed"
+      ? "Vivliostyle CLI no está instalado. Instálalo desde el paso de herramientas y vuelve a intentar."
+      : "La prueba de entorno falló. Revisa las herramientas instaladas.";
     showError(
-      "Skill no disponible",
-      "Instala Jintia desde el paso de herramientas antes de continuar.",
-      String(err)
+      "Prueba de entorno fallida",
+      vivliostyleMsg,
+      selfTest?.error ?? JSON.stringify(checks)
     );
     return;
   }
 
-  // ── 1 / 50 % — validar guía de prueba ──────────────────────────────────
-  setRow(1, "active");
-  setMsg("Validando estructura del curso…");
-  setProgress(35);
-
-  const guidePath = testResult.path;
-  let validateResult;
-  try {
-    validateResult = await runSkillTool("validate", guidePath, true);
-    compileDiagnostics.push(`validate stdout: ${validateResult.stdout}`);
-    if (!validateResult.success) throw new Error(validateResult.stderr || validateResult.message);
-    setRow(1, "done");
-    setProgress(50);
-  } catch (err) {
-    setRow(1, "error");
-    setRow(2, "error");
-    setRow(3, "error");
-    setProgress(30);
-    setMsg("La validación falló");
-    showError(
-      "jintia validate falló",
-      "El curso de prueba no pasó la validación. Reintenta o reinstala la skill.",
-      String(err)
-    );
-    return;
-  }
-
-  // ── 2 / 75 % — renderizar guía ─────────────────────────────────────────
-  setRow(2, "active");
-  setMsg("Renderizando la guía de prueba…");
-  setProgress(60);
-
-  let renderResult;
-  try {
-    renderResult = await runSkillTool("render", guidePath, true);
-    compileDiagnostics.push(`render stdout: ${renderResult.stdout}`);
-    if (!renderResult.success) throw new Error(renderResult.stderr || renderResult.message);
-    setRow(2, "done");
-    setProgress(75);
-  } catch (err) {
-    setRow(2, "error");
-    setRow(3, "error");
-    setProgress(55);
-    setMsg("El renderizado falló");
-    showError(
-      "jintia render falló",
-      "La guía se validó pero no se pudo renderizar. Puede faltar Vivliostyle o un motor de tipografía.",
-      String(err)
-    );
-    return;
-  }
-
-  // ── 3 / 100 % — verificar entorno ──────────────────────────────────────
-  setRow(3, "active");
-  setMsg("Verificando entorno Jintia…");
-  setProgress(85);
-  try {
-    await getSetupStatus();
-    setRow(3, "done");
-    setRow(4, "active");
-    setProgress(96);
-    await new Promise(r => setTimeout(r, 300));
-    setRow(4, "done");
-    setProgress(100);
-    setMsg("¡Listo!");
-  } catch (err) {
-    setRow(3, "error");
-    setProgress(85);
-    setMsg("No se pudo verificar el entorno");
-    showError(
-      "Error al verificar el entorno",
-      "La guía se generó correctamente pero no se pudo comprobar el entorno. Puedes continuar de todas formas.",
-      String(err)
-    );
-    return;
-  }
-
-  const outputPath = renderResult?.report?.path ?? renderResult?.report?.output ?? guidePath;
-  showReadySuccess(outputPath);
+  setRow(4, "active");
+  setProgress(96);
+  await new Promise(r => setTimeout(r, 300));
+  setRow(4, "done");
+  setProgress(100);
+  setMsg("¡Listo!");
+  showReadySuccess(null);
 }
 
 
@@ -1815,7 +1760,13 @@ async function requestDependencyInstall(name, button) {
 async function performDependencyInstall(name) {
   toast(`Instalando ${name}…`, "loading", 120000);
   let result;
-  if (name === "Node.js") result = await downloadNodeRuntime();
+  if (name === "Node.js") {
+    result = await downloadNodeRuntime();
+    if (result.success) {
+      toast("Instalando Vivliostyle CLI…", "loading", 120000);
+      await installVivliostyleCli();
+    }
+  }
   else if (name === "Python") {
     result = await downloadPythonRuntime();
     if (result.success) await installDisciplinePackages();
@@ -1833,12 +1784,20 @@ async function installDisciplinePackages() {
   try {
     const caps = await getCapabilitiesProfiles();
     const profileId = caps?.disciplines?.[discipline];
-    const packages = profileId ? (caps?.profiles?.[profileId]?.pip ?? []) : [];
-    if (packages.length > 0) {
-      toast("Instalando paquetes del perfil…", "loading", 60000);
-      await installProfilePackages(packages);
+    const profile = profileId ? (caps?.profiles?.[profileId] ?? {}) : {};
+
+    const pipPackages = profile?.python?.packages ?? [];
+    if (pipPackages.length > 0) {
+      toast("Instalando paquetes Python del perfil…", "loading", 60000);
+      await installProfilePackages(pipPackages);
     }
-  } catch { /* no bloqueante — pip falló silenciosamente */ }
+
+    const npmPackages = profile?.node?.packages ?? [];
+    if (npmPackages.length > 0) {
+      toast("Instalando paquetes Node del perfil…", "loading", 60000);
+      await installNpmPackages(npmPackages);
+    }
+  } catch { /* no bloqueante */ }
 }
 
 // Dentro del paso 2, las flechas Atrás/Continuar del pie primero recorren
