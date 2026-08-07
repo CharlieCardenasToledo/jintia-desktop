@@ -574,8 +574,8 @@ test('Configuración ejecuta el diagnóstico de la toolchain mediante un comando
 
 test('Plantillas separa selección, vista previa y activación confirmada', async () => {
   const templates = await readFile(new URL('src/pages/templates.js', root), 'utf8');
-  // compileSyllabusPdf se eliminó; preview ahora delega a skill CLI via API
-  assert.match(templates, /previewTemplateId:\s*templateId/);
+  // preview delega a generateSyllabus (Vivliostyle vía skill CLI)
+  assert.match(templates, /generateSyllabus/);
   assert.match(templates, /convertFileSrc/);
   assert.match(templates, /<iframe/);
   assert.match(templates, /data-select-template/);

@@ -1,5 +1,5 @@
 import {
-  compileSyllabusPdf,
+  generateSyllabus,
   createCourseStructure,
   listTemplates,
   getActiveTemplate,
@@ -314,12 +314,9 @@ async function ensurePdfPreview(templateId, force = false) {
       throw new Error(structure?.message || "No se pudo preparar la carpeta temporal.");
     }
 
-    const result = await compileSyllabusPdf({
+    const result = await generateSyllabus({
       coursePath: rootPath,
       ...previewData,
-      includeJintiaCredit: state.config?.includeJintiaCredit !== false,
-      reuseIfValid: !force,
-      previewTemplateId: templateId,
     });
     if (!result?.success || !result?.path) {
       throw new Error(result?.message || "El compilador no devolvió un PDF válido.");
@@ -358,8 +355,8 @@ function previewLoadingState() {
       <div class="max-w-[34ch]">
         <span class="mb-3 block animate-spin">${ic("loader-2", 38)}</span>
         <p class="font-semibold">Compilando un PDF real…</p>
-        <p id="tpl-preview-progress" class="mt-2 text-xs leading-5 text-slate-200">${escapeHtml(_previewProgress || "Preparando LaTeX…")}</p>
-        <p class="mt-3 text-[11px] leading-5 text-slate-300">La primera compilación puede tardar mientras se preparan los componentes de la plantilla.</p>
+        <p id="tpl-preview-progress" class="mt-2 text-xs leading-5 text-slate-200">${escapeHtml(_previewProgress || "Preparando el sílabo…")}</p>
+        <p class="mt-3 text-[11px] leading-5 text-slate-300">La primera generación puede tardar mientras se prepara la plantilla.</p>
       </div>
     </div>`;
 }
