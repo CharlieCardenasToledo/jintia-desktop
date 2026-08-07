@@ -561,22 +561,112 @@ fn npm_exe() -> Option<std::path::PathBuf> {
     if npm.exists() { Some(npm) } else { None }
 }
 
+pub fn resolve_vivliostyle() -> Option<PathBuf> {
+    let portable = paths::portable_vivliostyle_bin();
+    if portable.is_file() {
+        return Some(portable);
+    }
+
+    let checker = if cfg!(target_os = "windows") {
+        "where.exe"
+    } else {
+        "which"
+    };
+
+    let output = Command::new(checker)
+        .arg("vivliostyle")
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| PathBuf::from(line.trim()))
+}
+
+pub fn vivliostyle_version() -> Option<String> {
+    let executable = resolve_vivliostyle()?;
+
+    let output = if cfg!(target_os = "windows")
+        && executable
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"))
+    {
+        Command::new("cmd")
+            .arg("/C")
+            .arg(&executable)
+            .arg("--version")
+            .output()
+            .ok()?
+    } else {
+        Command::new(&executable)
+            .arg("--version")
+            .output()
+            .ok()?
+    };
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = if output.stdout.is_empty() {
+        output.stderr
+    } else {
+        output.stdout
+    };
+
+    String::from_utf8(text).ok().and_then(|value| {
+        value
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
+    })
+}
+
 pub fn install_vivliostyle() -> Result<(), String> {
     let npm = npm_exe().ok_or_else(|| "Node portable no está instalado.".to_string())?;
-    let output = if cfg!(windows) {
+    let prefix = paths::portable_node_prefix();
+
+    let output = if cfg!(target_os = "windows") {
         Command::new("cmd")
-            .args(["/C", npm.to_str().unwrap_or("npm"), "install", "--global", "@vivliostyle/cli"])
+            .arg("/C")
+            .arg(&npm)
+            .arg("install")
+            .arg("--global")
+            .arg("--prefix")
+            .arg(&prefix)
+            .arg("@vivliostyle/cli")
             .output()
     } else {
         Command::new(&npm)
-            .args(["install", "--global", "@vivliostyle/cli"])
+            .arg("install")
+            .arg("--global")
+            .arg("--prefix")
+            .arg(&prefix)
+            .arg("@vivliostyle/cli")
             .output()
     }
     .map_err(|e| format!("No se pudo ejecutar npm: {e}"))?;
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("npm install @vivliostyle/cli falló: {stderr}"));
     }
+
+    let executable = paths::portable_vivliostyle_bin();
+    if !executable.is_file() {
+        return Err(format!(
+            "Vivliostyle fue instalado por npm pero no se encontró el ejecutable administrado en {}.",
+            executable.display()
+        ));
+    }
+
     Ok(())
 }
 

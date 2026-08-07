@@ -309,6 +309,27 @@ pub fn portable_node_exe() -> PathBuf {
     }
 }
 
+pub fn portable_node_prefix() -> PathBuf {
+    portable_runtimes_dir().join("node")
+}
+
+pub fn portable_node_bin_dir() -> PathBuf {
+    let prefix = portable_node_prefix();
+    if cfg!(target_os = "windows") {
+        prefix
+    } else {
+        prefix.join("bin")
+    }
+}
+
+pub fn portable_vivliostyle_bin() -> PathBuf {
+    portable_node_bin_dir().join(if cfg!(target_os = "windows") {
+        "vivliostyle.cmd"
+    } else {
+        "vivliostyle"
+    })
+}
+
 pub fn portable_python_exe() -> PathBuf {
     portable_runtimes_dir().join("python").join("python.exe")
 }

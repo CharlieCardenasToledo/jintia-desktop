@@ -152,11 +152,15 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         },
         DependencyStatus {
             name: "Vivliostyle CLI".to_string(),
-            installed: command_exists("vivliostyle"),
-            version: version("vivliostyle", &["--version"]),
+            installed: crate::runtimes::resolve_vivliostyle().is_some(),
+            version: crate::runtimes::vivliostyle_version(),
             required: true,
             installable: true,
-            note: "Compilador HTML→PDF. Se instala automáticamente con el Node portable.".to_string(),
+            note: if crate::paths::portable_vivliostyle_bin().is_file() {
+                "Usando Vivliostyle CLI administrado por Jintia.".to_string()
+            } else {
+                "Compilador HTML→PDF requerido por Jintia.".to_string()
+            },
             command: "vivliostyle --version".to_string(),
         },
     ];

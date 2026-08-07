@@ -301,6 +301,69 @@ test('el entorno base usa Node, Python, Jintia y Vivliostyle; LaTeX es opcional'
   assert.match(settings, /BULK_INSTALL_TARGETS/);
 });
 
+test('Vivliostyle se resuelve desde el runtime portable antes del PATH global', async () => {
+  const [paths, runtimes, course] = await Promise.all([
+    readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+  ]);
+
+  assert.match(
+    paths,
+    /pub fn portable_vivliostyle_bin\(\)/
+  );
+
+  assert.match(
+    runtimes,
+    /pub fn resolve_vivliostyle\(\)/
+  );
+
+  const resolverStart = runtimes.indexOf(
+    'pub fn resolve_vivliostyle()'
+  );
+
+  const resolverEnd = runtimes.indexOf(
+    'pub fn vivliostyle_version()',
+    resolverStart
+  );
+
+  const resolver = runtimes.slice(
+    resolverStart,
+    resolverEnd
+  );
+
+  assert.match(
+    resolver,
+    /portable_vivliostyle_bin/
+  );
+
+  assert.match(
+    resolver,
+    /where\.exe|which/
+  );
+
+  assert.ok(
+    resolver.indexOf('portable_vivliostyle_bin') <
+      resolver.indexOf('where.exe'),
+    'Vivliostyle portable debe comprobarse antes del PATH global'
+  );
+
+  assert.match(
+    course,
+    /installed:\s*crate::runtimes::resolve_vivliostyle\(\)\.is_some\(\)/
+  );
+
+  assert.match(
+    course,
+    /version:\s*crate::runtimes::vivliostyle_version\(\)/
+  );
+
+  assert.doesNotMatch(
+    course,
+    /installed:\s*command_exists\("vivliostyle"\)/
+  );
+});
+
 test('el onboarding delega la prueba final a jintia self-test --json', async () => {
   const source = await readFile(
     new URL('src/onboarding.js', root),
