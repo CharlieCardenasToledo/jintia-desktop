@@ -169,8 +169,8 @@ test('el onboarding presenta el flujo de producción editorial aprobado', async 
   assert.match(source, /Sílabo[\s\S]*Análisis[\s\S]*Fuentes[\s\S]*Estructura[\s\S]*Validación[\s\S]*Generación/);
   assert.match(source, /No diseña la guía ni reemplaza tu criterio docente/);
   assert.match(source, /Preparando la prueba/);
-  // compileSyllabusPdf eliminado; paso final ahora verifica entorno con getSetupStatus
-  assert.match(source, /Preparar[\s\S]*Comprobar[\s\S]*Crear[\s\S]*Verificar[\s\S]*Listo/);
+  // Labels del mini-stepper del self-test delegado a jintia self-test --json
+  assert.match(source, /Validar[\s\S]*Renderizar[\s\S]*Vivliostyle[\s\S]*PDF[\s\S]*Listo/);
 });
 
 test('el copy del onboarding no repite jerga técnica ni referencias obsoletas al esquema de 10 pasos', async () => {
@@ -244,44 +244,121 @@ test('la confirmación de instalar dependencias es un modal propio, no un diálo
   assert.match(source, /document\.getElementById\("onboarding-root"\)/);
 });
 
-test('la app no muestra ni instala Docker/WSL: solo Node, Git, Python y el compilador LaTeX', async () => {
+test('el entorno base usa Node, Python, Jintia y Vivliostyle; LaTeX es opcional', async () => {
   const [onboarding, settings, course, onboardingRs] = await Promise.all([
     readFile(new URL('src/onboarding.js', root), 'utf8'),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
     readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/onboarding.rs', root), 'utf8'),
   ]);
+
+  // Docker y WSL no forman parte de la arquitectura administrada por Jintia.
   assert.doesNotMatch(onboarding, /Docker|WSL/);
   assert.doesNotMatch(settings, /Docker|WSL/);
-  // course.rs ya no declara DependencyStatus para Docker ni WSL 2 (los
-  // motores de compilación de reserva se eliminaron junto con ellos), y el
-  // nombre visible del compilador ya no es el técnico "TeX Live (pdflatex)".
-  assert.doesNotMatch(course, /name:\s*"Docker"|name:\s*"WSL 2"|compile_via_docker|compile_via_wsl|docker_available|"TeX Live \(pdflatex\)"/);
-  assert.match(course, /name:\s*"Compilador LaTeX"/);
-  // La validación del onboarding exige Node.js, Python y el compilador
-  // LaTeX explícitamente; Docker ya no es una alternativa aceptada.
-  assert.doesNotMatch(onboardingRs, /"Docker" \| "TeX Live|"TeX Live \(pdflatex\)"/);
+  assert.doesNotMatch(
+    course,
+    /name:\s*"Docker"|name:\s*"WSL 2"|compile_via_docker|compile_via_wsl|docker_available|"TeX Live \(pdflatex\)"/
+  );
+
+  // Dependencias base obligatorias.
+  assert.match(
+    course,
+    /name:\s*"Node\.js"[\s\S]{0,500}?required:\s*true/
+  );
+  assert.match(
+    course,
+    /name:\s*"Python"[\s\S]{0,500}?required:\s*true/
+  );
+  assert.match(
+    course,
+    /name:\s*"Jintia Skill"[\s\S]{0,500}?required:\s*true/
+  );
+  assert.match(
+    course,
+    /name:\s*"Vivliostyle CLI"[\s\S]{0,500}?required:\s*true/
+  );
+
+  // LaTeX puede detectarse como capacidad opcional, pero nunca bloquear onboarding.
+  assert.match(
+    course,
+    /name:\s*"Compilador LaTeX"[\s\S]{0,500}?required:\s*false/
+  );
+
+  // validate_environment debe exigir el runtime editorial actual.
+  assert.match(onboardingRs, /installed\("Node\.js"\)/);
   assert.match(onboardingRs, /installed\("Python"\)/);
-  assert.match(onboardingRs, /installed\("Compilador LaTeX"\)/);
-  // "Instalar todo" del panel de Configuración > Entorno fue reemplazado.
+  assert.match(onboardingRs, /installed\("Vivliostyle CLI"\)/);
+
+  // LaTeX no debe formar parte de la validación obligatoria del onboarding.
+  assert.doesNotMatch(
+    onboardingRs,
+    /installed\("Compilador LaTeX"\)/
+  );
+
+  // Se conserva el contrato actual del panel de herramientas.
   assert.doesNotMatch(settings, />Instalar todo</);
   assert.match(settings, /Instalar herramientas necesarias/);
   assert.match(settings, /BULK_INSTALL_TARGETS/);
 });
 
-test('el onboarding reutiliza validaciones y artefactos correctos', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+test('el onboarding delega la prueba final a jintia self-test --json', async () => {
+  const source = await readFile(
+    new URL('src/onboarding.js', root),
+    'utf8'
+  );
+
   const navigationStart = source.indexOf('function bindStepEvents');
-  const navigationEnd = source.indexOf('function hexToRgb', navigationStart);
-  const navigation = source.slice(navigationStart, navigationEnd);
+  const navigationEnd = source.indexOf(
+    'function hexToRgb',
+    navigationStart
+  );
+  const navigation = source.slice(
+    navigationStart,
+    navigationEnd
+  );
+
+  // Se conservan los contratos de carga/caché del onboarding.
   assert.match(source, /existing\.status === "pending"/);
-  assert.match(source, /rememberSuccessfulLoad\("notebooklm-auth"\)/);
-  assert.match(source, /prepareOnboardingStep\(4, \{ force: true \}\)/);
-  assert.doesNotMatch(navigation, /force:\s*(?:dest|destination|next)/);
-  // generateSyllabus eliminado del onboarding; paso final usa pipeline real: init → validate → render
-  assert.match(source, /initSelfTestCourse/);
-  assert.match(source, /runSkillTool\("validate"/);
-  assert.match(source, /runSkillTool\("render"/);
+  assert.match(
+    source,
+    /rememberSuccessfulLoad\("notebooklm-auth"\)/
+  );
+  assert.match(
+    source,
+    /prepareOnboardingStep\(4, \{ force: true \}\)/
+  );
+  assert.doesNotMatch(
+    navigation,
+    /force:\s*(?:dest|destination|next)/
+  );
+
+  // La prueba editorial pertenece a Jintia Skill.
+  assert.match(
+    source,
+    /runSkillSelfTest\(\)/
+  );
+
+  // Desktop interpreta los checks devueltos por la Skill.
+  assert.match(
+    source,
+    /const checkNames = \["validate", "render", "vivliostyle", "pdf"\]/
+  );
+
+  // Desktop no debe reconstruir manualmente el pipeline de la Skill.
+  assert.doesNotMatch(
+    source,
+    /initSelfTestCourse/
+  );
+  assert.doesNotMatch(
+    source,
+    /runSkillTool\("validate"/
+  );
+  assert.doesNotMatch(
+    source,
+    /runSkillTool\("render"/
+  );
+
+  // getSetupStatus continúa siendo parte del onboarding general.
   assert.match(source, /getSetupStatus/);
 });
 
