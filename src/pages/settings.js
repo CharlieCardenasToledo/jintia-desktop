@@ -980,7 +980,9 @@ async function loadDeps() {
             ${!dep.installed && dep.installable !== false
               ? dep.name === "Node.js"
                 ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-node>Descargar Node.js portable</button>`
-                : `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-dep-name="${escapeHtml(dep.name)}">Instalar</button>`
+                : dep.name === "Python"
+                  ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-python>Descargar Python portable</button>`
+                  : `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-dep-name="${escapeHtml(dep.name)}">Instalar</button>`
               : dep.installed
                 ? `<span class="${ui.badge.success}">OK</span>`
                 : `<span class="${ui.badge.muted}">Instalación manual</span>`}
@@ -1031,6 +1033,43 @@ async function loadDeps() {
         if (unlistenProgress) unlistenProgress();
         btn.disabled = false;
         btn.textContent = "Descargar Node.js portable";
+      }
+    });
+
+    container.querySelector("[data-download-python]")?.addEventListener("click", async () => {
+      const btn = container.querySelector("[data-download-python]");
+      btn.disabled = true;
+      btn.textContent = "Descargando…";
+      toast("Descargando Python portable…", "loading", 120000);
+
+      let unlistenProgress;
+      try {
+        unlistenProgress = await window.__TAURI__.event.listen("python-download-progress", ({ payload }) => {
+          if (payload.phase === "downloading") {
+            toast(`Descargando Python (${Math.round(payload.percent)}%)…`, "loading", 120000);
+          } else if (payload.phase === "extracting") {
+            toast("Extrayendo Python…", "loading", 120000);
+          } else if (payload.phase === "configuring") {
+            toast("Configurando Python…", "loading", 120000);
+          } else if (payload.phase === "installing_pip") {
+            toast("Instalando pip…", "loading", 120000);
+          }
+        });
+
+        const result = await window.__TAURI__.tauri.invoke("download_python_runtime");
+        if (result.success) {
+          toast(result.message, "success", 5000);
+          loadDeps();
+          loadSetupStatus();
+        } else {
+          toast(result.message, "error", 6000);
+        }
+      } catch (e) {
+        toast(`Error: ${e}`, "error", 6000);
+      } finally {
+        if (unlistenProgress) unlistenProgress();
+        btn.disabled = false;
+        btn.textContent = "Descargar Python portable";
       }
     });
 

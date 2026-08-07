@@ -94,13 +94,11 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
 
     let node_bin = crate::runtimes::resolve_node();
     let node = node_bin.is_some();
-    let portable = crate::runtimes::portable_node_installed();
-    let python_command = if command_exists("python3") {
-        "python3"
-    } else {
-        "python"
-    };
-    let python = command_exists(python_command);
+    let portable_node = crate::runtimes::portable_node_installed();
+
+    let python_bin = crate::runtimes::resolve_python();
+    let python = python_bin.is_some();
+    let portable_python = crate::runtimes::portable_python_installed();
     let git = command_exists("git");
 
     let mut dependencies = vec![
@@ -110,7 +108,7 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             version: crate::runtimes::node_version(),
             required: true,
             installable: true,
-            note: if portable {
+            note: if portable_node {
                 "Usando Node.js portable de Jintia.".to_string()
             } else {
                 "Necesario para que la app funcione correctamente.".to_string()
@@ -129,11 +127,15 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         DependencyStatus {
             name: "Python".to_string(),
             installed: python,
-            version: version(python_command, &["--version"]),
+            version: crate::runtimes::python_version(),
             required: true,
             installable: true,
-            note: "Procesa recursos del curso (recortes bibliográficos).".to_string(),
-            command: format!("{python_command} --version"),
+            note: if portable_python {
+                "Usando Python portable de Jintia.".to_string()
+            } else {
+                "Procesa recursos del curso (recortes bibliográficos).".to_string()
+            },
+            command: "python --version".to_string(),
         },
     ];
 
@@ -217,6 +219,11 @@ pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
     // Node.js se descarga como portable via comando Tauri
     if name == "Node.js" {
         return ActionResult::error("Usa el botón 'Descargar Node.js portable' en el panel de dependencias.");
+    }
+
+    // Python se descarga como portable via comando Tauri (solo Windows)
+    if name == "Python" {
+        return ActionResult::error("Usa el botón 'Descargar Python portable' en el panel de dependencias.");
     }
 
     #[cfg(target_os = "windows")]

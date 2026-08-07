@@ -244,6 +244,10 @@ pub fn portable_node_exe() -> PathBuf {
     }
 }
 
+pub fn portable_python_exe() -> PathBuf {
+    portable_runtimes_dir().join("python").join("python.exe")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

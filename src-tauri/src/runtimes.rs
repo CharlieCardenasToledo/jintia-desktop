@@ -240,3 +240,267 @@ fn emit_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
         }),
     );
 }
+
+// ==================== PYTHON RUNTIME ====================
+
+const PYTHON_VERSION: &str = "3.13.0";
+const GET_PIP_URL: &str = "https://bootstrap.pypa.io/get-pip.py";
+
+fn python_download_url() -> Option<&'static str> {
+    #[cfg(target_os = "windows")]
+    return Some("https://www.python.org/ftp/python/3.13.0/python-3.13.0-embed-amd64.zip");
+
+    #[cfg(not(target_os = "windows"))]
+    return None;
+}
+
+pub fn resolve_python() -> Option<String> {
+    let checker = if cfg!(target_os = "windows") {
+        "where.exe"
+    } else {
+        "which"
+    };
+
+    for cmd in &["python3", "python"] {
+        if Command::new(checker)
+            .arg(cmd)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return Some(cmd.to_string());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let portable = paths::portable_python_exe();
+        if portable.is_file() {
+            return Some(portable.to_string_lossy().into_owned());
+        }
+    }
+
+    None
+}
+
+pub fn portable_python_installed() -> bool {
+    #[cfg(target_os = "windows")]
+    return paths::portable_python_exe().is_file();
+
+    #[cfg(not(target_os = "windows"))]
+    return false;
+}
+
+pub fn python_version() -> Option<String> {
+    resolve_python().and_then(|python_bin| {
+        Command::new(&python_bin)
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    String::from_utf8(output.stdout)
+                        .ok()
+                        .map(|v| v.trim().to_string())
+                } else {
+                    None
+                }
+            })
+    })
+}
+
+pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
+    return Err("Python portable solo está disponible en Windows".to_string());
+
+    #[cfg(target_os = "windows")]
+    {
+        let runtimes_dir = paths::portable_runtimes_dir();
+        let python_dir = runtimes_dir.join("python");
+        let tmp_file = runtimes_dir.join(format!(".python-download-{}.tmp", PYTHON_VERSION));
+
+        fs::create_dir_all(&runtimes_dir)
+            .map_err(|e| format!("Error creando directorio: {e}"))?;
+
+        emit_python_progress(app, "downloading", 0.0, "Descargando Python 3.13.0...");
+
+        let url = python_download_url()
+            .ok_or("Python portable no disponible para esta plataforma")?;
+        let mut response = reqwest::blocking::get(url)
+            .map_err(|e| format!("Error descargando Python: {e}"))?;
+
+        let total_size = response.content_length().unwrap_or(12_000_000u64);
+        let mut file = fs::File::create(&tmp_file)
+            .map_err(|e| format!("Error creando archivo temporal: {e}"))?;
+
+        let mut downloaded: u64 = 0;
+        let mut buffer = [0; 1024 * 64];
+
+        loop {
+            match response.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    file.write_all(&buffer[..n])
+                        .map_err(|e| format!("Error escribiendo descarga: {e}"))?;
+                    downloaded += n as u64;
+                    let percent = (downloaded as f32 / total_size as f32) * 100.0;
+                    emit_python_progress(
+                        app,
+                        "downloading",
+                        percent,
+                        &format!("Descargando Python ({:.1}%)", percent),
+                    );
+                }
+                Err(e) => {
+                    let _ = fs::remove_file(&tmp_file);
+                    emit_python_progress(app, "error", 0.0, &format!("Error en descarga: {e}"));
+                    return Err(format!("Error descargando: {e}"));
+                }
+            }
+        }
+
+        drop(file);
+
+        emit_python_progress(app, "extracting", 50.0, "Extrayendo Python...");
+
+        if python_dir.exists() {
+            fs::remove_dir_all(&python_dir)
+                .map_err(|e| format!("Error removiendo instalación anterior: {e}"))?;
+        }
+
+        extract_python_zip(&tmp_file, &runtimes_dir)?;
+        let _ = fs::remove_file(&tmp_file);
+
+        emit_python_progress(app, "configuring", 70.0, "Configurando Python...");
+        enable_python_site(&python_dir)?;
+
+        emit_python_progress(app, "installing_pip", 80.0, "Instalando pip...");
+        install_python_pip(&python_dir)?;
+
+        emit_python_progress(app, "done", 100.0, "Python instalado correctamente.");
+
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn extract_python_zip(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> Result<(), String> {
+    use zip::ZipArchive;
+
+    let file = fs::File::open(zip_path)
+        .map_err(|e| format!("Error abriendo ZIP: {e}"))?;
+
+    let mut archive = ZipArchive::new(file)
+        .map_err(|e| format!("Error leyendo ZIP: {e}"))?;
+
+    let mut top_dir: Option<String> = None;
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("Error leyendo entrada ZIP: {e}"))?;
+
+        let outpath = dest_dir.join(file.name());
+
+        if let Some(p) = file.name().split('/').next() {
+            if top_dir.is_none() && p.contains("python") {
+                top_dir = Some(p.to_string());
+            }
+        }
+
+        if file.is_dir() {
+            fs::create_dir_all(&outpath)
+                .map_err(|e| format!("Error creando directorio: {e}"))?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                fs::create_dir_all(p)
+                    .map_err(|e| format!("Error creando directorio padre: {e}"))?;
+            }
+            let mut outfile = fs::File::create(&outpath)
+                .map_err(|e| format!("Error creando archivo: {e}"))?;
+            std::io::copy(&mut file, &mut outfile)
+                .map_err(|e| format!("Error extrayendo archivo: {e}"))?;
+        }
+    }
+
+    if let Some(top) = top_dir {
+        let src = dest_dir.join(&top);
+        let dst = dest_dir.join("python");
+        if src.exists() && src != dst {
+            fs::rename(&src, &dst)
+                .map_err(|e| format!("Error renombrando directorio: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn enable_python_site(python_dir: &std::path::Path) -> Result<(), String> {
+    let pth_path = python_dir.join("python313._pth");
+
+    if !pth_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&pth_path)
+        .map_err(|e| format!("Error leyendo ._pth: {e}"))?;
+
+    let modified = content.lines()
+        .map(|line| {
+            if line.trim() == "#import site" {
+                "import site".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    fs::write(&pth_path, modified)
+        .map_err(|e| format!("Error escribiendo ._pth: {e}"))?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn install_python_pip(python_dir: &std::path::Path) -> Result<(), String> {
+    let get_pip_path = python_dir.join("get-pip.py");
+    let python_exe = python_dir.join("python.exe");
+
+    let pip_script = reqwest::blocking::get(GET_PIP_URL)
+        .map_err(|e| format!("Error descargando get-pip.py: {e}"))?
+        .text()
+        .map_err(|e| format!("Error leyendo get-pip.py: {e}"))?;
+
+    fs::write(&get_pip_path, &pip_script)
+        .map_err(|e| format!("Error escribiendo get-pip.py: {e}"))?;
+
+    let output = Command::new(&python_exe)
+        .args(&[
+            get_pip_path.to_string_lossy().as_ref(),
+            "--no-warn-script-location",
+        ])
+        .output()
+        .map_err(|e| format!("Error ejecutando get-pip.py: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("get-pip.py falló: {}", stderr));
+    }
+
+    let _ = fs::remove_file(&get_pip_path);
+
+    Ok(())
+}
+
+fn emit_python_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
+    let _ = app.emit(
+        "python-download-progress",
+        serde_json::json!({
+            "phase": phase,
+            "percent": percent,
+            "message": message,
+        }),
+    );
+}

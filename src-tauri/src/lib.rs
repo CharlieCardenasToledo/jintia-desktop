@@ -49,6 +49,28 @@ async fn get_node_runtime_status() -> serde_json::Value {
 }
 
 #[tauri::command]
+async fn download_python_runtime(app: tauri::AppHandle) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        runtimes::download_portable_python(&app)
+            .map(|_| ActionResult::ok("Python portable instalado correctamente."))
+            .unwrap_or_else(|e| ActionResult::error(e))
+    }).await
+    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
+
+#[tauri::command]
+async fn get_python_runtime_status() -> serde_json::Value {
+    serde_json::json!({
+        "hasGlobal": runtimes::resolve_python()
+            .map(|p| p != "python.exe")
+            .unwrap_or(false),
+        "hasPortable": runtimes::portable_python_installed(),
+        "resolvedPath": runtimes::resolve_python(),
+        "version": runtimes::python_version(),
+    })
+}
+
+#[tauri::command]
 async fn get_visual_install_profiles() -> serde_json::Value {
     serde_json::from_str(include_str!(concat!(
         env!("OUT_DIR"),
@@ -384,6 +406,8 @@ pub fn run() {
             check_dependencies,
             download_node_runtime,
             get_node_runtime_status,
+            download_python_runtime,
+            get_python_runtime_status,
             get_visual_install_profiles,
             install_dependency,
             get_onboarding_status,
