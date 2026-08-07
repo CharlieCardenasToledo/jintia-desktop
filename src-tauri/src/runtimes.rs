@@ -25,23 +25,26 @@ fn node_download_url() -> &'static str {
     return "https://nodejs.org/dist/v22.13.0/node-v22.13.0-linux-x64.tar.xz";
 }
 
-pub fn resolve_node() -> Option<String> {
+// Jintia no reutiliza runtimes globales.
+// Los runtimes externos pueden detectarse con fines informativos,
+// pero no satisfacen los requisitos del entorno administrado.
+pub fn global_node_available() -> bool {
     let checker = if cfg!(target_os = "windows") {
         "where.exe"
     } else {
         "which"
     };
 
-    if Command::new(checker)
+    Command::new(checker)
         .arg("node")
         .output()
-        .map(|o| o.status.success())
+        .map(|output| output.status.success())
         .unwrap_or(false)
-    {
-        return Some("node".to_string());
-    }
+}
 
+pub fn resolve_node() -> Option<String> {
     let portable = paths::portable_node_exe();
+
     if portable.is_file() {
         return Some(portable.to_string_lossy().into_owned());
     }

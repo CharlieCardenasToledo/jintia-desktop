@@ -1294,6 +1294,126 @@ test('Mermaid CLI se detecta desde el Node portable antes del PATH global', asyn
   );
 });
 
+test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
+  const [runtimes, lib, course, onboarding] =
+    await Promise.all([
+      readFile(
+        new URL(
+          'src-tauri/src/runtimes.rs',
+          root
+        ),
+        'utf8'
+      ),
+      readFile(
+        new URL(
+          'src-tauri/src/lib.rs',
+          root
+        ),
+        'utf8'
+      ),
+      readFile(
+        new URL(
+          'src-tauri/src/course.rs',
+          root
+        ),
+        'utf8'
+      ),
+      readFile(
+        new URL(
+          'src/onboarding.js',
+          root
+        ),
+        'utf8'
+      ),
+    ]);
+
+  const resolverStart =
+    runtimes.indexOf(
+      'pub fn resolve_node()'
+    );
+
+  const resolverEnd =
+    runtimes.indexOf(
+      'pub fn portable_node_installed',
+      resolverStart
+    );
+
+  assert.ok(
+    resolverStart >= 0,
+    'resolve_node debe existir'
+  );
+
+  assert.ok(
+    resolverEnd > resolverStart,
+    'debe poder aislarse resolve_node'
+  );
+
+  const resolver = runtimes.slice(
+    resolverStart,
+    resolverEnd
+  );
+
+  assert.match(
+    runtimes,
+    /pub fn global_node_available\(\)/
+  );
+
+  assert.match(
+    resolver,
+    /portable_node_exe\(\)/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /where\.exe/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /\bwhich\b/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /global_node_available\(\)/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /Some\("node"\.to_string\(\)\)/
+  );
+
+  assert.match(
+    lib,
+    /"hasGlobal":\s*runtimes::global_node_available\(\)/
+  );
+
+  assert.match(
+    lib,
+    /"hasPortable":\s*runtimes::portable_node_installed\(\)/
+  );
+
+  assert.match(
+    lib,
+    /"resolvedPath":\s*runtimes::resolve_node\(\)/
+  );
+
+  assert.match(
+    course,
+    /let node_bin\s*=\s*crate::runtimes::resolve_node\(\)/
+  );
+
+  assert.match(
+    onboarding,
+    /dep\.required\s*&&\s*!dep\.installed/
+  );
+
+  assert.match(
+    onboarding,
+    /downloadNodeRuntime\(\)/
+  );
+});
+
 test('cada invoke() en api.js tiene su handler en generate_handler![] de lib.rs', async () => {
   const [api, lib] = await Promise.all([
     readFile(new URL('src/api.js', root), 'utf8'),

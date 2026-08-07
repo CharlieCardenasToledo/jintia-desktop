@@ -41,7 +41,7 @@ async fn download_node_runtime(app: tauri::AppHandle) -> ActionResult {
 #[tauri::command]
 async fn get_node_runtime_status() -> serde_json::Value {
     serde_json::json!({
-        "hasGlobal": runtimes::resolve_node().map(|p| p == "node").unwrap_or(false),
+        "hasGlobal": runtimes::global_node_available(),
         "hasPortable": runtimes::portable_node_installed(),
         "resolvedPath": runtimes::resolve_node(),
         "version": runtimes::node_version(),
