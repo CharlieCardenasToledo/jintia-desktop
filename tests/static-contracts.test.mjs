@@ -278,8 +278,11 @@ test('el onboarding reutiliza validaciones y artefactos correctos', async () => 
   assert.match(source, /rememberSuccessfulLoad\("notebooklm-auth"\)/);
   assert.match(source, /prepareOnboardingStep\(4, \{ force: true \}\)/);
   assert.doesNotMatch(navigation, /force:\s*(?:dest|destination|next)/);
-  // compileSyllabusPdf eliminado; paso final llama generateSyllabus + getSetupStatus
-  assert.match(source, /generateSyllabus[\s\S]{0,200}testBasePath/);
+  // generateSyllabus eliminado del onboarding; paso final usa pipeline real: init → validate → render
+  assert.match(source, /initSelfTestCourse/);
+  assert.match(source, /runSkillTool\("validate"/);
+  assert.match(source, /runSkillTool\("render"/);
+  assert.match(source, /getSetupStatus/);
 });
 
 test('la barra inferior tiene un botón principal con texto visible y puntos con área de clic ampliada', async () => {
@@ -516,13 +519,14 @@ test('los enlaces externos de Acerca de usan opener con una lista cerrada', asyn
 });
 
 test('el crédito opcional de Jintia no sustituye la autoría académica', async () => {
-  const [settings, onboarding] = await Promise.all([
+  const [settings, templates] = await Promise.all([
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readFile(new URL('src/pages/templates.js', root), 'utf8'),
   ]);
   assert.match(settings, /id="cfg-include-jintia-credit"/);
   assert.match(settings, /Nunca sustituye ni modifica la autoría académica/);
-  assert.match(onboarding, /includeJintiaCredit:\s*state\.config\?\.includeJintiaCredit !== false/);
+  // El crédito se pasa cuando se genera el sílabo de vista previa en Plantillas
+  assert.match(templates, /includeJintiaCredit:\s*state\.config\?\.includeJintiaCredit !== false/);
 });
 
 test('Configuración muestra una sola sección y conserva navegación accesible', async () => {
@@ -600,13 +604,12 @@ test('Plantillas muestra el catálogo completo sin cortar resultados', async () 
   assert.match(templates, /No hay plantillas en esta categoría/);
 });
 
-test('onboarding y Plantillas comparten una guía semanal de demostración realista', async () => {
-  const onboarding = await readFile(new URL('src/onboarding.js', root), 'utf8');
+test('Plantillas comparten una guía semanal de demostración realista', async () => {
   const templates = await readFile(new URL('src/pages/templates.js', root), 'utf8');
   const sample = await readFile(new URL('src/sampleGuide.js', root), 'utf8');
   const course = await readFile(new URL('src-tauri/src/course.rs', root), 'utf8');
 
-  assert.match(onboarding, /buildSampleGuideData\(state\.config/);
+  // onboarding ya no usa muestra sintética: delega a `jintia init` para la prueba final real
   assert.match(templates, /buildSampleGuideData\(state\.config/);
   assert.match(sample, /Pensamiento crítico y decisiones profesionales/);
   assert.match(sample, /Facione, P\. A\./);

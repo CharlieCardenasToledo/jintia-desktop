@@ -317,6 +317,7 @@ async function ensurePdfPreview(templateId, force = false) {
     const result = await generateSyllabus({
       coursePath: rootPath,
       ...previewData,
+      includeJintiaCredit: state.config?.includeJintiaCredit !== false,
     });
     if (!result?.success || !result?.path) {
       throw new Error(result?.message || "El compilador no devolvió un PDF válido.");

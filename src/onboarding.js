@@ -27,6 +27,7 @@ import {
   setActiveTemplate,
   getCapabilitiesProfiles,
   getDefaultCourseRoot,
+  initSelfTestCourse,
   installProfilePackages,
 } from "./api.js";
 import { escapeHtml } from "./dom.js";
@@ -45,7 +46,6 @@ import geminiLogo from "./assets/gemini-icon.svg";
 import googleGLogo from "./assets/google-g.svg";
 import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
-import { buildSampleGuideData } from "./sampleGuide.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
 
@@ -1560,69 +1560,80 @@ async function animateFinalStep() {
     syncOnboardingBusyState();
   }
 
-  // ── 0 / 25 % — leer perfil ──────────────────────────────────────────────
+  // ── 0 / 25 % — inicializar curso de prueba ─────────────────────────────
   setRow(0, "active");
-  setMsg("Leyendo perfil institucional…");
+  setMsg("Preparando curso de prueba…");
   setProgress(5);
-  await new Promise(r => setTimeout(r, 400));
-  setRow(0, "done");
-  setProgress(25);
 
-  // ── 1 / 50 % — localizar skill ──────────────────────────────────────────
-  setRow(1, "active");
-  setMsg("Verificando instalación…");
-  let skillPath;
+  let testResult;
   try {
-    skillPath = await getSkillPath();
+    testResult = await initSelfTestCourse();
+    if (!testResult?.success) throw new Error(testResult?.message || "No se pudo inicializar el curso de prueba.");
+    compileDiagnostics.push(`init: ${testResult.path ?? ""}`);
+    setRow(0, "done");
+    setProgress(25);
+  } catch (err) {
+    setRow(0, "error");
+    setRow(1, "error");
+    setRow(2, "error");
+    setRow(3, "error");
+    setProgress(10);
+    setMsg("No se pudo preparar la prueba");
+    showError(
+      "Skill no disponible",
+      "Instala Jintia desde el paso de herramientas antes de continuar.",
+      String(err)
+    );
+    return;
+  }
+
+  // ── 1 / 50 % — validar guía de prueba ──────────────────────────────────
+  setRow(1, "active");
+  setMsg("Validando estructura del curso…");
+  setProgress(35);
+
+  const guidePath = testResult.path;
+  let validateResult;
+  try {
+    validateResult = await runSkillTool("validate", guidePath, true);
+    compileDiagnostics.push(`validate stdout: ${validateResult.stdout}`);
+    if (!validateResult.success) throw new Error(validateResult.stderr || validateResult.message);
     setRow(1, "done");
     setProgress(50);
   } catch (err) {
     setRow(1, "error");
     setRow(2, "error");
     setRow(3, "error");
-    setProgress(25);
-    setMsg("No se encontró la instalación");
+    setProgress(30);
+    setMsg("La validación falló");
     showError(
-      "No está instalado",
-      "Vuelve al paso de conexión y pulsa 'Instalar' antes de continuar.",
+      "jintia validate falló",
+      "El curso de prueba no pasó la validación. Reintenta o reinstala la skill.",
       String(err)
     );
     return;
   }
 
-  // ── 2 / 75 % — generar sílabo ───────────────────────────────────────────
+  // ── 2 / 75 % — renderizar guía ─────────────────────────────────────────
   setRow(2, "active");
-  setMsg("Generando sílabo de prueba…");
-  setProgress(55);
+  setMsg("Renderizando la guía de prueba…");
+  setProgress(60);
 
-  // Usar AppData como destino del test (no el directorio del skill, que puede no existir aún)
-  let testBasePath;
+  let renderResult;
   try {
-    testBasePath = await appLocalDataDir();
-  } catch {
-    testBasePath = skillPath;
-  }
-
-  const syllabusTestData = buildSampleGuideData(state.config || {});
-
-  let genResult;
-  try {
-    genResult = await generateSyllabus({ coursePath: testBasePath, ...syllabusTestData, includeJintiaCredit: state.config?.includeJintiaCredit !== false });
-
-    if (genResult?.success) {
-      setRow(2, "done");
-      setProgress(75);
-    } else {
-      throw new Error(genResult?.message || "El backend indicó fallo sin detalles.");
-    }
+    renderResult = await runSkillTool("render", guidePath, true);
+    compileDiagnostics.push(`render stdout: ${renderResult.stdout}`);
+    if (!renderResult.success) throw new Error(renderResult.stderr || renderResult.message);
+    setRow(2, "done");
+    setProgress(75);
   } catch (err) {
     setRow(2, "error");
     setRow(3, "error");
-    setProgress(50);
-    setMsg("La generación falló");
+    setProgress(55);
+    setMsg("El renderizado falló");
     showError(
-      "Error al generar el documento",
-      "Está instalado pero no pudo crear el archivo. Reintenta o vuelve al paso de conexión para reinstalarlo.",
+      "jintia render falló",
+      "La guía se validó pero no se pudo renderizar. Puede faltar Vivliostyle o un motor de tipografía.",
       String(err)
     );
     return;
@@ -1647,13 +1658,14 @@ async function animateFinalStep() {
     setMsg("No se pudo verificar el entorno");
     showError(
       "Error al verificar el entorno",
-      "La Skill generó el documento pero no se pudo comprobar el entorno. Puedes continuar de todas formas.",
+      "La guía se generó correctamente pero no se pudo comprobar el entorno. Puedes continuar de todas formas.",
       String(err)
     );
     return;
   }
 
-  showReadySuccess(genResult?.path);
+  const outputPath = renderResult?.report?.path ?? renderResult?.report?.output ?? guidePath;
+  showReadySuccess(outputPath);
 }
 
 

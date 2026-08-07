@@ -432,6 +432,37 @@ pub fn create_course_structure(
     }
 }
 
+pub fn init_self_test_course() -> ActionResult {
+    let skill_path = match crate::runtimes::resolve_skill() {
+        Some(p) => p,
+        None => return ActionResult::error("Jintia Skill no está disponible. Instálala desde el paso de herramientas."),
+    };
+    let sandbox = match crate::paths::portable_runtimes_dir().parent().map(|p| p.join("sandbox")) {
+        Some(p) => p,
+        None => return ActionResult::error("No se pudo determinar la carpeta sandbox."),
+    };
+    let course_dir = sandbox.join("test-course");
+    if course_dir.exists() {
+        let _ = std::fs::remove_dir_all(&course_dir);
+    }
+    if let Err(e) = std::fs::create_dir_all(&course_dir) {
+        return ActionResult::error(format!("No se pudo crear el directorio de prueba: {e}"));
+    }
+    let course_path_str = course_dir.to_string_lossy().to_string();
+    let args = ["init", &course_path_str, "--code", "TEST-001", "--name", "Prueba Jintia", "--json"];
+    match crate::engine::run_jintia(Path::new(&skill_path), &args) {
+        Ok(result) => {
+            if !result.success {
+                return ActionResult::error(format!("jintia init falló:\n{}", result.stderr));
+            }
+            let guide = course_dir.join("semanas").join("semana-01").join("guide.json");
+            let path = if guide.is_file() { path_text(&guide) } else { course_path_str };
+            ActionResult::ok("Curso de prueba inicializado.").with_path(path)
+        }
+        Err(e) => ActionResult::error(format!("No se pudo inicializar el curso de prueba: {e}")),
+    }
+}
+
 fn write_course_settings(course: &Path, include_graded_activities: bool) -> Result<(), String> {
     let settings_dir = course.join(".jintia");
     std::fs::create_dir_all(&settings_dir)

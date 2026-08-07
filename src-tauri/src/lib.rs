@@ -417,6 +417,13 @@ async fn run_migration(project_path: String) -> ActionResult {
 }
 
 #[tauri::command]
+async fn init_self_test_course() -> ActionResult {
+    tauri::async_runtime::spawn_blocking(course::init_self_test_course)
+        .await
+        .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
+
+#[tauri::command]
 async fn install_profile_packages(packages: Vec<String>) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
         runtimes::install_pip_packages(&packages)
@@ -496,6 +503,7 @@ pub fn run() {
             run_skill_tool,
             get_capabilities_profiles,
             install_profile_packages,
+            init_self_test_course,
             check_migration_needed,
             run_migration,
         ])

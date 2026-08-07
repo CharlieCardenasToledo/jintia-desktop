@@ -214,6 +214,10 @@ export async function installProfilePackages(packages) {
   return invoke("install_profile_packages", { packages });
 }
 
+export async function initSelfTestCourse() {
+  return invoke("init_self_test_course");
+}
+
 // ── Preview LaTeX local ──────────────────────────────────────────────────
 // ── Diálogos ─────────────────────────────────────────────────────────────
 export async function pickDirectory(title, defaultPath = undefined) {
