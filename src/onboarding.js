@@ -1780,24 +1780,68 @@ async function performDependencyInstall(name) {
 
 async function installDisciplinePackages() {
   const discipline = state.config.discipline ?? "";
-  if (!discipline) return;
+
+  if (!discipline) {
+    return {
+      discipline: "",
+      profileId: null,
+      pythonPackages: [],
+      nodePackages: [],
+    };
+  }
+
   try {
     const caps = await getCapabilitiesProfiles();
+
     const profileId = caps?.disciplines?.[discipline];
-    const profile = profileId ? (caps?.profiles?.[profileId] ?? {}) : {};
+    const profile = profileId
+      ? (caps?.profiles?.[profileId] ?? {})
+      : {};
 
     const pipPackages = profile?.python?.packages ?? [];
+
     if (pipPackages.length > 0) {
-      toast("Instalando paquetes Python del perfil…", "loading", 60000);
+      toast(
+        "Instalando paquetes Python del perfil…",
+        "loading",
+        60000
+      );
+
       await installProfilePackages(pipPackages);
     }
 
     const npmPackages = profile?.node?.packages ?? [];
+
     if (npmPackages.length > 0) {
-      toast("Instalando paquetes Node del perfil…", "loading", 60000);
+      toast(
+        "Instalando paquetes Node del perfil…",
+        "loading",
+        60000
+      );
+
       await installNpmPackages(npmPackages);
     }
-  } catch { /* no bloqueante */ }
+
+    return {
+      discipline,
+      profileId: profileId ?? null,
+      pythonPackages: pipPackages,
+      nodePackages: npmPackages,
+    };
+  } catch (error) {
+    console.warn(
+      "No se pudieron completar todas las dependencias del perfil disciplinar:",
+      error
+    );
+
+    return {
+      discipline,
+      profileId: null,
+      pythonPackages: [],
+      nodePackages: [],
+      error: String(error),
+    };
+  }
 }
 
 // Dentro del paso 2, las flechas Atrás/Continuar del pie primero recorren
@@ -1911,6 +1955,23 @@ async function performAction(action, current) {
     const templateResult = await setActiveTemplate(runtime.activeTemplate);
     toast(templateResult.message, templateResult.success ? "success" : "error", 7000);
     if (!templateResult.success) return;
+    // La disciplina ya está guardada en state.config.
+    // Ahora sí puede resolverse el perfil declarado por la Skill.
+    const profileInstall = await installDisciplinePackages();
+    if (profileInstall?.profileId) {
+      toast(
+        `Perfil ${profileInstall.profileId} preparado para ${discipline}.`,
+        "success",
+        4500
+      );
+    }
+    if (profileInstall?.error) {
+      toast(
+        "El perfil se guardó, pero algunas herramientas disciplinares no pudieron instalarse. Podrás revisarlas en Configuración > Entorno.",
+        "error",
+        8000
+      );
+    }
     return advance(current);
   }
   if (action === "export-zip") {

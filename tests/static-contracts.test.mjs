@@ -1023,6 +1023,109 @@ test('eliminar una asignatura usa un modal propio de Jintia, no un diálogo nati
   assert.doesNotMatch(courses, /await confirm\(`¿Eliminar/);
 });
 
+test('el perfil disciplinar se instala después de guardar la disciplina', async () => {
+  const source = await readFile(
+    new URL('src/onboarding.js', root),
+    'utf8'
+  );
+
+  const actionStart = source.indexOf(
+    'if (action === "save-profile-and-template")'
+  );
+
+  const actionEnd = source.indexOf(
+    'if (action === "export-zip")',
+    actionStart
+  );
+
+  assert.ok(
+    actionStart >= 0,
+    'save-profile-and-template debe existir'
+  );
+
+  assert.ok(
+    actionEnd > actionStart,
+    'debe poder aislarse el bloque save-profile-and-template'
+  );
+
+  const actionBlock = source.slice(
+    actionStart,
+    actionEnd
+  );
+
+  assert.match(
+    actionBlock,
+    /state\.config = config/
+  );
+
+  assert.match(
+    actionBlock,
+    /saveConfig\(\)/
+  );
+
+  assert.match(
+    actionBlock,
+    /installDisciplinePackages\(\)/
+  );
+
+  assert.match(
+    actionBlock,
+    /return advance\(current\)/
+  );
+
+  const saveIndex =
+    actionBlock.indexOf('saveConfig()');
+
+  const installIndex =
+    actionBlock.indexOf(
+      'installDisciplinePackages()'
+    );
+
+  const advanceIndex =
+    actionBlock.indexOf(
+      'return advance(current)'
+    );
+
+  assert.ok(
+    saveIndex < installIndex,
+    'la disciplina debe guardarse antes de instalar su perfil'
+  );
+
+  assert.ok(
+    installIndex < advanceIndex,
+    'las dependencias disciplinares deben intentarse antes de avanzar'
+  );
+
+  const fnStart = source.indexOf(
+    'async function installDisciplinePackages()'
+  );
+
+  const fnEnd = source.indexOf(
+    'async function handleAction',
+    fnStart
+  );
+
+  const fn = source.slice(
+    fnStart,
+    fnEnd
+  );
+
+  assert.match(
+    fn,
+    /profile\?\.python\?\.packages/
+  );
+
+  assert.match(
+    fn,
+    /profile\?\.node\?\.packages/
+  );
+
+  assert.match(
+    fn,
+    /getCapabilitiesProfiles\(\)/
+  );
+});
+
 test('cada invoke() en api.js tiene su handler en generate_handler![] de lib.rs', async () => {
   const [api, lib] = await Promise.all([
     readFile(new URL('src/api.js', root), 'utf8'),
