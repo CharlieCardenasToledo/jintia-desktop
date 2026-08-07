@@ -1126,6 +1126,74 @@ test('el perfil disciplinar se instala después de guardar la disciplina', async
   );
 });
 
+test('los paquetes Node disciplinares usan el runtime portable y su prefix', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const start = runtimes.indexOf(
+    'pub fn install_npm_packages'
+  );
+
+  const end = runtimes.indexOf(
+    '// ==================== CHECKSUM VERIFICATION',
+    start
+  );
+
+  assert.ok(
+    start >= 0,
+    'install_npm_packages debe existir'
+  );
+
+  assert.ok(
+    end > start,
+    'debe poder aislarse install_npm_packages'
+  );
+
+  const fn = runtimes.slice(start, end);
+
+  assert.match(
+    fn,
+    /portable_node_exe\(\)/
+  );
+
+  assert.match(
+    fn,
+    /portable_node_prefix\(\)/
+  );
+
+  assert.match(
+    fn,
+    /portable_node_bin_dir\(\)/
+  );
+
+  assert.match(
+    fn,
+    /\.arg\("--prefix"\)/
+  );
+
+  assert.match(
+    fn,
+    /\.arg\(&prefix\)/
+  );
+
+  assert.match(
+    fn,
+    /\.env\("PATH",\s*&patched_path\)/
+  );
+
+  assert.match(
+    fn,
+    /Command::new\(&node\)/
+  );
+
+  assert.doesNotMatch(
+    fn,
+    /Command::new\(&npm\)/
+  );
+});
+
 test('cada invoke() en api.js tiene su handler en generate_handler![] de lib.rs', async () => {
   const [api, lib] = await Promise.all([
     readFile(new URL('src/api.js', root), 'utf8'),

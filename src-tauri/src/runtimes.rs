@@ -674,21 +674,80 @@ pub fn install_npm_packages(packages: &[String]) -> Result<(), String> {
     if packages.is_empty() {
         return Ok(());
     }
-    let npm = npm_exe().ok_or_else(|| "Node portable no está instalado.".to_string())?;
-    let output = if cfg!(windows) {
-        let mut args = vec!["/C".to_string(), npm.to_str().unwrap_or("npm").to_string(), "install".to_string(), "--global".to_string()];
-        args.extend_from_slice(packages);
-        Command::new("cmd").args(&args).output()
-    } else {
-        Command::new(&npm)
-            .args(["install", "--global"])
+
+    let npm = npm_exe()
+        .ok_or_else(|| "Node portable no está instalado.".to_string())?;
+
+    let node = paths::portable_node_exe();
+
+    if !node.is_file() {
+        return Err(
+            "El ejecutable Node portable no está disponible.".to_string()
+        );
+    }
+
+    let prefix = paths::portable_node_prefix();
+    let portable_bin = paths::portable_node_bin_dir();
+
+    // Los procesos npm y sus scripts lifecycle deben resolver primero
+    // el Node y los binarios administrados por Jintia.
+    let base_path =
+        std::env::var_os("PATH").unwrap_or_default();
+
+    let mut path_entries = vec![portable_bin];
+
+    for entry in std::env::split_paths(&base_path) {
+        if !path_entries.contains(&entry) {
+            path_entries.push(entry);
+        }
+    }
+
+    let patched_path = std::env::join_paths(path_entries)
+        .map_err(|e| {
+            format!(
+                "No se pudo preparar PATH para npm portable: {e}"
+            )
+        })?;
+
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .arg("/C")
+            .arg(&npm)
+            .arg("install")
+            .arg("--global")
+            .arg("--prefix")
+            .arg(&prefix)
             .args(packages)
+            .env("PATH", &patched_path)
+            .output()
+    } else {
+        // Ejecutar npm explícitamente con el Node portable evita
+        // depender de `#!/usr/bin/env node` y de un Node del sistema.
+        Command::new(&node)
+            .arg(&npm)
+            .arg("install")
+            .arg("--global")
+            .arg("--prefix")
+            .arg(&prefix)
+            .args(packages)
+            .env("PATH", &patched_path)
             .output()
     }
-    .map_err(|e| format!("npm: {e}"))?;
+    .map_err(|e| {
+        format!(
+            "No se pudo ejecutar npm con el runtime portable: {e}"
+        )
+    })?;
+
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        let stderr =
+            String::from_utf8_lossy(&output.stderr);
+
+        return Err(format!(
+            "npm install falló para el perfil disciplinar: {stderr}"
+        ));
     }
+
     Ok(())
 }
 
