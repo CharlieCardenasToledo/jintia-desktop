@@ -316,6 +316,18 @@ export async function renderSettings() {
             <span class="text-teal-600">${ic("sliders-horizontal", 20)}</span> Preferencias
           </div>
 
+          <!-- Workspace root -->
+          <div class="mb-3.5 rounded-lg border border-slate-200 bg-white px-3.5 py-3">
+            <div class="mb-1.5 text-[11.5px] font-bold uppercase tracking-wider text-app-muted">Carpeta de cursos</div>
+            <div class="flex items-center justify-between gap-3">
+              <div id="workspace-root-val" class="mono break-all text-[12.5px] text-brand flex-1">${escapeHtml(state.config?.courseWorkspaceRoot || "Documentos/Jintia (por defecto)")}</div>
+              <button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" id="btn-change-workspace-root" type="button">
+                ${ic("folder-open", 14)} Cambiar
+              </button>
+            </div>
+            <div class="mt-1.5 text-[11px] text-app-muted">Carpeta raíz donde se crean todas las asignaturas por defecto.</div>
+          </div>
+
           <!-- Skill path -->
           <div class="mb-3.5 rounded-lg border border-slate-200 bg-white px-3.5 py-3">
             <div class="mb-1.5 text-[11.5px] font-bold uppercase tracking-wider text-app-muted">Carpeta de instalación</div>
@@ -467,6 +479,16 @@ export async function renderSettings() {
 
   // ── App Preferences ───────────────────────────────────────────────────────
   loadSkillPath();
+  el.querySelector("#btn-change-workspace-root")?.addEventListener("click", async () => {
+    const current = state.config?.courseWorkspaceRoot || undefined;
+    const chosen = await pickDirectory("Selecciona la carpeta raíz de tus cursos", current);
+    if (!chosen) return;
+    state.config = { ...state.config, courseWorkspaceRoot: chosen };
+    saveConfig();
+    const display = el.querySelector("#workspace-root-val");
+    if (display) display.textContent = chosen;
+    toast("Carpeta de cursos actualizada.", "success", 3000);
+  });
   el.querySelector("#cfg-include-jintia-credit")?.addEventListener("change", event => {
     const previous = state.config.includeJintiaCredit;
     state.config.includeJintiaCredit = event.target.checked;

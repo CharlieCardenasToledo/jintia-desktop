@@ -1,7 +1,7 @@
-# Refactorización Jintia Desktop → P0: Finalizado
+# Refactorización Jintia Desktop → COMPLETADO
 
 ## 🎉 Estado Final
-**COMPLETADO: Fases 1-6 de 7** (FASE 0 depende de skill repository)
+**COMPLETADO: Todas las fases (incluyendo FASE 0 en skill repository)**
 
 ### Resumen de Cambios
 
@@ -64,11 +64,11 @@
 ✅ CI matrix — configurado
 ```
 
-### Próximos Pasos (FASE 0 — en skill repository)
-[ ] Añadir `jintia contract --json` a skill/bin/jintia.js
-[ ] Añadir `jintia project status <curso> --json`
-[ ] Añadir `jintia week status <curso> <NN> --json`
-[ ] Actualizar `jintia doctor --json` (LaTeX optional)
+### FASE 0 — Skill repository (commit 3d53f09)
+[x] `jintia contract --json` — implementado en skill/bin/jintia.js
+[x] `jintia project status <curso> --json` — implementado
+[x] `jintia week status <curso> <NN> --json` — implementado
+[x] `jintia doctor --json` — LaTeX ya marcado como `required: false`
 
 ## Estadísticas
 

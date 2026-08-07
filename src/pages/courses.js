@@ -95,6 +95,9 @@ function projectBadge(course, extraClass = "") {
 }
 
 function defaultCourseRoot() {
+  if (state.config?.courseWorkspaceRoot) {
+    return Promise.resolve(state.config.courseWorkspaceRoot);
+  }
   if (!_defaultCourseRootPromise) {
     _defaultCourseRootPromise = getDefaultCourseRoot()
       .then(result => result?.success ? result.path || "" : "")
