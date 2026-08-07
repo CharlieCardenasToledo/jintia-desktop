@@ -635,12 +635,14 @@ pub fn portable_skill_installed() -> bool {
 }
 
 pub fn resolve_skill() -> Option<String> {
-    let checker = if cfg!(target_os = "windows") {
-        "where.exe"
-    } else {
-        "which"
-    };
+    // Portable administrado por Desktop tiene prioridad: versión conocida, verificada.
+    let portable = paths::portable_skill_bin();
+    if portable.is_file() {
+        return Some(portable.to_string_lossy().into_owned());
+    }
 
+    // Fallback: jintia global en PATH (instalación manual del usuario).
+    let checker = if cfg!(target_os = "windows") { "where.exe" } else { "which" };
     if Command::new(checker)
         .arg("jintia")
         .output()
@@ -648,11 +650,6 @@ pub fn resolve_skill() -> Option<String> {
         .unwrap_or(false)
     {
         return Some("jintia".to_string());
-    }
-
-    let portable = paths::portable_skill_bin();
-    if portable.is_file() {
-        return Some(portable.to_string_lossy().into_owned());
     }
 
     None

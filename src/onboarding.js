@@ -25,6 +25,7 @@ import {
   pickDirectory,
   runNotebookLMAuth,
   setActiveTemplate,
+  getCapabilitiesProfiles,
 } from "./api.js";
 import { escapeHtml } from "./dom.js";
 import { state, saveConfig } from "./state.js";
@@ -1871,13 +1872,17 @@ async function performAction(action, current) {
     errorEl.hidden = true;
     state.config = config;
     saveConfig();
-    const DISCIPLINE_TO_VISUAL_PROFILE = {
-      "software-engineering": "core",
-      "electronics": "core",
-      "design": "full",
-    };
     if (discipline && !localStorage.getItem("jintia.visualProfile")) {
-      localStorage.setItem("jintia.visualProfile", DISCIPLINE_TO_VISUAL_PROFILE[discipline] ?? "minimum");
+      const DISCIPLINE_FALLBACK = {
+        "software-engineering": "core", "electronics": "core", "design": "full",
+      };
+      let profile = DISCIPLINE_FALLBACK[discipline] ?? "minimum";
+      try {
+        const caps = await getCapabilitiesProfiles();
+        const fromSkill = caps?.disciplines?.[discipline];
+        if (fromSkill) profile = fromSkill;
+      } catch { /* skill no disponible aún — usa fallback */ }
+      localStorage.setItem("jintia.visualProfile", profile);
     }
     const result = await applyInstitutionConfig({ author: config.author, degree: config.degree, institution: config.institution, website: config.website, faculty: config.faculty, career: config.career, ecosystem: config.ecosystem || "", discipline: config.discipline || "", color_r: config.colorR, color_g: config.colorG, color_b: config.colorB });
     if (!result.success) { toast(result.message, "error", 8000); return; }

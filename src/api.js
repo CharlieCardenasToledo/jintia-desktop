@@ -206,6 +206,10 @@ export async function runSkillTool(operation, target = null, strict = false) {
   return invoke("run_skill_tool", { operation, target, json: true, strict });
 }
 
+export async function getCapabilitiesProfiles() {
+  return invoke("get_capabilities_profiles");
+}
+
 // ── Preview LaTeX local ──────────────────────────────────────────────────
 // ── Diálogos ─────────────────────────────────────────────────────────────
 export async function pickDirectory(title, defaultPath = undefined) {

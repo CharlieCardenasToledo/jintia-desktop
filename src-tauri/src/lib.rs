@@ -416,6 +416,23 @@ async fn run_migration(project_path: String) -> ActionResult {
         .unwrap_or_else(|error| ActionResult::error(format!("No se pudo ejecutar la migración: {error}")))
 }
 
+#[tauri::command]
+async fn get_capabilities_profiles() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(|| {
+        let skill_path = match crate::runtimes::resolve_skill() {
+            Some(p) => p,
+            None => return serde_json::Value::Null,
+        };
+        engine::run_jintia_json::<serde_json::Value>(
+            std::path::Path::new(&skill_path),
+            &["capabilities", "profiles", "--json"],
+        )
+        .unwrap_or(serde_json::Value::Null)
+    })
+    .await
+    .unwrap_or(serde_json::Value::Null)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -466,6 +483,7 @@ pub fn run() {
             get_active_template,
             set_active_template,
             run_skill_tool,
+            get_capabilities_profiles,
             check_migration_needed,
             run_migration,
         ])
