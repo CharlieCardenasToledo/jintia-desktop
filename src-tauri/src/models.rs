@@ -104,6 +104,8 @@ pub struct InstitutionConfig {
     pub color_b: u8,
     #[serde(default)]
     pub ecosystem: String,
+    #[serde(default)]
+    pub discipline: String,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]

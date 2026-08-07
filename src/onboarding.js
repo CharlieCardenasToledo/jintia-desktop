@@ -960,6 +960,20 @@ function profileStep() {
         <div id="onb-site-analysis" class="sm:col-span-2" aria-live="polite">
           ${renderOnboardingSiteAnalysis()}
         </div>
+        <label class="${FIELD_LABEL} sm:col-span-2">Área del conocimiento
+          <select class="${FIELD_INPUT}" id="onb-discipline">
+            <option value="">— Selecciona tu área —</option>
+            <option value="software-engineering" ${value("discipline") === "software-engineering" ? "selected" : ""}>Informática / Ingeniería de software</option>
+            <option value="math-statistics" ${value("discipline") === "math-statistics" ? "selected" : ""}>Matemáticas / Estadística</option>
+            <option value="electronics" ${value("discipline") === "electronics" ? "selected" : ""}>Electrónica / Telecomunicaciones</option>
+            <option value="natural-sciences" ${value("discipline") === "natural-sciences" ? "selected" : ""}>Ciencias naturales</option>
+            <option value="social-sciences" ${value("discipline") === "social-sciences" ? "selected" : ""}>Ciencias sociales / Humanidades</option>
+            <option value="health" ${value("discipline") === "health" ? "selected" : ""}>Salud</option>
+            <option value="business" ${value("discipline") === "business" ? "selected" : ""}>Administración / Economía</option>
+            <option value="design" ${value("discipline") === "design" ? "selected" : ""}>Diseño / Arquitectura</option>
+            <option value="general" ${value("discipline") === "general" ? "selected" : ""}>General / Multidisciplinar</option>
+          </select>
+        </label>
         <label class="${FIELD_LABEL}">Institución<input class="${FIELD_INPUT}" id="onb-institution" value="${value("institution")}" placeholder="Universidad Ejemplo"></label>
         <label class="${FIELD_LABEL}">Facultad<input class="${FIELD_INPUT}" id="onb-faculty" value="${value("faculty")}" placeholder="Facultad de Ingeniería"></label>
         <label class="${FIELD_LABEL}">Carrera<input class="${FIELD_INPUT}" id="onb-career" value="${value("career")}" placeholder="Ingeniería de Software"></label>
@@ -1852,6 +1866,7 @@ async function performAction(action, current) {
   if (action === "save-profile-and-template") {
     const color = document.getElementById("onb-color").value;
     const rgb = hexToRgb(color);
+    const discipline = document.getElementById("onb-discipline")?.value ?? "";
     const config = {
       ...state.config,
       website: document.getElementById("onb-website").value.trim(),
@@ -1864,6 +1879,7 @@ async function performAction(action, current) {
       colorB: rgb.b,
       author: document.getElementById("onb-author").value.trim(),
       degree: document.getElementById("onb-degree").value.trim(),
+      discipline,
     };
     const errorEl = document.getElementById("onb-form-error");
     const missingLabels = { author: "Nombre completo", institution: "Institución", faculty: "Facultad", career: "Carrera" };
@@ -1881,7 +1897,15 @@ async function performAction(action, current) {
     errorEl.hidden = true;
     state.config = config;
     saveConfig();
-    const result = await applyInstitutionConfig({ author: config.author, degree: config.degree, institution: config.institution, website: config.website, faculty: config.faculty, career: config.career, ecosystem: config.ecosystem || "", color_r: config.colorR, color_g: config.colorG, color_b: config.colorB });
+    const DISCIPLINE_TO_VISUAL_PROFILE = {
+      "software-engineering": "diagramming",
+      "electronics": "diagramming",
+      "design": "full",
+    };
+    if (discipline && !localStorage.getItem("jintia.visualProfile")) {
+      localStorage.setItem("jintia.visualProfile", DISCIPLINE_TO_VISUAL_PROFILE[discipline] ?? "minimum");
+    }
+    const result = await applyInstitutionConfig({ author: config.author, degree: config.degree, institution: config.institution, website: config.website, faculty: config.faculty, career: config.career, ecosystem: config.ecosystem || "", discipline: config.discipline || "", color_r: config.colorR, color_g: config.colorG, color_b: config.colorB });
     if (!result.success) { toast(result.message, "error", 8000); return; }
     const templateResult = await setActiveTemplate(runtime.activeTemplate);
     toast(templateResult.message, templateResult.success ? "success" : "error", 7000);

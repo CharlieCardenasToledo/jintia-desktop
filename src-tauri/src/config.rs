@@ -194,6 +194,7 @@ pub fn apply_institution(config: InstitutionConfig) -> ActionResult {
             "partnerLogoPath": ""
         },
         "activeTemplate": active_template,
+        "discipline": clean(&config.discipline),
         "options": {
             "evidenceMode": "notebooklm-preferred"
         }

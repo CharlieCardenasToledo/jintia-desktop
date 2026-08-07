@@ -145,6 +145,21 @@ export async function renderSettings() {
             <div id="institution-palette" class="hidden rounded-[10px] border border-slate-300/55 bg-white p-3 sm:col-span-2" aria-live="polite"></div>
           </div>
           <div class="flex flex-col gap-1.5 mb-4">
+            <label for="cfg-discipline">Área del conocimiento</label>
+            <select id="cfg-discipline">
+              <option value="">— Selecciona tu área —</option>
+              <option value="software-engineering" ${state.config?.discipline === "software-engineering" ? "selected" : ""}>Informática / Ingeniería de software</option>
+              <option value="math-statistics" ${state.config?.discipline === "math-statistics" ? "selected" : ""}>Matemáticas / Estadística</option>
+              <option value="electronics" ${state.config?.discipline === "electronics" ? "selected" : ""}>Electrónica / Telecomunicaciones</option>
+              <option value="natural-sciences" ${state.config?.discipline === "natural-sciences" ? "selected" : ""}>Ciencias naturales</option>
+              <option value="social-sciences" ${state.config?.discipline === "social-sciences" ? "selected" : ""}>Ciencias sociales / Humanidades</option>
+              <option value="health" ${state.config?.discipline === "health" ? "selected" : ""}>Salud</option>
+              <option value="business" ${state.config?.discipline === "business" ? "selected" : ""}>Administración / Economía</option>
+              <option value="design" ${state.config?.discipline === "design" ? "selected" : ""}>Diseño / Arquitectura</option>
+              <option value="general" ${state.config?.discipline === "general" ? "selected" : ""}>General / Multidisciplinar</option>
+            </select>
+          </div>
+          <div class="flex flex-col gap-1.5 mb-4">
             <label for="cfg-ecosystem">Ecosistema digital <span class="text-app-muted">(uno por línea)</span></label>
             <textarea id="cfg-ecosystem" placeholder="Canvas LMS&#10;Sistema académico">${escapeHtml(ecosystemToStr(state.config?.ecosystem))}</textarea>
           </div>
@@ -561,6 +576,7 @@ async function saveInstitution() {
     color,
     website:     get("cfg-website"),
     ecosystem:   get("cfg-ecosystem").split("\n").map(s => s.trim()).filter(Boolean),
+    discipline:  document.getElementById("cfg-discipline")?.value ?? "",
   };
   toast("Guardando configuración institucional…", "loading", 8000);
   try {
@@ -575,6 +591,7 @@ async function saveInstitution() {
       color_g: g,
       color_b: b,
       ecosystem: config.ecosystem.join("\n"),
+      discipline: config.discipline,
     });
     if (result.success) {
       if (!state.config) state.config = {};

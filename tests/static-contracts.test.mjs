@@ -149,6 +149,7 @@ test('institución, perfil académico y plantilla viven en un solo paso fusionad
   const end = source.indexOf('function renderOnboardingSiteAnalysis', start);
   assert.ok(start >= 0, 'profileStep debe existir');
   const profile = source.slice(start, end);
+  assert.match(profile, /onb-discipline/);
   assert.match(profile, /onb-institution/);
   assert.match(profile, /onb-faculty/);
   assert.match(profile, /onb-career/);
