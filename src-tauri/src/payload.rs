@@ -259,6 +259,46 @@ pub fn install_openai_plugin() -> ActionResult {
     }
 }
 
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst)
+        .map_err(|e| format!("Error creando {}: {e}", dst.display()))?;
+    for entry in fs::read_dir(src)
+        .map_err(|e| format!("Error leyendo {}: {e}", src.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Error en entrada de directorio: {e}"))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("Error copiando {}: {e}", src_path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn portable_skill_src() -> Option<PathBuf> {
+    let src = crate::paths::portable_runtimes_dir()
+        .join("jintia")
+        .join("skill");
+    src.join("bin").join("jintia.js").is_file().then_some(src)
+}
+
+fn installed_portable_matches(target: &Path) -> bool {
+    let Some(src) = portable_skill_src() else {
+        return false;
+    };
+    let read_version = |dir: &Path| {
+        fs::read_to_string(dir.join("package.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v["version"].as_str().map(|s| s.to_string()))
+    };
+    let src_ver = read_version(&src);
+    src_ver.is_some() && src_ver == read_version(target)
+}
+
 pub fn install_local_skill() -> ActionResult {
     let _operation = match PAYLOAD_OPERATION.lock() {
         Ok(operation) => operation,
@@ -275,7 +315,7 @@ pub fn install_local_skill() -> ActionResult {
     if let Err(error) = fs::create_dir_all(&parent) {
         return ActionResult::error(format!("No se pudo crear {}: {error}", parent.display()));
     }
-    if target.exists() && installed_payload_matches(&target) {
+    if target.exists() && (installed_payload_matches(&target) || installed_portable_matches(&target)) {
         return ActionResult::ok(format!(
             "La skill ya estaba instalada y actualizada; no se creó otra copia ni respaldo.\n{}",
             path_text(&target)
@@ -291,7 +331,12 @@ pub fn install_local_skill() -> ActionResult {
         legacy.as_deref()
     };
     let stage = parent.join(format!(".jintia-skill.stage-{}", timestamp()));
-    if let Err(error) = materialize_payload(&stage, installed) {
+    if let Some(portable_src) = portable_skill_src() {
+        if let Err(error) = copy_dir_all(&portable_src, &stage) {
+            let _ = fs::remove_dir_all(&stage);
+            return ActionResult::error(error);
+        }
+    } else if let Err(error) = materialize_payload(&stage, installed) {
         let _ = fs::remove_dir_all(&stage);
         return ActionResult::error(error);
     }
