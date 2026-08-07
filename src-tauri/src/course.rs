@@ -843,45 +843,120 @@ mod tests {
     }
 
     #[test]
-    fn missing_latex_dependencies_are_resolved_safely() {
-        let log = "! LaTeX Error: File `needspace.sty' not found.";
-        assert_eq!(missing_latex_file(log).as_deref(), Some("needspace.sty"));
-        assert_eq!(miktex_package_for_file("needspace.sty"), Some("needspace"));
-        assert_eq!(miktex_package_for_file("newpxtext.sty"), Some("newpx"));
-        assert_eq!(miktex_package_for_file("tikz.sty"), Some("pgf"));
-        assert_eq!(missing_latex_file("File `../secret.sty' not found."), None);
-    }
-
-    #[test]
-    fn demo_pdf_contains_a_complete_transferable_week() {
+    fn syllabus_markdown_structure_is_valid() {
         let week = WeekData {
-            number: 1,
-            title: "De la intuición a una decisión justificable".to_string(),
-            unit: "Pensamiento crítico aplicado".to_string(),
-            topics: String::new(),
-            outcomes: "Comparar alternativas con evidencia".to_string(),
-            bibliography: "Hammond, Keeney y Raiffa (1999). Smart Choices.".to_string(),
-            graded_activity: Some("Elabora una recomendación profesional.".to_string()),
-            autonomous_hours: 4,
+            number: 2,
+            title: "Decisiones bajo incertidumbre".to_string(),
+            unit: "Análisis probabilístico".to_string(),
+            topics: "Riesgo\nProba bilidad".to_string(),
+            outcomes: "Modelar decisiones".to_string(),
+            bibliography: "Taleb (2007). Black Swan.".to_string(),
+            graded_activity: Some("Análisis de caso".to_string()),
+            autonomous_hours: 3,
             teaching_hours: 2,
             practice_hours: 2,
         };
-        let mut latex = String::new();
+        let md = build_syllabus_md(
+            "IFT201",
+            "Análisis de Decisiones",
+            4,
+            "2026-I",
+            "I",
+            "Pensamiento crítico.",
+            &[week],
+        )
+        .unwrap();
 
-        append_demo_week(&mut latex, &week, false);
+        assert!(md.contains("# IFT201 — Análisis de Decisiones"));
+        assert!(md.contains("### Semana 02 — Decisiones bajo incertidumbre"));
+        assert!(md.contains("**Unidad:** Análisis probabilístico"));
+        assert!(md.contains("**Resultado de aprendizaje:**"));
+        assert!(md.contains("**Horas:**"));
+    }
+}
 
-        assert!(latex.contains("Antes de empezar: una decisión cotidiana"));
-        assert!(latex.contains("matriz de decisión en cinco pasos"));
-        assert!(latex.contains("\\begin{equation}"));
-        assert!(latex.contains("\\begin{guidetable}"));
-        assert!(latex.contains("\\begin{tabularx}"));
-        assert!(latex.contains("\\begin{tikzpicture}"));
-        assert!(latex.contains(
-            "\\guidefigurecaption{Ruta de una decisión profesional justificable.}{fig:ruta-decision}"
-        ));
-        assert!(latex.contains("Transferencia a cualquier profesión"));
-        assert!(latex.contains("Actividad calificada"));
-        assert!(latex.contains("Autoevaluación"));
-        assert!(latex.contains("Referencias bibliográficas"));
+pub fn check_migration_needed(
+    course_path: String,
+) -> crate::models::MigrationStatus {
+    let root = PathBuf::from(course_path.trim());
+    if !root.is_dir() {
+        return crate::models::MigrationStatus {
+            needs_migration: false,
+            latex_dirs_found: 0,
+            tex_files_found: 0,
+            dry_run_report: None,
+        };
+    }
+
+    // Contar directorios LaTeX existentes
+    let semanas_dir = root.join("semanas");
+    let mut latex_dirs = 0;
+    let mut tex_files = 0;
+
+    if let Ok(entries) = std::fs::read_dir(&semanas_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let latex_path = path.join("latex");
+                if latex_path.is_dir() {
+                    latex_dirs += 1;
+                    if let Ok(tex_entries) = std::fs::read_dir(&latex_path) {
+                        for tex_entry in tex_entries.flatten() {
+                            if tex_entry.path().extension().and_then(|s| s.to_str()) == Some("tex") {
+                                tex_files += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if latex_dirs == 0 && tex_files == 0 {
+        return crate::models::MigrationStatus {
+            needs_migration: false,
+            latex_dirs_found: 0,
+            tex_files_found: 0,
+            dry_run_report: None,
+        };
+    }
+
+    // Invocar jintia migrate --dry-run --json
+    let skill_path = crate::payload::installed_skill_path();
+    let course_path_str = root.to_string_lossy().to_string();
+    let args = ["migrate", &course_path_str, "--dry-run", "--json"];
+
+    let dry_run_report = match crate::engine::run_jintia(Path::new(&skill_path), &args) {
+        Ok(result) if result.success => serde_json::from_str(&result.stdout).ok(),
+        _ => None,
+    };
+
+    crate::models::MigrationStatus {
+        needs_migration: true,
+        latex_dirs_found: latex_dirs,
+        tex_files_found: tex_files,
+        dry_run_report,
+    }
+}
+
+pub fn run_migration(course_path: String) -> ActionResult {
+    let root = PathBuf::from(course_path.trim());
+    if !root.is_dir() {
+        return ActionResult::error("La carpeta del proyecto no existe.");
+    }
+
+    let skill_path = crate::payload::installed_skill_path();
+    let course_path_str = root.to_string_lossy().to_string();
+    let args = ["migrate", &course_path_str, "--json"];
+
+    match crate::engine::run_jintia(Path::new(&skill_path), &args) {
+        Ok(result) => {
+            if result.success {
+                ActionResult::ok("Proyecto migrado correctamente.")
+            } else {
+                ActionResult::error(format!("Error durante la migración:\n{}", result.stderr))
+            }
+        }
+        Err(error) => ActionResult::error(error),
     }
 }

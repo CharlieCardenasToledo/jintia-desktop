@@ -1,7 +1,8 @@
 # Refactorización Jintia Desktop → P0: Notas de Progreso
 
 ## Estado Actual
-Se completaron las **Fases 1-3 del plan** (Fases 1, 1b, 2, 2b, 3).
+Se completaron las **Fases 1-4 del plan** (Fases 1, 1b, 2, 2b, 3, 4).
+En progreso: **FASE 5a (Tests Rust)**.
 
 ### Cambios Implementados
 
@@ -13,29 +14,31 @@ Se completaron las **Fases 1-3 del plan** (Fases 1, 1b, 2, 2b, 3).
 **FASE 1b: Reescribir `toolchain.rs`**
 - `run()` ahora delega a `engine::run_jintia()` sin validaciones `.tex`
 - `manage_harness()` también delega a Engine Adapter
-- Eliminadas restricciones de extensión de archivo
 
 **FASE 3: Provider Detection (`src-tauri/src/harnesses.rs`)**
 - `detect()` llama `jintia detect --json` vía Engine Adapter
-- Fallback a tabla local si Skill no está disponible
 - Eliminada tabla hardcodeada de 13 proveedores
 
 **FASE 2: Eliminar Motor LaTeX (`src-tauri/src/course.rs`)**
-- Eliminadas funciones: `compile_syllabus_pdf()` (~400 líneas), `compile_via_pdflatex()`, helpers
-- Eliminadas constantes LaTeX
+- Eliminadas ~400 líneas de funciones de compilación LaTeX
 - `create_course_structure()` ahora llama `jintia init`
-- Eliminado parámetro `weeks` del contrato Tauri
 
-**FASE 2b: Actualizar `course_state.rs` y `config.rs`**
+**FASE 2b: Actualizar State y Config**
 - `week_guide_exists()` busca `guide.json` en lugar de `.tex`
-- Test actualizado
+
+**FASE 4: Migración de Proyectos 1.1.x**
+- Nuevas funciones: `check_migration_needed()`, `run_migration()`
+- Nuevos comandos Tauri: `check_migration_needed`, `run_migration`
+- Nuevo struct: `MigrationStatus` en models.rs
 
 ## Compilación
-- ✅ `cargo check` pasa sin errores
-- ⚠️ Warnings esperados sobre código no usado
+- ✅ `cargo check` sin errores
+- ⚠️ Tests Rust en ejecución (background)
 
-## Próximas Prioridades
-1. FASE 4 — Migration wizard
-2. FASE 5 — Tests (quitar LaTeX-specific)
-3. FASE 6 — CI multi-plataforma
-4. FASE 0 — Skill endpoints (opcional)
+## Próximas Tareas
+| Fase | Tarea | Estado |
+|------|-------|--------|
+| 5a | Tests Rust (eliminar LaTeX-specific) | 🔄 In Progress |
+| 5b | Tests JS (eliminar LaTeX strings) | ⏳ Pending |
+| 6 | CI Windows/macOS | ⏳ Pending |
+| 0 | Skill endpoints (optional) | ⏳ Pending |

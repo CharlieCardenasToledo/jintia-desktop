@@ -14,7 +14,7 @@ mod release;
 mod toolchain;
 
 use models::{
-    ActionResult, DependencyStatus, GeneratedPdf, InstitutionConfig, NotebookEntry,
+    ActionResult, DependencyStatus, GeneratedPdf, InstitutionConfig, MigrationStatus, NotebookEntry,
     NotebookLmAuthStatus, PdfProjectRoot, SetupStatus, TemplateMeta, WeekData,
 };
 use tauri::Manager;
@@ -335,6 +335,25 @@ async fn run_skill_tool(
         .unwrap_or_else(|error| models::ToolchainReport::error(format!("No se pudo ejecutar la toolchain: {error}")))
 }
 
+#[tauri::command]
+async fn check_migration_needed(project_path: String) -> models::MigrationStatus {
+    tauri::async_runtime::spawn_blocking(move || course::check_migration_needed(project_path))
+        .await
+        .unwrap_or_else(|_| models::MigrationStatus {
+            needs_migration: false,
+            latex_dirs_found: 0,
+            tex_files_found: 0,
+            dry_run_report: None,
+        })
+}
+
+#[tauri::command]
+async fn run_migration(project_path: String) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || course::run_migration(project_path))
+        .await
+        .unwrap_or_else(|error| ActionResult::error(format!("No se pudo ejecutar la migración: {error}")))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -379,6 +398,8 @@ pub fn run() {
             get_active_template,
             set_active_template,
             run_skill_tool,
+            check_migration_needed,
+            run_migration,
         ])
         .run(tauri::generate_context!())
         .expect("error running tauri app");

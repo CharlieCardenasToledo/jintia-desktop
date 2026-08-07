@@ -230,3 +230,12 @@ pub struct OnboardingResult {
     pub message: String,
     pub status: OnboardingStatus,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationStatus {
+    pub needs_migration: bool,
+    pub latex_dirs_found: usize,
+    pub tex_files_found: usize,
+    pub dry_run_report: Option<serde_json::Value>,
+}
