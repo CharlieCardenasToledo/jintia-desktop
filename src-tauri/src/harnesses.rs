@@ -1,99 +1,140 @@
+use crate::engine;
+use crate::payload;
 use serde_json::{json, Value};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-#[derive(Clone, Copy)]
-struct Provider {
-    id: &'static str,
-    name: &'static str,
-    project_dir: &'static str,
-    global_dir: &'static str,
-    supports_hooks: bool,
-}
+/// Detecta proveedores IA instalados en el sistema vía la Skill CLI.
+///
+/// La Skill es la autoridad sobre qué proveedores existen y dónde.
+/// Si `explicit` no está vacío, solo detecta esos proveedores específicos.
+///
+/// # Ejemplo
+/// ```ignore
+/// let result = detect("/path/to/project".to_string(), None);
+/// // Devuelve JSON con lista de proveedores detectados
+/// ```
+pub fn detect(project_path: String, explicit: Option<Vec<String>>) -> Value {
+    let skill_path = payload::installed_skill_path();
 
-const PROVIDERS: &[Provider] = &[
-    Provider { id: "claude", name: "Claude Code", project_dir: ".claude", global_dir: ".claude", supports_hooks: true },
-    Provider { id: "codex", name: "Codex CLI", project_dir: ".agents", global_dir: ".codex", supports_hooks: true },
-    Provider { id: "cursor", name: "Cursor", project_dir: ".cursor", global_dir: ".cursor", supports_hooks: true },
-    Provider { id: "gemini", name: "Gemini CLI", project_dir: ".gemini", global_dir: ".gemini", supports_hooks: false },
-    Provider { id: "copilot", name: "GitHub Copilot", project_dir: ".github", global_dir: ".github", supports_hooks: true },
-    Provider { id: "grok", name: "Grok Build", project_dir: ".grok", global_dir: ".grok", supports_hooks: false },
-    Provider { id: "kiro", name: "Kiro", project_dir: ".kiro", global_dir: ".kiro", supports_hooks: false },
-    Provider { id: "opencode", name: "OpenCode", project_dir: ".opencode", global_dir: ".opencode", supports_hooks: false },
-    Provider { id: "pi", name: "Project Indigo", project_dir: ".pi", global_dir: ".pi/agent", supports_hooks: false },
-    Provider { id: "qoder", name: "Qoder", project_dir: ".qoder", global_dir: ".qoder", supports_hooks: false },
-    Provider { id: "trae", name: "Trae", project_dir: ".trae", global_dir: ".trae", supports_hooks: false },
-    Provider { id: "rovodev", name: "Rovo Dev", project_dir: ".rovodev", global_dir: ".rovodev", supports_hooks: false },
-    Provider { id: "vibe", name: "Mistral Vibe", project_dir: ".vibe", global_dir: ".vibe", supports_hooks: false },
-];
+    let mut args: Vec<String> = vec!["detect".to_string(), project_path.clone(), "--json".to_string()];
 
-fn normalize(value: &str) -> String {
-    match value.trim().to_lowercase().as_str() {
-        "claude-code" => "claude".to_string(),
-        "agents" => "codex".to_string(),
-        "github" => "copilot".to_string(),
-        "xai" | "grok-build" => "grok".to_string(),
-        "rovo" => "rovodev".to_string(),
-        "project-indigo" => "pi".to_string(),
-        value => value.to_string(),
+    if let Some(ref providers) = explicit {
+        if !providers.is_empty() {
+            args.push(format!("--providers={}", providers.join(",")));
+        }
+    }
+
+    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+    match engine::run_jintia(Path::new(&skill_path), &args_refs) {
+        Ok(result) => {
+            if result.success {
+                serde_json::from_str(&result.stdout)
+                    .unwrap_or_else(|_| fallback_detect(&project_path, explicit))
+            } else {
+                fallback_detect(&project_path, explicit)
+            }
+        }
+        Err(_) => fallback_detect(&project_path, explicit),
     }
 }
 
-fn find_provider(value: &str) -> Option<Provider> {
-    let id = normalize(value);
-    PROVIDERS.iter().copied().find(|provider| provider.id == id)
-}
+/// Fallback: detección local cuando la Skill no está disponible o falla.
+/// Devuelve una estructura mínima que el frontend pueda entender.
+fn fallback_detect(project_path: &str, explicit: Option<Vec<String>>) -> Value {
+    let project = std::path::PathBuf::from(project_path.trim());
 
-fn skill_status(skills: &Path) -> (bool, bool, Option<String>) {
-    if !skills.is_dir() { return (false, false, None); }
-    let has_skills = fs::read_dir(skills).map(|entries| entries.flatten().any(|entry| entry.path().join("SKILL.md").is_file())).unwrap_or(false);
-    let skill = skills.join("jintia-skill");
-    let installed = skill.join("SKILL.md").is_file();
-    let version = fs::read_to_string(skill.join("VERSION")).ok().map(|value| value.trim().to_string());
-    (installed, has_skills, version)
-}
+    // Proveedores conocidos con directorios por defecto
+    let default_providers = vec![
+        ("claude", "Claude Code", ".claude", true),
+        ("codex", "Codex CLI", ".agents", true),
+        ("cursor", "Cursor", ".cursor", true),
+        ("gemini", "Gemini CLI", ".gemini", false),
+        ("copilot", "GitHub Copilot", ".github", true),
+        ("grok", "Grok Build", ".grok", false),
+        ("kiro", "Kiro", ".kiro", false),
+        ("opencode", "OpenCode", ".opencode", false),
+        ("pi", "Project Indigo", ".pi", false),
+        ("qoder", "Qoder", ".qoder", false),
+        ("trae", "Trae", ".trae", false),
+        ("rovodev", "Rovo Dev", ".rovodev", false),
+        ("vibe", "Mistral Vibe", ".vibe", false),
+    ];
 
-fn detection(provider: Provider, scope: &str, found: Option<PathBuf>, root: PathBuf) -> Value {
-    let skills = root.join("skills");
-    let (installed, has_skills, version) = skill_status(&skills);
-    let found_path = found.as_ref().map(|path| path.to_string_lossy().to_string());
-    let status = if installed { "installed" } else if found.is_some() { "detected" } else { "not-detected" };
+    let mut detections = Vec::new();
+
+    for (id, name, dir, supports_hooks) in default_providers {
+        let provider_path = project.join(dir);
+        if explicit.is_none() && provider_path.is_dir() {
+            detections.push(json!({
+                "id": id,
+                "name": name,
+                "scope": "project",
+                "foundPath": provider_path.to_string_lossy().to_string(),
+                "installed": false,
+                "status": "detected",
+                "supportsHooks": supports_hooks,
+            }));
+        } else if let Some(ref providers) = explicit {
+            if providers.contains(&id.to_string()) {
+                detections.push(json!({
+                    "id": id,
+                    "name": name,
+                    "scope": "project",
+                    "foundPath": if provider_path.is_dir() { Some(provider_path.to_string_lossy().to_string()) } else { None },
+                    "installed": false,
+                    "status": if provider_path.is_dir() { "detected" } else { "not-detected" },
+                    "supportsHooks": supports_hooks,
+                }));
+            }
+        }
+    }
+
+    // Si no se detectó nada, al menos ofrecer Claude y Codex
+    if detections.is_empty() {
+        detections.push(json!({
+            "id": "claude",
+            "name": "Claude Code",
+            "scope": "project",
+            "foundPath": Value::Null,
+            "installed": false,
+            "status": "not-detected",
+            "supportsHooks": true,
+        }));
+        detections.push(json!({
+            "id": "codex",
+            "name": "Codex CLI",
+            "scope": "project",
+            "foundPath": Value::Null,
+            "installed": false,
+            "status": "not-detected",
+            "supportsHooks": true,
+        }));
+    }
+
     json!({
-        "id": provider.id,
-        "name": provider.name,
-        "scope": scope,
-        "foundPath": found_path,
-        "installPath": skills.to_string_lossy(),
-        "installed": installed,
-        "hasSkills": has_skills,
-        "version": version,
-        "status": status,
-        "supportsHooks": provider.supports_hooks,
+        "schemaVersion": "1.0.0",
+        "projectRoot": project.to_string_lossy().to_string(),
+        "providers": detections,
     })
 }
 
-pub fn detect(project_path: String, explicit: Option<Vec<String>>) -> Value {
-    let project = PathBuf::from(project_path.trim());
-    let home = crate::paths::home_dir().unwrap_or_else(|_| PathBuf::new());
-    let selected: Vec<Provider> = explicit.unwrap_or_default().iter().filter_map(|value| find_provider(value)).collect();
-    let explicit_mode = !selected.is_empty();
-    let providers = if explicit_mode { selected.clone() } else { PROVIDERS.to_vec() };
-    let mut detections = Vec::new();
-    for provider in providers {
-        let project_dir = project.join(provider.project_dir);
-        if explicit_mode || project_dir.is_dir() {
-            detections.push(detection(provider, "project", project_dir.is_dir().then_some(project_dir.clone()), project_dir));
-        }
-        if !explicit_mode {
-            let global_dir = home.join(provider.global_dir);
-            if global_dir.is_dir() { detections.push(detection(provider, "global", Some(global_dir.clone()), global_dir)); }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_returns_valid_json() {
+        let result = fallback_detect("/tmp/test", None);
+        assert!(result["schemaVersion"].is_string());
+        assert!(result["providers"].is_array());
     }
-    if detections.is_empty() {
-        for id in ["claude", "codex"] {
-            let provider = find_provider(id).unwrap();
-            detections.push(detection(provider, "project", None, project.join(provider.project_dir).join("skills")));
-        }
+
+    #[test]
+    fn fallback_includes_default_providers() {
+        let result = fallback_detect("/tmp/test", None);
+        let providers = result["providers"].as_array().unwrap();
+        // Si no hay directorios, debe al menos devolver claude y codex
+        assert!(providers.len() >= 2);
     }
-    json!({ "schemaVersion": "1.0.0", "projectRoot": project.to_string_lossy(), "providers": detections })
 }

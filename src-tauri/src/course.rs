@@ -15,146 +15,9 @@ const DEPENDENCY_CACHE_TTL: Duration = Duration::from_secs(300);
 static DEPENDENCY_CACHE: OnceLock<Mutex<Option<(Instant, Vec<DependencyStatus>)>>> =
     OnceLock::new();
 static SYLLABUS_WRITE_OPERATION: Mutex<()> = Mutex::new(());
-static PDF_COMPILE_OPERATION: Mutex<()> = Mutex::new(());
 const COURSE_CODE_SLUG_MAX: usize = 24;
 const COURSE_NAME_SLUG_MAX: usize = 48;
-const KAOHANDT_MIKTEX_REQUIREMENTS: &[(&str, &str)] = &[
-    ("abstract", "abstract.sty"),
-    ("algorithm2e", "algorithm2e.sty"),
-    ("bera", "beramono.sty"),
-    ("bookmark", "bookmark.sty"),
-    ("ccicons", "ccicons.sty"),
-    ("chngcntr", "chngcntr.sty"),
-    ("datatool", "datatool-base.sty"),
-    ("etoc", "etoc.sty"),
-    ("floatrow", "floatrow.sty"),
-    ("footnotebackref", "footnotebackref.sty"),
-    ("glossaries", "glossaries.sty"),
-    ("marginnote", "marginnote.sty"),
-    ("mathalpha", "mathalfa.sty"),
-    ("morewrites", "morewrites.sty"),
-    ("needspace", "needspace.sty"),
-    ("newpx", "newpxtext.sty"),
-    ("nomencl", "nomencl.sty"),
-    ("pdfpages", "pdfpages.sty"),
-    ("placeins", "placeins.sty"),
-    ("sidenotes", "sidenotes.sty"),
-    ("subfiles", "subfiles.sty"),
-    ("tikzpagenodes", "tikzpagenodes.sty"),
-    ("todonotes", "todonotes.sty"),
-];
 
-fn emit_compile_progress(
-    app: &AppHandle,
-    phase: &str,
-    message: &str,
-    detail: Option<&str>,
-    started_at: Instant,
-) {
-    let _ = app.emit(
-        "jintia://compile-progress",
-        serde_json::json!({
-            "phase": phase,
-            "message": message,
-            "detail": detail,
-            "elapsedMs": started_at.elapsed().as_millis()
-        }),
-    );
-}
-
-#[cfg(target_os = "windows")]
-fn ensure_miktex_package(
-    app: &AppHandle,
-    package_id: &str,
-    file_name: &str,
-    started_at: Instant,
-) -> Result<(), String> {
-    let available = Command::new("kpsewhich")
-        .arg(file_name)
-        .output()
-        .ok()
-        .is_some_and(|output| output.status.success() && !output.stdout.is_empty());
-    if available {
-        return Ok(());
-    }
-
-    emit_compile_progress(
-        app,
-        "package-install",
-        "Instalando un componente LaTeX requerido",
-        Some(package_id),
-        started_at,
-    );
-    let mut modern = Command::new("miktex")
-        .args(["packages", "install", package_id])
-        .output();
-    let mut installed = modern
-        .as_ref()
-        .ok()
-        .is_some_and(|output| output.status.success());
-    let package_unknown = modern.as_ref().ok().is_some_and(|output| {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
-        stderr.contains("package is unknown") || stderr.contains("paquete es desconocido")
-    });
-    if !installed && package_unknown {
-        emit_compile_progress(
-            app,
-            "package-catalog",
-            "Actualizando el catálogo de componentes LaTeX",
-            Some(package_id),
-            started_at,
-        );
-        let catalog_updated = Command::new("miktex")
-            .args(["packages", "update-package-database"])
-            .output()
-            .ok()
-            .is_some_and(|output| output.status.success());
-        if catalog_updated {
-            modern = Command::new("miktex")
-                .args(["packages", "install", package_id])
-                .output();
-            installed = modern
-                .as_ref()
-                .ok()
-                .is_some_and(|output| output.status.success());
-        }
-    }
-    installed = installed
-        || Command::new("mpm")
-            .arg(format!("--install={package_id}"))
-            .output()
-            .ok()
-            .is_some_and(|output| output.status.success());
-    if installed {
-        emit_compile_progress(
-            app,
-            "package-ready",
-            "Componente LaTeX instalado",
-            Some(package_id),
-            started_at,
-        );
-        Ok(())
-    } else {
-        let detail = modern
-            .ok()
-            .map(|output| String::from_utf8_lossy(&output.stderr).trim().to_string())
-            .filter(|text| !text.is_empty())
-            .unwrap_or_else(|| "MiKTeX no permitió instalar el paquete.".to_string());
-        Err(format!(
-            "Falta `{file_name}`. No se pudo instalar automáticamente el paquete MiKTeX `{package_id}`: {detail}"
-        ))
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn ensure_miktex_package(
-    _app: &AppHandle,
-    _package_id: &str,
-    _file_name: &str,
-    _started_at: Instant,
-) -> Result<(), String> {
-    Ok(())
-}
 
 fn dependency_cache() -> &'static Mutex<Option<(Instant, Vec<DependencyStatus>)>> {
     DEPENDENCY_CACHE.get_or_init(|| Mutex::new(None))
@@ -228,13 +91,6 @@ fn version(command: &str, args: &[&str]) -> Option<String> {
 }
 
 pub fn check_dependencies() -> Vec<DependencyStatus> {
-    // El registro puede tener el PATH correcto (por una instalación de esta
-    // sesión o de una sesión anterior de la app) sin que este proceso lo
-    // haya heredado todavía. Releerlo antes de cada verificación evita que
-    // "Verificar de nuevo" reporte "no encontrado" para algo que sí está
-    // instalado, sin depender de que el usuario reinicie la app.
-    #[cfg(target_os = "windows")]
-    refresh_path_from_registry();
 
     let node = command_exists("node");
     let npx = command_exists(if cfg!(target_os = "windows") {
@@ -280,20 +136,17 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         },
     ];
 
-    // El compilador LaTeX (pdflatex + biber) se verifica e instala de forma
-    // nativa en las tres plataformas: MiKTeX vía winget en Windows, TeX Live
-    // vía Homebrew/apt en macOS/Linux. La app ya no detecta ni ofrece WSL ni
-    // Docker: eran motores de compilación alternativos que el usuario final
-    // no debería tener que evaluar. El nombre visible es genérico
-    // ("Compilador LaTeX") porque el binario real detrás cambia según el SO.
+    // El compilador LaTeX es opcional. La skill puede renderizar a través de
+    // Vivliostyle en lugar de LaTeX. Detección local únicamente para capacidades
+    // avanzadas (plantillas LaTeX personalizadas, si existen en el futuro).
     let latex = command_exists("pdflatex") && command_exists("biber");
     dependencies.push(DependencyStatus {
         name: "Compilador LaTeX".to_string(),
         installed: latex,
         version: version("pdflatex", &["--version"]),
-        required: true,
+        required: false,
         installable: true,
-        note: "Genera el PDF de tu guía (MiKTeX en Windows).".to_string(),
+        note: "Opcional: plantillas LaTeX avanzadas. La skill usa HTML/Vivliostyle por defecto.".to_string(),
         command: "pdflatex --version".to_string(),
     });
 
@@ -354,17 +207,18 @@ pub fn install_dependency(name: String, confirmed: bool) -> ActionResult {
     // Una instalación puede cambiar el estado del entorno. La siguiente
     // verificación debe inspeccionarlo de nuevo.
     invalidate_dependency_cache();
+
+    // LaTeX es opcional. No se ofrece instalación automática.
+    if name == "Compilador LaTeX" {
+        return ActionResult::error("LaTeX es opcional. Instálalo manualmente según tu SO si lo necesitas.");
+    }
+
     #[cfg(target_os = "windows")]
     {
-        if name == "Compilador LaTeX" && !confirmed {
-            return ActionResult::error("Esta instalación cambia componentes del sistema y requiere confirmación explícita.");
-        }
-
         let package = match name.as_str() {
             "Node.js" => "OpenJS.NodeJS.LTS",
             "Git" => "Git.Git",
             "Python" => "Python.Python.3.13",
-            "Compilador LaTeX" => "MiKTeX.MiKTeX",
             _ => return ActionResult::error(format!("Dependencia desconocida: {name}")),
         };
         match Command::new("winget.exe")
@@ -380,14 +234,6 @@ pub fn install_dependency(name: String, confirmed: bool) -> ActionResult {
             .status()
         {
             Ok(status) if status.success() => {
-                // winget ya actualizó el PATH en el registro, pero este
-                // proceso lo heredó una sola vez al arrancar. Releerlo ahora
-                // permite que "Verificar de nuevo" encuentre la dependencia
-                // sin reiniciar la app completa.
-                refresh_path_from_registry();
-                if name == "Compilador LaTeX" {
-                    return finish_miktex_install();
-                }
                 ActionResult::ok(format!("{name} instalado correctamente."))
             }
             Ok(status) => {
@@ -401,79 +247,13 @@ pub fn install_dependency(name: String, confirmed: bool) -> ActionResult {
     {
         let _ = confirmed;
         let instructions = if cfg!(target_os = "macos") {
-            "En macOS: instala Node.js y Python con Homebrew (`brew install node python`); para LaTeX usa `brew install --cask basictex` y después `tlmgr install biber`. Reinicia la app y vuelve a verificar."
+            "En macOS: instala Node.js y Python con Homebrew (`brew install node python`). Reinicia la app y vuelve a verificar."
         } else {
-            "En Linux: instala Node.js, npm y Python con el gestor de paquetes de tu distribución (por ejemplo `sudo apt install nodejs npm python3`); para LaTeX usa `sudo apt install texlive-latex-extra biber`. Reinicia la app y vuelve a verificar."
+            "En Linux: instala Node.js, npm y Python con el gestor de paquetes de tu distribución (por ejemplo `sudo apt install nodejs npm python3`). Reinicia la app y vuelve a verificar."
         };
         ActionResult::error(format!(
             "La instalación automática de {name} está disponible solo en Windows. {instructions}"
         ))
-    }
-}
-
-/// El PATH del registro cambia con cada `winget install`, pero un proceso ya
-/// en ejecución solo hereda el PATH una vez, al arrancar (Windows no lo
-/// actualiza en caliente). Se relee Machine+User desde el registro -en ese
-/// orden, igual que arma el PATH un proceso nuevo- y se aplica a este mismo
-/// proceso con `set_var`, para que los siguientes `Command::new(...)` (y la
-/// próxima verificación de dependencias) ya vean el binario recién instalado
-/// sin necesidad de reiniciar la app completa.
-#[cfg(target_os = "windows")]
-fn refresh_path_from_registry() {
-    let script = "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')";
-    let Ok(output) = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-    else {
-        return;
-    };
-    if !output.status.success() {
-        return;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !path.is_empty() {
-        std::env::set_var("PATH", path);
-    }
-}
-
-/// Tras instalar MiKTeX vía winget, `initexmf`/`mpm` viven en una ruta fija
-/// del perfil del usuario. Se usa esa ruta directa (en vez de depender del
-/// PATH, por si `refresh_path_from_registry` no alcanzó a verlos todavía)
-/// para: (1) desactivar el diálogo de "¿instalar paquete faltante?" que
-/// colgaría una compilación no interactiva, y (2) instalar `biber`, que la
-/// skill necesita para la bibliografía.
-#[cfg(target_os = "windows")]
-fn finish_miktex_install() -> ActionResult {
-    let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
-    let bin_dir = std::path::Path::new(&local_appdata)
-        .join("Programs")
-        .join("MiKTeX")
-        .join("miktex")
-        .join("bin")
-        .join("x64");
-    let initexmf = bin_dir.join("initexmf.exe");
-    let mpm = bin_dir.join("mpm.exe");
-
-    if !initexmf.exists() {
-        return ActionResult::ok(
-            "MiKTeX se instaló correctamente. Si “Verificar de nuevo” todavía no lo detecta, reinicia la app.",
-        );
-    }
-
-    let auto_install = Command::new(&initexmf)
-        .arg("--set-config-value=[MPM]AutoInstall=1")
-        .status();
-    let biber = Command::new(&mpm)
-        .args(["--install=biber", "--install=biblatex"])
-        .status();
-
-    match (auto_install, biber) {
-        (Ok(a), Ok(b)) if a.success() && b.success() => ActionResult::ok(
-            "MiKTeX instalado y configurado: pdflatex y biber quedaron listos. Los paquetes LaTeX que falten se instalarán automáticamente durante la compilación.",
-        ),
-        _ => ActionResult::ok(
-            "MiKTeX se instaló correctamente, pero no se pudo terminar de configurar biber en automático. Abre MiKTeX Console e instala el paquete “biber”, o reinicia la app y vuelve a verificar.",
-        ),
     }
 }
 
@@ -562,13 +342,11 @@ pub fn create_course_structure(
     root_path: String,
     course_code: String,
     course_name: String,
-    weeks: u32,
-    initialize_readme: bool,
-    include_graded_activities: bool,
+    _weeks: u32,
+    _initialize_readme: bool,
+    _include_graded_activities: bool,
 ) -> ActionResult {
-    if !(1..=52).contains(&weeks) {
-        return ActionResult::error("El número de semanas debe estar entre 1 y 52.");
-    }
+    // Validar inputs básicos
     let requested_root = PathBuf::from(root_path.trim());
     if root_path.trim().is_empty() {
         return ActionResult::error("Selecciona una carpeta para guardar el proyecto.");
@@ -580,6 +358,7 @@ pub fn create_course_structure(
             ));
         }
     }
+
     let root = match canonical_directory(&root_path) {
         Ok(path) => path,
         Err(error) => return ActionResult::error(error),
@@ -589,58 +368,36 @@ pub fn create_course_structure(
         Err(error) => return ActionResult::error(error),
     };
 
-    let mut paths = vec![
-        course.join("bibliografia").join("recortes_por_semana"),
-        course.join("semanas").join("_shared").join("latex"),
+    // Delegar la creación de estructura a la Skill vía jintia init
+    let skill_path = crate::payload::installed_skill_path();
+    let course_path_str = course.to_string_lossy().to_string();
+    let args = [
+        "init",
+        &course_path_str,
+        "--code",
+        course_code.trim(),
+        "--name",
+        course_name.trim(),
+        "--json",
     ];
-    for week in 1..=weeks {
-        let week_root = course
-            .join("semanas")
-            .join(format!("semana-{week:02}"))
-            .join("latex");
-        paths.push(week_root.join("sections"));
-        paths.push(week_root.join("figure"));
-    }
-    for path in paths {
-        if let Err(error) = std::fs::create_dir_all(&path) {
-            return ActionResult::error(format!("No se pudo crear {}: {error}", path.display()));
-        }
-    }
 
-    if let Err(error) = write_course_settings(&course, include_graded_activities) {
-        return ActionResult::error(format!(
-            "Las carpetas se crearon, pero no se pudo guardar la configuración de la asignatura: {error}"
-        ));
-    }
-
-    if initialize_readme {
-        let readme = course.join("README.md");
-        if !readme.exists() {
-            let content = format!(
-                "# {} — {}\n\n\
-                Proyecto académico preparado con Jintia.\n\n\
-                ## Sílabo\n\n\
-                El contenido semanal se completará desde el editor de sílabo.\n\n\
-                ## Estructura\n\n\
-                - `semanas/`: materiales organizados por semana.\n\
-                - `bibliografia/`: referencias y recortes del curso.\n",
-                course_code.trim(),
-                course_name.trim(),
-            );
-            if let Err(error) = std::fs::write(&readme, content) {
-                return ActionResult::error(format!(
-                    "Las carpetas se crearon, pero no se pudo inicializar {}: {error}",
-                    readme.display()
-                ));
+    match crate::engine::run_jintia(Path::new(&skill_path), &args) {
+        Ok(result) => {
+            if result.success {
+                ActionResult::ok(format!(
+                    "Proyecto creado en:\n{}",
+                    crate::paths::path_text(&course)
+                ))
+                .with_path(crate::paths::path_text(&course))
+            } else {
+                ActionResult::error(format!(
+                    "Error al crear el proyecto:\n{}",
+                    result.stderr
+                ))
             }
         }
+        Err(error) => ActionResult::error(error),
     }
-
-    ActionResult::ok(format!(
-        "Estructura creada para {weeks} semanas en:\n{}",
-        path_text(&course)
-    ))
-    .with_path(path_text(&course))
 }
 
 fn write_course_settings(course: &Path, include_graded_activities: bool) -> Result<(), String> {
@@ -1026,545 +783,6 @@ fn append_demo_week(full_content: &mut String, week: &WeekData, marginal_layout:
         full_content.push_str(&format!("\\item {}\n", line.trim()));
     }
     full_content.push_str("\\end{itemize}\n\\end{softblock}\n\n");
-}
-
-pub fn compile_syllabus_pdf(
-    app: AppHandle,
-    course_path: String,
-    course_code: String,
-    course_name: String,
-    _credits: u32,
-    academic_period: String,
-    _semester: String,
-    description: String,
-    weeks_data: Vec<WeekData>,
-    include_jintia_credit: bool,
-    reuse_if_valid: bool,
-    preview_template_id: Option<String>,
-) -> ActionResult {
-    let started_at = Instant::now();
-    emit_compile_progress(
-        &app,
-        "preparing",
-        "Preparando el documento de prueba",
-        None,
-        started_at,
-    );
-    let _operation = match PDF_COMPILE_OPERATION.lock() {
-        Ok(operation) => operation,
-        Err(_) => return ActionResult::error("El estado interno de compilación está bloqueado."),
-    };
-    let course = match canonical_directory(&course_path) {
-        Ok(path) => path,
-        Err(error) => return ActionResult::error(error),
-    };
-
-    let course_dir = match course_directory(&course, &course_code, &course_name) {
-        Ok(path) => path,
-        Err(error) => return ActionResult::error(error),
-    };
-    if !course_dir.exists() {
-        return ActionResult::error(format!(
-            "Carpeta del curso no encontrada: {}",
-            course_dir.display()
-        ));
-    }
-
-    let latex_dir = course_dir.join("latex");
-    if let Err(error) = std::fs::create_dir_all(&latex_dir) {
-        return ActionResult::error(format!("No se pudo crear carpeta latex: {error}"));
-    }
-
-    let sections_dir = latex_dir.join("sections");
-    if let Err(error) = std::fs::create_dir_all(&sections_dir) {
-        return ActionResult::error(format!("No se pudo crear carpeta sections: {error}"));
-    }
-
-    // Usa el mismo preámbulo (colores, bloques) que la skill usa para las
-    // guías reales, en vez de reimplementar un documento genérico aparte.
-    let institution = crate::config::active_institution();
-    let primary_rgb = institution.primary_rgb.clone();
-    let active_template = preview_template_id
-        .filter(|template_id| {
-            crate::config::list_templates()
-                .iter()
-                .any(|template| template.id == *template_id)
-        })
-        .unwrap_or_else(crate::config::get_active_template);
-    emit_compile_progress(
-        &app,
-        "template",
-        "Cargando la plantilla activa",
-        Some(&active_template),
-        started_at,
-    );
-    let author = if institution.author.is_empty() {
-        "Autor académico no configurado".to_string()
-    } else {
-        institution.author
-    };
-    let institute_line = if institution.career.is_empty() {
-        "Sistema Académico".to_string()
-    } else {
-        institution.career
-    };
-    let extrainfo_line = if institution.institution.is_empty() {
-        String::new()
-    } else {
-        institution.institution
-    };
-
-    let is_demo_guide = course_code == "DEMO-DEC-101";
-    let mut full_content = if is_demo_guide && active_template == "kaohandt-marginal" {
-        format!(
-            "\\documentclass[10pt,oneside]{{kaohandt}}\n\
-             \\input{{preamble.tex}}\n\n\
-             \\title{{Guía Didáctica Semanal}}\n\
-             \\subtitle{{Semana 1: De la intuición a una decisión justificable}}\n\
-             \\author{{{}}}\n\
-             \\date{{{}}}\n\n\
-             \\begin{{document}}\n\
-             \\maketitle\n\
-             \\pagelayout{{margin}}\n\n\
-             \\coursemeta{{{} · {} · {}}}\n",
-            author, academic_period, course_code, course_name, institute_line
-        )
-    } else if is_demo_guide {
-        format!(
-            "\\documentclass[11pt,oneside,lang=es,color=blue,citestyle=apa,bibstyle=apa]{{elegantbook}}\n\
-             \\input{{preamble.tex}}\n\n\
-             \\title{{Guía Didáctica Semanal}}\n\
-             \\subtitle{{Semana 1\\\\De la intuición a una decisión justificable}}\n\
-             \\author{{{}}}\n\
-             \\institute{{{}}}\n\
-             \\date{{{}}}\n\
-             \\version{{Semana 1}}\n\
-             \\bioinfo{{Asignatura}}{{{}\\\\{}}}\n\
-             \\extrainfo{{{}}}\n\n\
-             \\begin{{document}}\n\
-             \\frontmatter\n\
-             \\maketitle\n\
-             \\mainmatter\n",
-            author,
-            institute_line,
-            academic_period,
-            course_code,
-            course_name,
-            extrainfo_line
-        )
-    } else if active_template == "kaohandt-marginal" {
-        format!(
-            "\\documentclass[10pt,oneside]{{kaohandt}}\n\
-             \\input{{preamble.tex}}\n\n\
-             \\title{{{} — {}}}\n\
-             \\subtitle{{Guía Didáctica}}\n\
-             \\author{{{}}}\n\
-             \\date{{{}}}\n\n\
-             \\begin{{document}}\n\
-             \\maketitle\n\
-             \\pagelayout{{margin}}\n\n\
-             \\coursemeta{{{} · {}}}\n\
-             \\guidesection{{Descripción del Curso}}\n\
-             {}\n\n\
-             \\guidesection{{Plan Semanal}}\n",
-            course_code,
-            course_name,
-            author,
-            academic_period,
-            institute_line,
-            extrainfo_line,
-            description
-        )
-    } else {
-        format!(
-            "\\documentclass[11pt,oneside,lang=es,color=blue,citestyle=apa,bibstyle=apa]{{elegantbook}}\n\
-             \\input{{preamble.tex}}\n\n\
-             \\title{{{} — {}}}\n\
-             \\subtitle{{Guía Didáctica}}\n\
-             \\author{{{}}}\n\
-             \\institute{{{}}}\n\
-             \\date{{{}}}\n\
-             \\extrainfo{{{}}}\n\n\
-             \\begin{{document}}\n\
-             \\frontmatter\n\
-             \\maketitle\n\
-             \\mainmatter\n\n\
-             \\guidesection{{Descripción del Curso}}\n\
-             {}\n\n\
-             \\guidesection{{Plan Semanal}}\n",
-            course_code,
-            course_name,
-            author,
-            institute_line,
-            academic_period,
-            extrainfo_line,
-            description
-        )
-    };
-    for week in &weeks_data {
-        if is_demo_guide {
-            if active_template == "kaohandt-marginal" {
-                full_content.push_str(
-                    "\\guidesection{Toma de Decisiones Basada en Evidencia}\n\n\
-                     \\guidesection{Semana 1: De la Intuición a una Decisión Justificable}\n\n",
-                );
-            } else {
-                full_content.push_str(
-                    "\\chapter{Toma de Decisiones Basada en Evidencia}\n\n\
-                     \\guidesection{Semana 1: De la Intuición a una Decisión Justificable}\n\n",
-                );
-            }
-        }
-        full_content.push_str(&format!(
-            "\\editorialtitle{{Semana {:02}}}{{{}}}\n\n",
-            week.number,
-            week.title.trim()
-        ));
-        full_content.push_str(&format!(
-            "\\coursemeta{{Unidad: {} \\quad Horas: Docencia {} · Práctica {} · Autónomo {}}}\n\n",
-            week.unit.trim(),
-            week.teaching_hours,
-            week.practice_hours,
-            week.autonomous_hours
-        ));
-        if is_demo_guide {
-            append_demo_week(
-                &mut full_content,
-                week,
-                active_template == "kaohandt-marginal",
-            );
-            continue;
-        }
-        if !week.topics.trim().is_empty() {
-            full_content.push_str("\\begin{accentblock}[title=Temas]\n\\begin{itemize}\n");
-            for line in week.topics.lines().filter(|l| !l.trim().is_empty()) {
-                full_content.push_str(&format!("\\item {}\n", line.trim()));
-            }
-            full_content.push_str("\\end{itemize}\n\\end{accentblock}\n\n");
-        }
-        if !week.outcomes.trim().is_empty() {
-            full_content
-                .push_str("\\begin{mintblock}[title=Resultado de aprendizaje]\n\\begin{itemize}\n");
-            for line in week.outcomes.lines().filter(|l| !l.trim().is_empty()) {
-                full_content.push_str(&format!("\\item {}\n", line.trim()));
-            }
-            full_content.push_str("\\end{itemize}\n\\end{mintblock}\n\n");
-        }
-        if let Some(activity) = week
-            .graded_activity
-            .as_ref()
-            .filter(|a| !a.trim().is_empty())
-        {
-            full_content.push_str(&format!(
-                "\\begin{{sandblock}}[title=Actividad calificada]\n{}\n\\end{{sandblock}}\n\n",
-                activity.trim()
-            ));
-        }
-        if !week.bibliography.trim().is_empty() {
-            full_content.push_str("\\begin{softblock}[title=Bibliografía]\n\\begin{itemize}\n");
-            for line in week.bibliography.lines().filter(|l| !l.trim().is_empty()) {
-                full_content.push_str(&format!("\\item {}\n", line.trim()));
-            }
-            full_content.push_str("\\end{itemize}\n\\end{softblock}\n\n");
-        }
-    }
-
-    if include_jintia_credit {
-        full_content.push_str(
-            "\n\\clearpage\n\
-             \\thispagestyle{empty}\n\
-             \\vspace*{\\fill}\n\
-             \\begin{center}\n\
-             {\\footnotesize\\color{gray}Producido con Jintia\\\\\n\
-             Diseña el camino del aprendizaje.\\\\\n\
-             Software creado por Charlie Cárdenas Toledo.}\n\
-             \\end{center}\n\
-             \\vspace*{\\fill}\n",
-        );
-    }
-    full_content.push_str("\n\\end{document}\n");
-
-    let main_tex = latex_dir.join("main.tex");
-    let pdf_path = latex_dir.join("main.pdf");
-    let validation_path = latex_dir.join(".production-validation.json");
-    let mut hasher = DefaultHasher::new();
-    env!("CARGO_PKG_VERSION").hash(&mut hasher);
-    active_template.hash(&mut hasher);
-    crate::config::template_assets_fingerprint(&active_template).hash(&mut hasher);
-    primary_rgb.hash(&mut hasher);
-    full_content.hash(&mut hasher);
-    let fingerprint = format!("{:016x}", hasher.finish());
-
-    let valid_pdf = || {
-        std::fs::metadata(&pdf_path)
-            .ok()
-            .is_some_and(|metadata| metadata.len() > 100)
-            && std::fs::read(&pdf_path)
-                .ok()
-                .is_some_and(|bytes| bytes.starts_with(b"%PDF-"))
-    };
-    let manifest_matches = || {
-        std::fs::read(&validation_path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-            .and_then(|value| value.get("fingerprint")?.as_str().map(str::to_string))
-            .as_deref()
-            == Some(fingerprint.as_str())
-    };
-    if reuse_if_valid && valid_pdf() && manifest_matches() {
-        emit_compile_progress(
-            &app,
-            "complete",
-            "Se reutilizó un PDF ya validado",
-            Some(&path_text(&pdf_path)),
-            started_at,
-        );
-        return ActionResult::ok(
-            "La prueba de producción ya estaba validada y vigente; se reutilizó el PDF existente.",
-        )
-        .with_path(path_text(&pdf_path));
-    }
-
-    if let Err(error) = atomic_write(&main_tex, full_content.as_bytes()) {
-        return ActionResult::error(format!("No se pudo escribir main.tex: {error}"));
-    }
-
-    if let Err(error) = crate::config::copy_template_assets(&active_template, &latex_dir) {
-        return ActionResult::error(error);
-    }
-    emit_compile_progress(
-        &app,
-        "files-ready",
-        "Archivos LaTeX preparados",
-        Some(&path_text(&latex_dir)),
-        started_at,
-    );
-    if let Err(error) = ensure_miktex_package(&app, "fixtounicode", "fixtounicode.sty", started_at)
-    {
-        emit_compile_progress(
-            &app,
-            "error",
-            "No se pudo preparar MiKTeX",
-            Some(&error),
-            started_at,
-        );
-        return ActionResult::error(error);
-    }
-    if active_template == "kaohandt-marginal" {
-        for (package_id, file_name) in KAOHANDT_MIKTEX_REQUIREMENTS {
-            if let Err(error) = ensure_miktex_package(&app, package_id, file_name, started_at) {
-                emit_compile_progress(
-                    &app,
-                    "error",
-                    "No se pudo preparar una dependencia de Kaohandt",
-                    Some(&error),
-                    started_at,
-                );
-                return ActionResult::error(error);
-            }
-        }
-    }
-
-    // El preámbulo hace \addbibresource{reference.bib}; si el curso todavía
-    // no tiene una, se crea vacía para que la compilación no falle.
-    let bib_path = latex_dir.join("reference.bib");
-    if !bib_path.exists() {
-        if let Err(error) = atomic_write(&bib_path, b"% Sin referencias bibliograficas todavia.\n")
-        {
-            return ActionResult::error(format!("No se pudo crear reference.bib: {error}"));
-        }
-    }
-
-    // pdflatex nativo (MiKTeX en Windows, TeX Live en macOS/Linux) es el
-    // único motor de compilación: la app ya no ofrece Docker ni WSL como
-    // alternativas, así que tampoco aparecen en un mensaje de error.
-    match compile_via_pdflatex(&app, &latex_dir, "main", started_at) {
-        Ok(pdf_path) => {
-            if reuse_if_valid {
-                let manifest = serde_json::json!({
-                    "schemaVersion": 1,
-                    "fingerprint": fingerprint,
-                    "pdfPath": path_text(&pdf_path),
-                    "validatedAt": timestamp()
-                });
-                if let Ok(bytes) = serde_json::to_vec_pretty(&manifest) {
-                    if let Err(error) = atomic_write_if_changed(&validation_path, &bytes) {
-                        return ActionResult::error(format!(
-                            "El PDF se generó, pero no se pudo registrar la validación: {error}"
-                        ));
-                    }
-                }
-            }
-            emit_compile_progress(
-                &app,
-                "complete",
-                "PDF compilado y validado",
-                Some(&path_text(&pdf_path)),
-                started_at,
-            );
-            ActionResult::ok("PDF compilado exitosamente").with_path(path_text(&pdf_path))
-        }
-        Err(error) => {
-            emit_compile_progress(
-                &app,
-                "error",
-                "La compilación terminó con un error",
-                Some(&error),
-                started_at,
-            );
-            ActionResult::error(error)
-        }
-    }
-}
-
-fn compile_via_pdflatex(
-    app: &AppHandle,
-    latex_dir: &std::path::Path,
-    base_name: &str,
-    started_at: Instant,
-) -> Result<std::path::PathBuf, String> {
-    for attempt in 1..=20 {
-        emit_compile_progress(
-            app,
-            "engine-started",
-            "Ejecutando el compilador LaTeX",
-            Some(&format!("Intento {attempt}")),
-            started_at,
-        );
-        let mut child = Command::new("pdflatex")
-            .args(["-interaction=nonstopmode", &format!("{}.tex", base_name)])
-            .current_dir(latex_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("No se pudo ejecutar pdflatex: {e}"))?;
-
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "No se pudo leer la salida de pdflatex.".to_string())?;
-        let mut captured_stdout = String::new();
-        let mut stdout_reader = BufReader::new(stdout);
-        let mut line_bytes = Vec::new();
-        loop {
-            line_bytes.clear();
-            let read = stdout_reader
-                .read_until(b'\n', &mut line_bytes)
-                .map_err(|error| format!("No se pudo leer pdflatex: {error}"))?;
-            if read == 0 {
-                break;
-            }
-            let line = String::from_utf8_lossy(&line_bytes)
-                .trim_end_matches(['\r', '\n'])
-                .to_string();
-            captured_stdout.push_str(&line);
-            captured_stdout.push('\n');
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                emit_compile_progress(
-                    app,
-                    "log",
-                    "Compilando",
-                    Some(&trimmed.chars().take(500).collect::<String>()),
-                    started_at,
-                );
-            }
-        }
-        let mut captured_stderr = String::new();
-        if let Some(mut stderr) = child.stderr.take() {
-            let mut stderr_bytes = Vec::new();
-            if stderr.read_to_end(&mut stderr_bytes).is_ok() {
-                captured_stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
-            }
-        }
-        let status = child
-            .wait()
-            .map_err(|error| format!("No se pudo esperar a pdflatex: {error}"))?;
-
-        if status.success() {
-            emit_compile_progress(
-                app,
-                "validating",
-                "Validando el archivo PDF",
-                None,
-                started_at,
-            );
-            let pdf_path = latex_dir.join(format!("{}.pdf", base_name));
-            if pdf_path.exists() {
-                return Ok(pdf_path);
-            } else {
-                return Err("pdflatex no generó PDF.".to_string());
-            }
-        } else {
-            let log_path = latex_dir.join(format!("{}.log", base_name));
-            let error_log = if log_path.exists() {
-                std::fs::read(&log_path)
-                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-                    .unwrap_or_default()
-            } else {
-                format!("{captured_stdout}\n{captured_stderr}")
-            };
-            if let Some(file_name) = missing_latex_file(&error_log) {
-                if let Some(package_id) = miktex_package_for_file(&file_name) {
-                    ensure_miktex_package(app, package_id, &file_name, started_at)?;
-                    emit_compile_progress(
-                        app,
-                        "compile-retry",
-                        "Reintentando con el componente instalado",
-                        Some(&file_name),
-                        started_at,
-                    );
-                    continue;
-                }
-            }
-            return Err(format!(
-                "Error en compilación LaTeX:\n{}",
-                extract_tex_error(&error_log)
-            ));
-        }
-    }
-    Err(
-        "La compilación superó el límite de 20 intentos para instalar componentes LaTeX."
-            .to_string(),
-    )
-}
-
-fn missing_latex_file(log: &str) -> Option<String> {
-    let file = log.split("File `").nth(1)?.split("' not found").next()?;
-    let file = file.trim();
-    (file.ends_with(".sty")
-        && file
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || ".-_".contains(character)))
-    .then(|| file.to_string())
-}
-
-fn miktex_package_for_file(file_name: &str) -> Option<&str> {
-    let stem = file_name.strip_suffix(".sty")?;
-    Some(match stem {
-        "newpxtext" | "newpxmath" => "newpx",
-        "beramono" => "bera",
-        "mathalfa" => "mathalpha",
-        "tikz" | "pgf" => "pgf",
-        _ => stem,
-    })
-}
-
-/// Extrae la parte útil de un log de pdflatex: las primeras líneas son
-/// siempre el banner de la versión, nunca el error. Busca la línea que
-/// empieza con "!" (marcador de error fatal de TeX) y su contexto; si no
-/// la encuentra, devuelve el final del log (donde suele estar el error).
-fn extract_tex_error(log: &str) -> String {
-    let lines: Vec<&str> = log.lines().collect();
-    if let Some(idx) = lines
-        .iter()
-        .position(|line| line.trim_start().starts_with('!'))
-    {
-        let end = (idx + 8).min(lines.len());
-        return lines[idx..end].join("\n");
-    }
-    let start = lines.len().saturating_sub(15);
-    lines[start..].join("\n")
 }
 
 #[cfg(test)]

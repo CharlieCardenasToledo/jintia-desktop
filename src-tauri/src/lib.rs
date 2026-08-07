@@ -1,6 +1,7 @@
 mod config;
 mod course;
 mod course_state;
+mod engine;
 mod harnesses;
 mod mcp;
 mod models;
@@ -176,17 +177,14 @@ async fn create_course_structure(
     root_path: String,
     course_code: String,
     course_name: String,
-    weeks: u32,
-    initialize_readme: Option<bool>,
-    include_graded_activities: Option<bool>,
 ) -> ActionResult {
     course::create_course_structure(
         root_path,
         course_code,
         course_name,
-        weeks,
-        initialize_readme.unwrap_or(true),
-        include_graded_activities.unwrap_or(false),
+        0, // weeks no es usado
+        true, // initialize_readme
+        false, // include_graded_activities
     )
 }
 
@@ -309,40 +307,6 @@ async fn generate_syllabus(
     )
 }
 
-#[tauri::command]
-async fn compile_syllabus_pdf(
-    app: tauri::AppHandle,
-    course_path: String,
-    course_code: String,
-    course_name: String,
-    credits: u32,
-    academic_period: String,
-    semester: String,
-    description: String,
-    weeks_data: Vec<WeekData>,
-    include_jintia_credit: Option<bool>,
-    reuse_if_valid: Option<bool>,
-    preview_template_id: Option<String>,
-) -> ActionResult {
-    tauri::async_runtime::spawn_blocking(move || {
-        course::compile_syllabus_pdf(
-            app,
-            course_path,
-            course_code,
-            course_name,
-            credits,
-            academic_period,
-            semester,
-            description,
-            weeks_data,
-            include_jintia_credit.unwrap_or(true),
-            reuse_if_valid.unwrap_or(false),
-            preview_template_id,
-        )
-    })
-    .await
-    .unwrap_or_else(|e| ActionResult::error(format!("Error interno: {e}")))
-}
 
 #[tauri::command]
 async fn list_templates() -> Vec<TemplateMeta> {
@@ -411,7 +375,6 @@ pub fn run() {
             create_course_structure,
             save_course_settings,
             generate_syllabus,
-            compile_syllabus_pdf,
             list_templates,
             get_active_template,
             set_active_template,

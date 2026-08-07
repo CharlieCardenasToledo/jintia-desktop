@@ -17,17 +17,15 @@ pub fn read(project_path: String) -> Value {
     }
 }
 
-/// Verifica el archivo real `semanas/semana-XX/latex/guia-semana-XX.tex` en
-/// disco (ver la estructura canónica en SKILL.md, sección 5). No se apoya en
-/// `.jintia/state.json`: ese archivo solo se actualiza cuando la skill corre
-/// `/jintia state`, así que puede quedar desactualizado si el docente borró
-/// la guía a mano o si nunca se registró el estado.
+/// Verifica el archivo canónico `semanas/semana-XX/guide.json` en disco.
+/// No se apoya en `.jintia/state.json`: ese archivo solo se actualiza cuando
+/// la skill corre `/jintia state`, así que puede quedar desactualizado si el
+/// docente borró la guía a mano o si nunca se registró el estado.
 pub fn week_guide_exists(project_path: String, week: u32) -> bool {
     let root = PathBuf::from(project_path.trim());
     root.join("semanas")
         .join(format!("semana-{week:02}"))
-        .join("latex")
-        .join(format!("guia-semana-{week:02}.tex"))
+        .join("guide.json")
         .is_file()
 }
 
@@ -44,9 +42,9 @@ mod tests {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0)
         ));
-        let week_dir = root.join("semanas").join("semana-03").join("latex");
+        let week_dir = root.join("semanas").join("semana-03");
         fs::create_dir_all(&week_dir).unwrap();
-        fs::write(week_dir.join("guia-semana-03.tex"), "% guía").unwrap();
+        fs::write(week_dir.join("guide.json"), "{}").unwrap();
 
         assert!(week_guide_exists(root.to_string_lossy().to_string(), 3));
         assert!(!week_guide_exists(root.to_string_lossy().to_string(), 4));
