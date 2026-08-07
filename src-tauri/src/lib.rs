@@ -469,6 +469,10 @@ pub fn run() {
             check_migration_needed,
             run_migration,
         ])
+        .setup(|_app| {
+            paths::migrate_app_dir_if_needed();
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error running tauri app");
 }

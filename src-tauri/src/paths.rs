@@ -3,6 +3,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const APP_DIR_NAME: &str = "Jintia";
+const APP_DIR_LEGACY: &str = "InstructionalDesignerManager";
+
 pub fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -23,12 +26,57 @@ pub fn app_config_dir() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| home_dir().ok().map(|p| p.join(".config")));
 
-    // Se conserva la carpeta histórica para que el cambio de marca no pierda
-    // configuración, cursos ni el progreso del onboarding.
-    base.map(|path| path.join("InstructionalDesignerManager"))
+    base.map(|path| path.join(APP_DIR_NAME))
         .ok_or_else(|| {
             "No se pudo resolver la carpeta de configuración de la aplicación.".to_string()
         })
+}
+
+pub fn migrate_app_dir_if_needed() {
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = match std::env::var_os("APPDATA") {
+            Some(val) => PathBuf::from(val),
+            None => return,
+        };
+        let legacy_path = appdata.join(APP_DIR_LEGACY);
+        let new_path = appdata.join(APP_DIR_NAME);
+
+        if legacy_path.exists() && !new_path.exists() {
+            let _ = fs::rename(&legacy_path, &new_path);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let base = match home_dir() {
+            Ok(p) => p.join("Library").join("Application Support"),
+            Err(_) => return,
+        };
+        let legacy_path = base.join(APP_DIR_LEGACY);
+        let new_path = base.join(APP_DIR_NAME);
+
+        if legacy_path.exists() && !new_path.exists() {
+            let _ = fs::rename(&legacy_path, &new_path);
+        }
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let base = match std::env::var_os("XDG_CONFIG_HOME") {
+            Some(path) => PathBuf::from(path),
+            None => match home_dir() {
+                Ok(p) => p.join(".config"),
+                Err(_) => return,
+            },
+        };
+        let legacy_path = base.join(APP_DIR_LEGACY);
+        let new_path = base.join(APP_DIR_NAME);
+
+        if legacy_path.exists() && !new_path.exists() {
+            let _ = fs::rename(&legacy_path, &new_path);
+        }
+    }
 }
 
 pub fn skill_dir() -> Result<PathBuf, String> {
