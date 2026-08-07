@@ -879,3 +879,28 @@ test('eliminar una asignatura usa un modal propio de Jintia, no un diálogo nati
   assert.match(courses, /function confirmDelete/);
   assert.doesNotMatch(courses, /await confirm\(`¿Eliminar/);
 });
+
+test('cada invoke() en api.js tiene su handler en generate_handler![] de lib.rs', async () => {
+  const [api, lib] = await Promise.all([
+    readFile(new URL('src/api.js', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+  ]);
+
+  // Extrae el bloque generate_handler![ ... ] de lib.rs
+  const handlerBlockStart = lib.indexOf('tauri::generate_handler![');
+  const handlerBlockEnd = lib.indexOf('])', handlerBlockStart);
+  const handlerBlock = lib.slice(handlerBlockStart, handlerBlockEnd);
+  const handlers = new Set(
+    [...handlerBlock.matchAll(/^\s+(\w+),?\s*$/gm)].map(m => m[1])
+  );
+
+  // Extrae los nombres de comandos del primer argumento de cada invoke()
+  const invokedCommands = [...api.matchAll(/\binvoke\(\s*"([^"]+)"/g)].map(m => m[1]);
+
+  const missing = invokedCommands.filter(cmd => !handlers.has(cmd));
+  assert.deepStrictEqual(
+    missing,
+    [],
+    `invoke() en api.js sin handler en lib.rs: ${missing.join(', ')}`
+  );
+});
