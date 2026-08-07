@@ -6,6 +6,7 @@ use std::process::Command;
 use tauri::AppHandle;
 use tauri::Emitter;
 use sha2::{Digest, Sha256};
+use sha1::Sha1;
 use hex;
 
 const NODE_VERSION: &str = "22.13.0";
@@ -557,6 +558,37 @@ fn verify_sha256(file_path: &std::path::Path, expected_hex: &str) -> Result<(), 
     Ok(())
 }
 
+fn verify_sha1(file_path: &std::path::Path, expected_hex: &str) -> Result<(), String> {
+    let mut file = fs::File::open(file_path)
+        .map_err(|e| format!("Error abriendo archivo para verificar: {e}"))?;
+
+    let mut hasher = Sha1::new();
+    let mut buffer = [0u8; 1024 * 64];
+
+    loop {
+        let n = file.read(&mut buffer)
+            .map_err(|e| format!("Error leyendo para checksum: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+
+    let digest_result = hasher.finalize();
+    let actual = hex::encode(digest_result);
+    let expected = expected_hex.trim().to_lowercase();
+
+    if actual != expected {
+        return Err(format!(
+            "Checksum inválido. Esperado: {}…, Actual: {}…",
+            &expected[..16.min(expected.len())],
+            &actual[..16.min(actual.len())]
+        ));
+    }
+
+    Ok(())
+}
+
 fn fetch_node_checksum() -> Result<String, String> {
     let url = format!("https://nodejs.org/dist/v{NODE_VERSION}/SHASUMS256.txt");
     let text = reqwest::blocking::get(&url)
@@ -626,8 +658,9 @@ pub fn resolve_skill() -> Option<String> {
     None
 }
 
-fn fetch_npm_package_info(package: &str) -> Result<(String, String), String> {
-    let url = format!("https://registry.npmjs.org/{}/latest", package);
+fn fetch_npm_package_info(package: &str) -> Result<(String, String, String), String> {
+    let encoded = package.replace('@', "%40").replace('/', "%2F");
+    let url = format!("https://registry.npmjs.org/{}/latest", encoded);
     let response = reqwest::blocking::get(&url)
         .map_err(|e| format!("Error descargando metadata npm: {e}"))?;
     let text = response.text()
@@ -643,8 +676,12 @@ fn fetch_npm_package_info(package: &str) -> Result<(String, String), String> {
         .as_str()
         .ok_or("Tarball URL not found in npm metadata")?
         .to_string();
+    let shasum = json["dist"]["shasum"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
 
-    Ok((version, tarball))
+    Ok((version, tarball, shasum))
 }
 
 pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
@@ -656,7 +693,7 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
 
     emit_skill_progress(app, "detecting", 0.0, "Detectando versión de Jintia en npm...");
 
-    let (version, tarball_url) = fetch_npm_package_info("jintia")?;
+    let (version, tarball_url, expected_shasum) = fetch_npm_package_info("@charlie.act7/jintia")?;
 
     let tmp_file = runtimes_dir.join(format!(".jintia-download-{}.tmp", version));
 
@@ -696,6 +733,14 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
     }
 
     drop(file);
+
+    if !expected_shasum.is_empty() {
+        emit_skill_progress(app, "verifying", 90.0, "Verificando integridad de Jintia...");
+        verify_sha1(&tmp_file, &expected_shasum).map_err(|e| {
+            let _ = fs::remove_file(&tmp_file);
+            e
+        })?;
+    }
 
     emit_skill_progress(app, "extracting", 92.0, "Extrayendo Jintia...");
 

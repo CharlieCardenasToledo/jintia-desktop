@@ -275,7 +275,7 @@ pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = confirmed;
+        let _ = _confirmed;
         let instructions = if cfg!(target_os = "macos") {
             "En macOS: instala Node.js y Python con Homebrew (`brew install node python`). Reinicia la app y vuelve a verificar."
         } else {
