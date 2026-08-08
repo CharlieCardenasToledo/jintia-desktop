@@ -782,37 +782,29 @@ pub fn resolve_node_cli(command: &str) -> Option<PathBuf> {
         return Some(portable);
     }
 
-    let checker = if cfg!(target_os = "windows") {
-        "where.exe"
-    } else {
-        "which"
-    };
-
-    let output = Command::new(checker)
-        .arg(command)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(
-        &output.stdout
-    );
-
-    stdout
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .map(|line| PathBuf::from(line.trim()))
+    None
 }
 
 pub fn node_cli_version(
     command: &str,
     args: &[&str],
 ) -> Option<String> {
-    let executable =
-        resolve_node_cli(command)?;
+    let executable = resolve_node_cli(command)?;
+
+    let node = paths::portable_node_exe();
+    if !node.is_file() {
+        return None;
+    }
+
+    let portable_bin = paths::portable_node_bin_dir();
+    let base_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut path_entries = vec![portable_bin];
+    for entry in std::env::split_paths(&base_path) {
+        if !path_entries.contains(&entry) {
+            path_entries.push(entry);
+        }
+    }
+    let patched_path = std::env::join_paths(path_entries).ok()?;
 
     let output = if cfg!(target_os = "windows")
         && executable
@@ -826,11 +818,14 @@ pub fn node_cli_version(
             .arg("/C")
             .arg(&executable)
             .args(args)
+            .env("PATH", &patched_path)
             .output()
             .ok()?
     } else {
-        Command::new(&executable)
+        Command::new(&node)
+            .arg(&executable)
             .args(args)
+            .env("PATH", &patched_path)
             .output()
             .ok()?
     };

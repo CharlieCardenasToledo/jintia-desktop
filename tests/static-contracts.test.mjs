@@ -1193,7 +1193,7 @@ test('los paquetes Node disciplinares usan el runtime portable y su prefix', asy
   );
 });
 
-test('Mermaid CLI se detecta desde el Node portable antes del PATH global', async () => {
+test('Mermaid CLI se detecta únicamente desde el Node portable administrado', async () => {
   const [runtimes, course] =
     await Promise.all([
       readFile(
@@ -1243,17 +1243,14 @@ test('Mermaid CLI se detecta desde el Node portable antes del PATH global', asyn
     /portable_node_bin_dir/
   );
 
-  assert.match(
+  assert.doesNotMatch(
     resolver,
     /where\.exe|which/
   );
 
-  assert.ok(
-    resolver.indexOf(
-      'portable_node_bin_dir'
-    ) <
-      resolver.indexOf('where.exe'),
-    'el CLI portable debe comprobarse antes del PATH global'
+  assert.doesNotMatch(
+    resolver,
+    /Command::new\(checker\)/
   );
 
   assert.match(
@@ -1999,5 +1996,118 @@ test('Vivliostyle instala npm con el Node portable de Jintia', async () => {
   assert.match(
     installer,
     /@vivliostyle\/cli/
+  );
+});
+
+test('Node CLI disciplinares usan exclusivamente el runtime administrado', async () => {
+  const [runtimes, course] =
+    await Promise.all([
+      readFile(
+        new URL('src-tauri/src/runtimes.rs', root),
+        'utf8'
+      ),
+      readFile(
+        new URL('src-tauri/src/course.rs', root),
+        'utf8'
+      ),
+    ]);
+
+  const resolverStart = runtimes.indexOf(
+    'pub fn resolve_node_cli('
+  );
+
+  const resolverEnd = runtimes.indexOf(
+    'pub fn node_cli_version(',
+    resolverStart
+  );
+
+  assert.ok(
+    resolverStart >= 0,
+    'resolve_node_cli debe existir'
+  );
+
+  assert.ok(
+    resolverEnd > resolverStart,
+    'debe poder aislarse resolve_node_cli'
+  );
+
+  const resolver = runtimes.slice(resolverStart, resolverEnd);
+
+  assert.match(
+    resolver,
+    /portable_node_bin_dir\(\)/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /where\.exe/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /\bwhich\b/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /Command::new\(checker\)/
+  );
+
+  const versionStart = runtimes.indexOf(
+    'pub fn node_cli_version('
+  );
+
+  const versionEnd = runtimes.indexOf(
+    'pub fn install_vivliostyle',
+    versionStart
+  );
+
+  assert.ok(versionEnd > versionStart);
+
+  const versioner = runtimes.slice(versionStart, versionEnd);
+
+  assert.match(
+    versioner,
+    /portable_node_exe\(\)/
+  );
+
+  assert.match(
+    versioner,
+    /portable_node_bin_dir\(\)/
+  );
+
+  assert.match(
+    versioner,
+    /std::env::split_paths/
+  );
+
+  assert.match(
+    versioner,
+    /std::env::join_paths/
+  );
+
+  assert.match(
+    versioner,
+    /\.env\("PATH",\s*&patched_path\)/
+  );
+
+  assert.match(
+    versioner,
+    /Command::new\(&node\)[\s\S]*\.arg\(&executable\)/
+  );
+
+  assert.match(
+    versioner,
+    /Command::new\("cmd"\)[\s\S]*\.arg\("\/C"\)[\s\S]*\.arg\(&executable\)/
+  );
+
+  assert.doesNotMatch(
+    course,
+    /Mermaid CLI disponible en el sistema/
+  );
+
+  assert.match(
+    course,
+    /Usando Mermaid CLI administrado por Jintia/
   );
 });

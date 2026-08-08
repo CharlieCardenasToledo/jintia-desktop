@@ -211,16 +211,9 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         ),
         required: false,
         installable: false,
-        note: if let Some(path) = mermaid {
-            if path.starts_with(
-                crate::paths::portable_node_bin_dir()
-            ) {
-                "Usando Mermaid CLI administrado por Jintia."
-                    .to_string()
-            } else {
-                "Mermaid CLI disponible en el sistema."
-                    .to_string()
-            }
+        note: if mermaid.is_some() {
+            "Usando Mermaid CLI administrado por Jintia."
+                .to_string()
         } else {
             "Flujos y decisiones simples. Capacidad visual opcional; se instala automáticamente cuando el perfil de la disciplina la requiere."
                 .to_string()
