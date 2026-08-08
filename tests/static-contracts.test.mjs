@@ -482,7 +482,7 @@ test('Entorno detecta motores visuales opcionales sin instalarlos silenciosament
   assert.doesNotMatch(course, /"Graphviz"\s*=>|"Mermaid CLI"\s*=>|"PlantUML"\s*=>/);
 });
 
-test('Entorno ofrece perfiles visuales desde la release bloqueada sin instalación automática', async () => {
+test('Entorno ofrece perfiles visuales desde el runtime npm sin instalación automática', async () => {
   const [api, settings, lib, lockText] = await Promise.all([
     readFile(new URL('src/api.js', root), 'utf8'),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
@@ -494,7 +494,8 @@ test('Entorno ofrece perfiles visuales desde la release bloqueada sin instalaci�
   assert.equal(lock.minimumDesktopVersion, '1.1.0');
   assert.match(api, /getVisualInstallProfiles/);
   assert.match(lib, /get_visual_install_profiles/);
-  assert.match(lib, /OUT_DIR[\s\S]*visual-install-profiles\.json/);
+  assert.match(lib, /runtimes::visual_install_profiles/);
+  assert.doesNotMatch(lib, /OUT_DIR[\s\S]{0,100}visual-install-profiles\.json/);
   assert.match(settings, /jintia\.visualProfile/);
   assert.match(settings, /Capacidades deshabilitadas/);
 });
@@ -2377,4 +2378,56 @@ test('la UI consume las fases actuales de instalación npm de Jintia', async () 
   assert.match(skillHandler, /Instalando…/);
   assert.doesNotMatch(skillHandler, /Descargar Jintia Skill/);
   assert.doesNotMatch(skillHandler, /Descargando…/);
+});
+
+test('los perfiles visuales provienen del runtime npm administrado', async () => {
+  const [runtimes, lib] = await Promise.all([
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+  ]);
+
+  // El loader existe en runtimes.rs
+  assert.match(runtimes, /pub fn visual_install_profiles\(\)/);
+
+  // Aislar el cuerpo del loader
+  const loaderStart = runtimes.indexOf('pub fn visual_install_profiles()');
+  const loaderEnd = runtimes.indexOf('\npub fn portable_skill_installed', loaderStart) !== -1
+    ? runtimes.indexOf('\npub fn portable_skill_installed', loaderStart)
+    : runtimes.indexOf('\nfn emit_skill_progress', loaderStart);
+  const loader = runtimes.slice(loaderStart, loaderEnd);
+
+  // Lee desde el runtime administrado
+  assert.match(loader, /portable_skill_source_dir/);
+  assert.match(loader, /config/);
+  assert.match(loader, /visual-install-profiles\.json/);
+
+  // Valida contrato
+  assert.match(loader, /version/);
+  assert.match(loader, /profiles/);
+  assert.match(loader, /disciplines/);
+  assert.match(loader, /minimum/);
+  assert.match(loader, /core/);
+  assert.match(loader, /full/);
+
+  // No lee fuentes embebidas
+  assert.doesNotMatch(loader, /OUT_DIR/);
+  assert.doesNotMatch(loader, /include_str!/);
+  assert.doesNotMatch(loader, /skill\.lock\.json/);
+  assert.doesNotMatch(loader, /resources/);
+  assert.doesNotMatch(loader, /jintia-skill-11/);
+
+  // La command de lib.rs consume el loader de runtimes
+  const cmdStart = lib.indexOf('async fn get_visual_install_profiles()');
+  const cmdEnd = lib.indexOf('\n#[tauri::command]', cmdStart);
+  const cmd = lib.slice(cmdStart, cmdEnd);
+
+  assert.match(cmd, /runtimes::visual_install_profiles/);
+  assert.doesNotMatch(cmd, /include_str!/);
+  assert.doesNotMatch(cmd, /OUT_DIR/);
+  assert.doesNotMatch(cmd, /\/jintia-skill\//);
+
+  // El fallback usa shape version 3 con disciplines y profiles vacíos
+  assert.match(cmd, /"version":\s*3/);
+  assert.match(cmd, /"disciplines"/);
+  assert.match(cmd, /"profiles"/);
 });

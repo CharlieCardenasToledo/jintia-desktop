@@ -89,11 +89,17 @@ async fn get_skill_runtime_status() -> serde_json::Value {
 
 #[tauri::command]
 async fn get_visual_install_profiles() -> serde_json::Value {
-    serde_json::from_str(include_str!(concat!(
-        env!("OUT_DIR"),
-        "/jintia-skill/config/visual-install-profiles.json"
-    )))
-    .unwrap_or_else(|_| serde_json::json!({ "version": 1, "profiles": [] }))
+    tauri::async_runtime::spawn_blocking(runtimes::visual_install_profiles)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "version": 3,
+                "disciplines": {},
+                "profiles": []
+            })
+        })
 }
 
 #[tauri::command]

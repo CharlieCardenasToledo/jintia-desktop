@@ -1246,6 +1246,52 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub fn visual_install_profiles() -> Result<serde_json::Value, String> {
+    let path = paths::portable_skill_source_dir()
+        .join("config")
+        .join("visual-install-profiles.json");
+
+    let bytes = fs::read(&path).map_err(|e| {
+        format!("No se pudo leer {}: {e}", path.display())
+    })?;
+
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|e| format!("Contrato visual inválido: {e}"))?;
+
+    let version = value
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| "El contrato visual no tiene campo 'version' numérico".to_string())?;
+
+    if version < 3 {
+        return Err(format!(
+            "Versión del contrato visual demasiado antigua: {version} (mínima 3)"
+        ));
+    }
+
+    let profiles = value
+        .get("profiles")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "El contrato visual no tiene 'profiles' como array".to_string())?;
+
+    let required_ids = ["minimum", "core", "full"];
+    for id in required_ids {
+        let found = profiles.iter().any(|p| {
+            p.get("id").and_then(|v| v.as_str()) == Some(id)
+        });
+        if !found {
+            return Err(format!("Perfil requerido '{id}' ausente en el contrato visual"));
+        }
+    }
+
+    value
+        .get("disciplines")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| "El contrato visual no tiene 'disciplines' como objeto".to_string())?;
+
+    Ok(value)
+}
+
 fn emit_skill_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
     let _ = app.emit(
         "skill-download-progress",
