@@ -1620,8 +1620,8 @@ test('el runtime Python pagina los assets de la release fija', async () => {
   );
 });
 
-test('Python portable tiene precedencia sobre Python global', async () => {
-  const [runtimes, lib] =
+test('Jintia requiere su Python administrado aunque exista Python global', async () => {
+  const [runtimes, lib, course] =
     await Promise.all([
       readFile(
         new URL(
@@ -1633,6 +1633,13 @@ test('Python portable tiene precedencia sobre Python global', async () => {
       readFile(
         new URL(
           'src-tauri/src/lib.rs',
+          root
+        ),
+        'utf8'
+      ),
+      readFile(
+        new URL(
+          'src-tauri/src/course.rs',
           root
         ),
         'utf8'
@@ -1675,20 +1682,29 @@ test('Python portable tiene precedencia sobre Python global', async () => {
     /portable_python_exe\(\)/
   );
 
-  assert.match(
+  assert.doesNotMatch(
     resolver,
     /global_python_command\(\)/
   );
 
-  const portableIndex =
-    resolver.indexOf('portable_python_exe()');
+  assert.doesNotMatch(
+    resolver,
+    /where\.exe/
+  );
 
-  const globalIndex =
-    resolver.indexOf('global_python_command()');
+  assert.doesNotMatch(
+    resolver,
+    /\bwhich\b/
+  );
 
-  assert.ok(
-    portableIndex < globalIndex,
-    'Python portable debe comprobarse antes del Python global'
+  assert.doesNotMatch(
+    resolver,
+    /"python3"/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /"python"/
   );
 
   assert.match(
@@ -1696,8 +1712,23 @@ test('Python portable tiene precedencia sobre Python global', async () => {
     /"hasGlobal":\s*runtimes::global_python_available\(\)/
   );
 
-  assert.doesNotMatch(
+  assert.match(
     lib,
-    /resolve_python\(\)[\s\S]{0,100}p\s*!=\s*"python\.exe"/
+    /"hasPortable":\s*runtimes::portable_python_installed\(\)/
+  );
+
+  assert.match(
+    lib,
+    /"resolvedPath":\s*runtimes::resolve_python\(\)/
+  );
+
+  assert.match(
+    course,
+    /let python_bin\s*=\s*crate::runtimes::resolve_python\(\)/
+  );
+
+  assert.match(
+    course,
+    /installed:\s*python/
   );
 });

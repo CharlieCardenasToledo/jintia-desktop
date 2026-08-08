@@ -535,7 +535,7 @@ pub fn resolve_python() -> Option<String> {
         return Some(portable.to_string_lossy().into_owned());
     }
 
-    global_python_command()
+    None
 }
 
 pub fn portable_python_installed() -> bool {
