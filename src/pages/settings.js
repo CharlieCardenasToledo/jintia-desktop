@@ -1022,7 +1022,7 @@ async function loadDeps() {
                 : dep.name === "Python"
                   ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-python>Descargar Python portable</button>`
                   : dep.name === "Jintia Skill"
-                    ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-skill>Descargar Jintia Skill</button>`
+                    ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-skill>Instalar Jintia Skill</button>`
                     : `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-dep-name="${escapeHtml(dep.name)}">Instalar</button>`
               : dep.installed
                 ? `<span class="${ui.badge.success}">OK</span>`
@@ -1117,20 +1117,20 @@ async function loadDeps() {
     container.querySelector("[data-download-skill]")?.addEventListener("click", async () => {
       const btn = container.querySelector("[data-download-skill]");
       btn.disabled = true;
-      btn.textContent = "Descargando…";
-      toast("Detectando Jintia en npm…", "loading", 120000);
+      btn.textContent = "Instalando…";
+      toast("Instalando Jintia desde npm…", "loading", 120000);
 
       let unlistenProgress;
       try {
         unlistenProgress = await window.__TAURI__.event.listen("skill-download-progress", ({ payload }) => {
-          if (payload.phase === "detecting") {
-            toast("Detectando versión de Jintia en npm…", "loading", 120000);
-          } else if (payload.phase === "downloading") {
-            toast(`Descargando Jintia (${Math.round(payload.percent)}%)…`, "loading", 120000);
-          } else if (payload.phase === "extracting") {
-            toast("Extrayendo Jintia…", "loading", 120000);
-          } else if (payload.phase === "configuring") {
-            toast("Configurando Jintia…", "loading", 120000);
+          if (payload.phase === "installing") {
+            toast("Instalando Jintia desde npm…", "loading", 120000);
+          } else if (payload.phase === "validating") {
+            toast("Validando paquete Jintia…", "loading", 120000);
+          } else if (payload.phase === "testing") {
+            toast("Probando Jintia…", "loading", 120000);
+          } else if (payload.phase === "activating") {
+            toast("Activando Jintia…", "loading", 120000);
           }
         });
 
@@ -1147,7 +1147,7 @@ async function loadDeps() {
       } finally {
         if (unlistenProgress) unlistenProgress();
         btn.disabled = false;
-        btn.textContent = "Descargar Jintia Skill";
+        btn.textContent = "Instalar Jintia Skill";
       }
     });
 

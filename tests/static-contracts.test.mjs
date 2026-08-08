@@ -2342,3 +2342,39 @@ test('payload usa portable_skill_source_dir para localizar la skill portátil', 
   assert.match(verFn, /portable_skill_source_dir/);
   assert.doesNotMatch(verFn, /\.join\("jintia"\)[\s\S]{0,30}?\.join\("skill"\)/);
 });
+
+test('la UI consume las fases actuales de instalación npm de Jintia', async () => {
+  const settings = await readFile(
+    new URL('src/pages/settings.js', root),
+    'utf8'
+  );
+
+  // Aislar el bloque del listener de skill-download-progress
+  const listenerStart = settings.indexOf('"skill-download-progress"');
+  assert.ok(listenerStart >= 0, 'debe existir el listener skill-download-progress');
+  const listenerEnd = settings.indexOf('});', listenerStart);
+  const listenerBlock = settings.slice(listenerStart, listenerEnd);
+
+  // Fases actuales del backend npm
+  assert.match(listenerBlock, /phase === "installing"/);
+  assert.match(listenerBlock, /phase === "validating"/);
+  assert.match(listenerBlock, /phase === "testing"/);
+  assert.match(listenerBlock, /phase === "activating"/);
+
+  // Fases antiguas del tarball eliminadas
+  assert.doesNotMatch(listenerBlock, /phase === "detecting"/);
+  assert.doesNotMatch(listenerBlock, /phase === "downloading"/);
+  assert.doesNotMatch(listenerBlock, /phase === "extracting"/);
+  assert.doesNotMatch(listenerBlock, /phase === "configuring"/);
+
+  // Aislar el bloque completo del handler de Jintia Skill
+  const skillHandlerStart = settings.indexOf('[data-download-skill]');
+  const skillHandlerEnd = settings.indexOf('\n    });', skillHandlerStart);
+  const skillHandler = settings.slice(skillHandlerStart, skillHandlerEnd);
+
+  // Etiqueta y estado del botón usan "Instalar", no "Descargar"
+  assert.match(skillHandler, /Instalar Jintia Skill/);
+  assert.match(skillHandler, /Instalando…/);
+  assert.doesNotMatch(skillHandler, /Descargar Jintia Skill/);
+  assert.doesNotMatch(skillHandler, /Descargando…/);
+});
