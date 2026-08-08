@@ -294,52 +294,102 @@ struct PythonStandaloneAsset {
     sha256: String,
 }
 
-fn resolve_python_asset() -> Result<PythonStandaloneAsset, String> {
-    let filename = python_asset_filename()?;
+fn python_asset_from_values(
+    assets: &[serde_json::Value],
+    filename: &str,
+) -> Result<Option<PythonStandaloneAsset>, String> {
+    let Some(asset) = assets.iter().find(|asset| {
+        asset
+            .get("name")
+            .and_then(|value| value.as_str())
+            == Some(filename)
+    }) else {
+        return Ok(None);
+    };
 
-    let api_url = format!(
-        "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{PYTHON_STANDALONE_RELEASE}"
-    );
-
-    let response = reqwest::blocking::Client::new()
-        .get(&api_url)
-        .header("User-Agent", "jintia-desktop")
-        .send()
-        .map_err(|e| format!("Error consultando releases de Python: {e}"))?
-        .text()
-        .map_err(|e| format!("Error leyendo respuesta de releases: {e}"))?;
-
-    let json: serde_json::Value = serde_json::from_str(&response)
-        .map_err(|e| format!("Error parseando respuesta de GitHub: {e}"))?;
-
-    let assets = json["assets"]
-        .as_array()
-        .ok_or("Respuesta de GitHub sin campo 'assets'")?;
-
-    let asset = assets
-        .iter()
-        .find(|a| a["name"].as_str() == Some(&filename))
-        .ok_or_else(|| format!("Asset '{filename}' no encontrado en release {PYTHON_STANDALONE_RELEASE}"))?;
-
-    let url = asset["browser_download_url"]
-        .as_str()
-        .ok_or("Asset sin browser_download_url")?
+    let url = asset
+        .get("browser_download_url")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| format!("Asset '{filename}' sin browser_download_url"))?
         .to_string();
 
-    let digest_raw = asset["digest"]
-        .as_str()
-        .ok_or_else(|| format!("Asset '{filename}' no tiene campo 'digest' — SHA-256 obligatorio"))?;
+    let digest_raw = asset
+        .get("digest")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| format!("Asset '{filename}' no tiene digest SHA-256"))?;
 
     let sha256 = digest_raw
         .strip_prefix("sha256:")
-        .ok_or_else(|| format!("digest no comienza con 'sha256:' — se obtuvo: {digest_raw}"))?
+        .ok_or_else(|| format!("Digest inválido para '{filename}': {digest_raw}"))?
         .to_string();
 
-    if sha256.len() != 64 {
-        return Err(format!("sha256 con longitud inesperada: {}", sha256.len()));
+    if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("SHA-256 inválido para '{filename}'"));
     }
 
-    Ok(PythonStandaloneAsset { filename, url, sha256 })
+    Ok(Some(PythonStandaloneAsset {
+        filename: filename.to_string(),
+        url,
+        sha256,
+    }))
+}
+
+fn resolve_python_asset() -> Result<PythonStandaloneAsset, String> {
+    let filename = python_asset_filename()?;
+
+    let release_url = format!(
+        "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{PYTHON_STANDALONE_RELEASE}"
+    );
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("jintia-desktop")
+        .build()
+        .map_err(|e| format!("No se pudo crear cliente HTTP: {e}"))?;
+
+    let release_text = client
+        .get(&release_url)
+        .send()
+        .map_err(|e| format!("Error consultando release de Python: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("GitHub rechazó consulta de release: {e}"))?
+        .text()
+        .map_err(|e| format!("Error leyendo respuesta de GitHub: {e}"))?;
+
+    let release: serde_json::Value = serde_json::from_str(&release_text)
+        .map_err(|e| format!("Error parseando respuesta de GitHub: {e}"))?;
+
+    let assets_url = release
+        .get("assets_url")
+        .and_then(|value| value.as_str())
+        .ok_or("Respuesta de GitHub sin assets_url")?;
+
+    for page in 1..=20 {
+        let page_url = format!("{assets_url}?per_page=100&page={page}");
+
+        let assets_text = client
+            .get(&page_url)
+            .send()
+            .map_err(|e| format!("Error consultando assets de Python: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("GitHub rechazó la consulta de assets: {e}"))?
+            .text()
+            .map_err(|e| format!("Error leyendo assets de Python: {e}"))?;
+
+        let assets: Vec<serde_json::Value> = serde_json::from_str(&assets_text)
+            .map_err(|e| format!("Error parseando assets de Python: {e}"))?;
+
+        if assets.is_empty() {
+            break;
+        }
+
+        if let Some(asset) = python_asset_from_values(&assets, &filename)? {
+            return Ok(asset);
+        }
+    }
+
+    Err(format!(
+        "Asset '{filename}' no encontrado en release {PYTHON_STANDALONE_RELEASE}"
+    ))
 }
 
 fn extract_python_tar_gz(

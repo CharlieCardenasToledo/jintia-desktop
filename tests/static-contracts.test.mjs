@@ -1540,3 +1540,82 @@ test('Python administrado está disponible en Windows y macOS sin instaladores g
     /^tar\s*=/m
   );
 });
+
+test('el runtime Python pagina los assets de la release fija', async () => {
+  const runtimes = await readFile(
+    new URL(
+      'src-tauri/src/runtimes.rs',
+      root
+    ),
+    'utf8'
+  );
+
+  const start = runtimes.indexOf(
+    'fn resolve_python_asset'
+  );
+
+  const end = runtimes.indexOf(
+    'fn extract_python_tar_gz',
+    start
+  );
+
+  assert.ok(
+    start >= 0,
+    'resolve_python_asset debe existir'
+  );
+
+  assert.ok(
+    end > start,
+    'debe poder aislarse resolve_python_asset'
+  );
+
+  const resolver = runtimes.slice(
+    start,
+    end
+  );
+
+  assert.match(
+    resolver,
+    /assets_url/
+  );
+
+  assert.match(
+    resolver,
+    /per_page=100/
+  );
+
+  assert.match(
+    resolver,
+    /page=\{page\}/
+  );
+
+  assert.match(
+    resolver,
+    /1\.\.=20/
+  );
+
+  assert.match(
+    resolver,
+    /error_for_status/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /\["assets"\]\s*\.as_array/
+  );
+
+  assert.match(
+    runtimes,
+    /fn python_asset_from_values/
+  );
+
+  assert.match(
+    runtimes,
+    /strip_prefix\("sha256:"\)/
+  );
+
+  assert.match(
+    runtimes,
+    /is_ascii_hexdigit/
+  );
+});
