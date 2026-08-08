@@ -1771,6 +1771,7 @@ async function performDependencyInstall(name) {
     result = await downloadPythonRuntime();
     if (result.success) await installDisciplinePackages();
   }
+  else if (name === "Vivliostyle CLI") result = await installVivliostyleCli();
   else if (name === "Jintia Skill") result = await downloadSkillRuntime();
   else result = await installDependency(name, true);
   toast(result.message, result.success ? "success" : "error", 9000);

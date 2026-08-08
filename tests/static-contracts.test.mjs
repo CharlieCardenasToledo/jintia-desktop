@@ -1732,3 +1732,107 @@ test('Jintia requiere su Python administrado aunque exista Python global', async
     /installed:\s*python/
   );
 });
+
+test('Vivliostyle puede repararse desde su propia dependencia', async () => {
+  const [onboarding, api, lib, runtimes] =
+    await Promise.all([
+      readFile(
+        new URL('src/onboarding.js', root),
+        'utf8'
+      ),
+      readFile(
+        new URL('src/api.js', root),
+        'utf8'
+      ),
+      readFile(
+        new URL('src-tauri/src/lib.rs', root),
+        'utf8'
+      ),
+      readFile(
+        new URL('src-tauri/src/runtimes.rs', root),
+        'utf8'
+      ),
+    ]);
+
+  const start = onboarding.indexOf(
+    'async function performDependencyInstall(name)'
+  );
+
+  const end = onboarding.indexOf(
+    'async function installDisciplinePackages',
+    start
+  );
+
+  assert.ok(
+    start >= 0,
+    'performDependencyInstall debe existir'
+  );
+
+  assert.ok(
+    end > start,
+    'debe poder aislarse performDependencyInstall'
+  );
+
+  const installer = onboarding.slice(start, end);
+
+  assert.match(
+    installer,
+    /name\s*===\s*"Vivliostyle CLI"/
+  );
+
+  assert.match(
+    installer,
+    /result\s*=\s*await\s+installVivliostyleCli\(\)/
+  );
+
+  const vivliostyleIndex =
+    installer.indexOf('name === "Vivliostyle CLI"');
+
+  const fallbackIndex =
+    installer.lastIndexOf('installDependency(');
+
+  assert.ok(
+    vivliostyleIndex >= 0,
+    'debe existir rama dedicada para Vivliostyle'
+  );
+
+  assert.ok(
+    fallbackIndex > vivliostyleIndex,
+    'Vivliostyle debe resolverse antes del instalador genérico'
+  );
+
+  assert.match(
+    api,
+    /export async function installVivliostyleCli\(\)/
+  );
+
+  assert.match(
+    api,
+    /invoke\("install_vivliostyle_cli"\)/
+  );
+
+  assert.match(
+    lib,
+    /async fn install_vivliostyle_cli\(\)/
+  );
+
+  assert.match(
+    lib,
+    /runtimes::install_vivliostyle\(\)/
+  );
+
+  assert.match(
+    runtimes,
+    /pub fn install_vivliostyle\(\)/
+  );
+
+  assert.match(
+    runtimes,
+    /portable_node_prefix\(\)/
+  );
+
+  assert.match(
+    runtimes,
+    /portable_vivliostyle_bin\(\)/
+  );
+});
