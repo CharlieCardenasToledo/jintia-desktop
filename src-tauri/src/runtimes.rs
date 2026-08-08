@@ -720,30 +720,12 @@ fn npm_exe() -> Option<std::path::PathBuf> {
 
 pub fn resolve_vivliostyle() -> Option<PathBuf> {
     let portable = paths::portable_vivliostyle_bin();
+
     if portable.is_file() {
         return Some(portable);
     }
 
-    let checker = if cfg!(target_os = "windows") {
-        "where.exe"
-    } else {
-        "which"
-    };
-
-    let output = Command::new(checker)
-        .arg("vivliostyle")
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .map(|line| PathBuf::from(line.trim()))
+    None
 }
 
 pub fn vivliostyle_version() -> Option<String> {

@@ -301,7 +301,7 @@ test('el entorno base usa Node, Python, Jintia y Vivliostyle; LaTeX es opcional'
   assert.match(settings, /BULK_INSTALL_TARGETS/);
 });
 
-test('Vivliostyle se resuelve desde el runtime portable antes del PATH global', async () => {
+test('Vivliostyle se resuelve únicamente desde el runtime portable administrado', async () => {
   const [paths, runtimes, course] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
@@ -337,15 +337,14 @@ test('Vivliostyle se resuelve desde el runtime portable antes del PATH global', 
     /portable_vivliostyle_bin/
   );
 
-  assert.match(
+  assert.doesNotMatch(
     resolver,
     /where\.exe|which/
   );
 
-  assert.ok(
-    resolver.indexOf('portable_vivliostyle_bin') <
-      resolver.indexOf('where.exe'),
-    'Vivliostyle portable debe comprobarse antes del PATH global'
+  assert.doesNotMatch(
+    resolver,
+    /\.arg\("vivliostyle"\)/
   );
 
   assert.match(
@@ -1834,5 +1833,98 @@ test('Vivliostyle puede repararse desde su propia dependencia', async () => {
   assert.match(
     runtimes,
     /portable_vivliostyle_bin\(\)/
+  );
+});
+
+test('Vivliostyle global no satisface el runtime requerido por Jintia', async () => {
+  const [runtimes, course, onboarding, engine] =
+    await Promise.all([
+      readFile(
+        new URL('src-tauri/src/runtimes.rs', root),
+        'utf8'
+      ),
+      readFile(
+        new URL('src-tauri/src/course.rs', root),
+        'utf8'
+      ),
+      readFile(
+        new URL('src/onboarding.js', root),
+        'utf8'
+      ),
+      readFile(
+        new URL('src-tauri/src/engine.rs', root),
+        'utf8'
+      ),
+    ]);
+
+  const start = runtimes.indexOf(
+    'pub fn resolve_vivliostyle()'
+  );
+
+  const end = runtimes.indexOf(
+    'pub fn vivliostyle_version',
+    start
+  );
+
+  assert.ok(
+    start >= 0,
+    'resolve_vivliostyle debe existir'
+  );
+
+  assert.ok(
+    end > start,
+    'debe poder aislarse resolve_vivliostyle'
+  );
+
+  const resolver = runtimes.slice(start, end);
+
+  assert.match(
+    resolver,
+    /portable_vivliostyle_bin\(\)/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /where\.exe/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /\bwhich\b/
+  );
+
+  assert.doesNotMatch(
+    resolver,
+    /\.arg\("vivliostyle"\)/
+  );
+
+  assert.match(
+    course,
+    /name:\s*"Vivliostyle CLI"\.to_string\(\)[\s\S]*installed:\s*crate::runtimes::resolve_vivliostyle\(\)\.is_some\(\)/
+  );
+
+  assert.match(
+    course,
+    /name:\s*"Vivliostyle CLI"\.to_string\(\)[\s\S]*required:\s*true/
+  );
+
+  assert.match(
+    course,
+    /name:\s*"Vivliostyle CLI"\.to_string\(\)[\s\S]*installable:\s*true/
+  );
+
+  assert.match(
+    onboarding,
+    /name\s*===\s*"Vivliostyle CLI"[\s\S]*result\s*=\s*await\s+installVivliostyleCli\(\)/
+  );
+
+  assert.match(
+    engine,
+    /portable_node_exe\(\)[\s\S]*\.parent\(\)/
+  );
+
+  assert.match(
+    engine,
+    /\.env\("PATH",\s*patched_path\)/
   );
 });
