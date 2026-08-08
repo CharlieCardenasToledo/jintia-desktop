@@ -81,7 +81,7 @@ async fn download_skill_runtime(app: tauri::AppHandle) -> ActionResult {
 #[tauri::command]
 async fn get_skill_runtime_status() -> serde_json::Value {
     serde_json::json!({
-        "hasGlobal": runtimes::resolve_skill().map(|p| p == "jintia").unwrap_or(false),
+        "hasGlobal": runtimes::global_skill_available(),
         "hasPortable": runtimes::portable_skill_installed(),
         "resolvedPath": runtimes::resolve_skill(),
     })

@@ -2231,3 +2231,114 @@ test('el onboarding bloquea el avance cuando profileInstall tiene error', async 
     'el bloque de error debe hacer return sin avanzar'
   );
 });
+
+test('Jintia se instala mediante npm administrado, no mediante descarga manual de tarball', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  assert.match(runtimes, /pub fn download_portable_skill/);
+
+  const fnStart = runtimes.indexOf('pub fn download_portable_skill');
+  const fnEnd = runtimes.indexOf('\nfn emit_skill_progress', fnStart);
+  const fn_ = runtimes.slice(fnStart, fnEnd);
+
+  // Usa npm administrado con prefijo de staging
+  assert.match(fn_, /npm_exe\(\)/);
+  assert.match(fn_, /--global/);
+  assert.match(fn_, /--prefix/);
+  assert.match(fn_, /@charlie\.act7\/jintia@latest/);
+  assert.match(fn_, /\.jintia-stage-/);
+
+  // Valida artefactos antes de activar
+  assert.match(fn_, /SKILL\.md/);
+  assert.match(fn_, /skill\/bin\/jintia\.js/);
+
+  // Smoke test capabilities profiles --json
+  assert.match(fn_, /capabilities/);
+  assert.match(fn_, /profiles/);
+  assert.match(fn_, /--json/);
+
+  // Activación atómica
+  assert.match(fn_, /\.jintia-backup-/);
+  assert.match(fn_, /fs::rename/);
+
+  // Ya no descarga tarball ni verifica SHA1 manualmente
+  assert.doesNotMatch(fn_, /registry\.npmjs\.org/);
+  assert.doesNotMatch(fn_, /fetch_npm_package_info/);
+  assert.doesNotMatch(fn_, /tarball_url/);
+  assert.doesNotMatch(fn_, /expected_shasum/);
+  assert.doesNotMatch(fn_, /verify_sha1/);
+  assert.doesNotMatch(fn_, /extract_skill_tgz/);
+  assert.doesNotMatch(fn_, /tar -xzf/);
+});
+
+test('resolve_skill usa exclusivamente Jintia portable administrado', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  assert.match(runtimes, /pub fn resolve_skill\(\)/);
+
+  const resolverStart = runtimes.indexOf('pub fn resolve_skill()');
+  const resolverEnd = runtimes.indexOf('\npub fn global_skill_available', resolverStart);
+  const resolver = runtimes.slice(resolverStart, resolverEnd);
+
+  assert.match(resolver, /portable_skill_bin/);
+  assert.doesNotMatch(resolver, /where\.exe/);
+  assert.doesNotMatch(resolver, /"which"/);
+  // No devuelve la cadena literal "jintia" como fallback global
+  assert.doesNotMatch(resolver, /Some\("jintia"\)/);
+
+  // global_skill_available sí puede usar detección, pero es función aparte
+  assert.match(runtimes, /pub fn global_skill_available/);
+});
+
+test('paths.rs conoce el layout npm del paquete Jintia en Windows y Unix', async () => {
+  const paths = await readFile(
+    new URL('src-tauri/src/paths.rs', root),
+    'utf8'
+  );
+
+  assert.match(paths, /pub fn portable_skill_prefix\(\)/);
+  assert.match(paths, /pub fn portable_skill_npm_package_dir_for/);
+  assert.match(paths, /pub fn portable_skill_npm_source_dir\(\)/);
+  assert.match(paths, /pub fn portable_skill_legacy_source_dir\(\)/);
+  assert.match(paths, /pub fn portable_skill_source_dir\(\)/);
+
+  // Conoce las dos rutas de layout npm según plataforma
+  assert.match(paths, /"node_modules"/);      // Windows
+  assert.match(paths, /"lib"/);               // Unix
+  assert.match(paths, /@charlie\.act7/);
+  assert.match(paths, /"jintia"/);
+
+  // portable_skill_bin delega en portable_skill_source_dir
+  const binStart = paths.indexOf('pub fn portable_skill_bin()');
+  const binEnd = paths.indexOf('\npub fn migrate_runtimes', binStart);
+  const binFn = paths.slice(binStart, binEnd);
+  assert.match(binFn, /portable_skill_source_dir/);
+  assert.doesNotMatch(binFn, /portable_runtimes_dir\(\)\.join\("jintia"\)/);
+});
+
+test('payload usa portable_skill_source_dir para localizar la skill portátil', async () => {
+  const payload = await readFile(
+    new URL('src-tauri/src/payload.rs', root),
+    'utf8'
+  );
+
+  // portable_skill_src usa portable_skill_source_dir
+  const srcStart = payload.indexOf('fn portable_skill_src()');
+  const srcEnd = payload.indexOf('\nfn installed_portable_matches', srcStart);
+  const srcFn = payload.slice(srcStart, srcEnd);
+  assert.match(srcFn, /portable_skill_source_dir/);
+  assert.doesNotMatch(srcFn, /\.join\("jintia"\)[\s\S]{0,30}?\.join\("skill"\)/);
+
+  // portable_skill_version usa portable_skill_source_dir
+  const verStart = payload.indexOf('pub fn portable_skill_version()');
+  const verEnd = payload.indexOf('\npub fn skill_is_current', verStart);
+  const verFn = payload.slice(verStart, verEnd);
+  assert.match(verFn, /portable_skill_source_dir/);
+  assert.doesNotMatch(verFn, /\.join\("jintia"\)[\s\S]{0,30}?\.join\("skill"\)/);
+});

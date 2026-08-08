@@ -343,13 +343,47 @@ pub fn portable_python_prefix() -> PathBuf {
     portable_runtimes_dir().join("python")
 }
 
-pub fn portable_skill_bin() -> PathBuf {
-    let skill_dir = portable_runtimes_dir().join("jintia");
+pub fn portable_skill_prefix() -> PathBuf {
+    portable_runtimes_dir().join("jintia")
+}
+
+pub fn portable_skill_npm_package_dir_for(prefix: &std::path::Path) -> PathBuf {
     if cfg!(target_os = "windows") {
-        skill_dir.join("skill").join("bin").join("jintia.js")
+        prefix
+            .join("node_modules")
+            .join("@charlie.act7")
+            .join("jintia")
     } else {
-        skill_dir.join("skill").join("bin").join("jintia")
+        prefix
+            .join("lib")
+            .join("node_modules")
+            .join("@charlie.act7")
+            .join("jintia")
     }
+}
+
+pub fn portable_skill_npm_package_dir() -> PathBuf {
+    portable_skill_npm_package_dir_for(&portable_skill_prefix())
+}
+
+pub fn portable_skill_npm_source_dir() -> PathBuf {
+    portable_skill_npm_package_dir().join("skill")
+}
+
+pub fn portable_skill_legacy_source_dir() -> PathBuf {
+    portable_skill_prefix().join("skill")
+}
+
+pub fn portable_skill_source_dir() -> PathBuf {
+    let npm = portable_skill_npm_source_dir();
+    if npm.join("bin").join("jintia.js").is_file() {
+        return npm;
+    }
+    portable_skill_legacy_source_dir()
+}
+
+pub fn portable_skill_bin() -> PathBuf {
+    portable_skill_source_dir().join("bin").join("jintia.js")
 }
 
 pub fn migrate_runtimes_dir_if_needed() {

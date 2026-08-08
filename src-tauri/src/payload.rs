@@ -279,9 +279,7 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 fn portable_skill_src() -> Option<PathBuf> {
-    let src = crate::paths::portable_runtimes_dir()
-        .join("jintia")
-        .join("skill");
+    let src = crate::paths::portable_skill_source_dir();
     src.join("bin").join("jintia.js").is_file().then_some(src)
 }
 
@@ -727,10 +725,7 @@ pub fn installed_skill_version() -> String {
 }
 
 pub fn portable_skill_version() -> Option<String> {
-    let pkg_path = crate::paths::portable_runtimes_dir()
-        .join("jintia")
-        .join("skill")
-        .join("package.json");
+    let pkg_path = crate::paths::portable_skill_source_dir().join("package.json");
     fs::read_to_string(&pkg_path)
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
