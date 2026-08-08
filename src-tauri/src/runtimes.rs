@@ -861,7 +861,24 @@ pub fn node_cli_version(
 
 pub fn install_vivliostyle() -> Result<(), String> {
     let npm = npm_exe().ok_or_else(|| "Node portable no está instalado.".to_string())?;
+
+    let node = paths::portable_node_exe();
+    if !node.is_file() {
+        return Err("El ejecutable Node portable no está disponible.".to_string());
+    }
+
     let prefix = paths::portable_node_prefix();
+    let portable_bin = paths::portable_node_bin_dir();
+
+    let base_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut path_entries = vec![portable_bin];
+    for entry in std::env::split_paths(&base_path) {
+        if !path_entries.contains(&entry) {
+            path_entries.push(entry);
+        }
+    }
+    let patched_path = std::env::join_paths(path_entries)
+        .map_err(|e| format!("No se pudo preparar PATH para npm portable: {e}"))?;
 
     let output = if cfg!(target_os = "windows") {
         Command::new("cmd")
@@ -872,17 +889,20 @@ pub fn install_vivliostyle() -> Result<(), String> {
             .arg("--prefix")
             .arg(&prefix)
             .arg("@vivliostyle/cli")
+            .env("PATH", &patched_path)
             .output()
     } else {
-        Command::new(&npm)
+        Command::new(&node)
+            .arg(&npm)
             .arg("install")
             .arg("--global")
             .arg("--prefix")
             .arg(&prefix)
             .arg("@vivliostyle/cli")
+            .env("PATH", &patched_path)
             .output()
     }
-    .map_err(|e| format!("No se pudo ejecutar npm: {e}"))?;
+    .map_err(|e| format!("No se pudo ejecutar npm con el runtime portable: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

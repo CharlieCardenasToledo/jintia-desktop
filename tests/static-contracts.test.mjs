@@ -1928,3 +1928,76 @@ test('Vivliostyle global no satisface el runtime requerido por Jintia', async ()
     /\.env\("PATH",\s*patched_path\)/
   );
 });
+
+test('Vivliostyle instala npm con el Node portable de Jintia', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const start = runtimes.indexOf(
+    'pub fn install_vivliostyle()'
+  );
+
+  const end = runtimes.indexOf(
+    'pub fn install_npm_packages',
+    start
+  );
+
+  assert.ok(
+    start >= 0,
+    'install_vivliostyle debe existir'
+  );
+
+  assert.ok(
+    end > start,
+    'debe poder aislarse install_vivliostyle'
+  );
+
+  const installer = runtimes.slice(start, end);
+
+  assert.match(
+    installer,
+    /portable_node_exe\(\)/
+  );
+
+  assert.match(
+    installer,
+    /portable_node_prefix\(\)/
+  );
+
+  assert.match(
+    installer,
+    /portable_node_bin_dir\(\)/
+  );
+
+  assert.match(
+    installer,
+    /std::env::split_paths/
+  );
+
+  assert.match(
+    installer,
+    /std::env::join_paths/
+  );
+
+  assert.match(
+    installer,
+    /\.env\("PATH",\s*&patched_path\)/
+  );
+
+  assert.match(
+    installer,
+    /Command::new\(&node\)[\s\S]*\.arg\(&npm\)/
+  );
+
+  assert.match(
+    installer,
+    /Command::new\("cmd"\)[\s\S]*\.arg\("\/C"\)[\s\S]*\.arg\(&npm\)/
+  );
+
+  assert.match(
+    installer,
+    /@vivliostyle\/cli/
+  );
+});
