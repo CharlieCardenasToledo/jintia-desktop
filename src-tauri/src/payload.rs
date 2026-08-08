@@ -283,18 +283,26 @@ fn portable_skill_src() -> Option<PathBuf> {
     src.join("bin").join("jintia.js").is_file().then_some(src)
 }
 
+fn read_skill_package_version(dir: &Path) -> Option<String> {
+    fs::read_to_string(dir.join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .get("version")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        })
+}
+
 fn installed_portable_matches(target: &Path) -> bool {
     let Some(src) = portable_skill_src() else {
         return false;
     };
-    let read_version = |dir: &Path| {
-        fs::read_to_string(dir.join("package.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v["version"].as_str().map(|s| s.to_string()))
-    };
-    let src_ver = read_version(&src);
-    src_ver.is_some() && src_ver == read_version(target)
+    let src_ver = read_skill_package_version(&src);
+    src_ver.is_some() && src_ver == read_skill_package_version(target)
 }
 
 pub fn install_local_skill() -> ActionResult {
@@ -717,10 +725,16 @@ pub fn skill_is_installed() -> bool {
 }
 
 pub fn installed_skill_version() -> String {
-    installed_skill_dir()
-        .ok()
-        .and_then(|path| fs::read_to_string(path.join("VERSION")).ok())
-        .map(|version| version.trim().to_string())
+    let Ok(path) = installed_skill_dir() else {
+        return String::new();
+    };
+    read_skill_package_version(&path)
+        .or_else(|| {
+            fs::read_to_string(path.join("VERSION"))
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        })
         .unwrap_or_default()
 }
 
@@ -733,9 +747,16 @@ pub fn portable_skill_version() -> Option<String> {
 }
 
 pub fn skill_is_current() -> bool {
-    installed_skill_dir()
-        .ok()
-        .is_some_and(|path| path.join("SKILL.md").is_file() && installed_payload_matches(&path))
+    let Ok(path) = installed_skill_dir() else {
+        return false;
+    };
+    if !path.join("SKILL.md").is_file() {
+        return false;
+    }
+    if portable_skill_src().is_some() {
+        return installed_portable_matches(&path);
+    }
+    installed_payload_matches(&path)
 }
 
 pub fn openai_plugin_is_installed() -> bool {

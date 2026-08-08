@@ -2431,3 +2431,55 @@ test('los perfiles visuales provienen del runtime npm administrado', async () =>
   assert.match(cmd, /"disciplines"/);
   assert.match(cmd, /"profiles"/);
 });
+
+test('el estado de la Skill instalada prioriza el runtime npm', async () => {
+  const payload = await readFile(
+    new URL('src-tauri/src/payload.rs', root),
+    'utf8'
+  );
+
+  // Helper centralizado existe y lee package.json
+  assert.match(payload, /fn read_skill_package_version/);
+  const helperStart = payload.indexOf('fn read_skill_package_version');
+  const helperEnd = payload.indexOf('\nfn installed_portable_matches', helperStart);
+  const helper = payload.slice(helperStart, helperEnd);
+  assert.match(helper, /package\.json/);
+  assert.match(helper, /version/);
+
+  // installed_portable_matches usa el helper y no duplica el closure
+  const matchStart = payload.indexOf('fn installed_portable_matches');
+  const matchEnd = payload.indexOf('\npub fn install_local_skill', matchStart);
+  const matchFn = payload.slice(matchStart, matchEnd);
+  assert.match(matchFn, /read_skill_package_version/);
+  assert.doesNotMatch(matchFn, /let read_version\s*=/);
+
+  // installed_skill_version prioriza package.json; VERSION es solo fallback
+  const verStart = payload.indexOf('pub fn installed_skill_version()');
+  const verEnd = payload.indexOf('\npub fn portable_skill_version', verStart);
+  const verFn = payload.slice(verStart, verEnd);
+  assert.match(verFn, /read_skill_package_version/);
+  assert.match(verFn, /VERSION/);
+  // read_skill_package_version debe aparecer antes de VERSION
+  assert.ok(
+    verFn.indexOf('read_skill_package_version') < verFn.indexOf('VERSION'),
+    'package.json debe tener prioridad sobre VERSION'
+  );
+
+  // skill_is_current prioriza portable runtime como autoridad
+  const curStart = payload.indexOf('pub fn skill_is_current()');
+  const curEnd = payload.indexOf('\npub fn openai_plugin_is_installed', curStart);
+  const curFn = payload.slice(curStart, curEnd);
+  assert.match(curFn, /portable_skill_src/);
+  assert.match(curFn, /installed_portable_matches/);
+  assert.match(curFn, /installed_payload_matches/);
+
+  // No usa OR entre ambas fuentes (serían fuentes equivalentes, no lo son)
+  assert.doesNotMatch(
+    curFn,
+    /installed_portable_matches[\s\S]{0,20}\|\|[\s\S]{0,20}installed_payload_matches/
+  );
+  assert.doesNotMatch(
+    curFn,
+    /installed_payload_matches[\s\S]{0,20}\|\|[\s\S]{0,20}installed_portable_matches/
+  );
+});
