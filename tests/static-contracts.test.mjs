@@ -1619,3 +1619,85 @@ test('el runtime Python pagina los assets de la release fija', async () => {
     /is_ascii_hexdigit/
   );
 });
+
+test('Python portable tiene precedencia sobre Python global', async () => {
+  const [runtimes, lib] =
+    await Promise.all([
+      readFile(
+        new URL(
+          'src-tauri/src/runtimes.rs',
+          root
+        ),
+        'utf8'
+      ),
+      readFile(
+        new URL(
+          'src-tauri/src/lib.rs',
+          root
+        ),
+        'utf8'
+      ),
+    ]);
+
+  const start = runtimes.indexOf(
+    'pub fn resolve_python()'
+  );
+
+  const end = runtimes.indexOf(
+    'pub fn portable_python_installed',
+    start
+  );
+
+  assert.ok(
+    start >= 0,
+    'resolve_python debe existir'
+  );
+
+  assert.ok(
+    end > start,
+    'debe poder aislarse resolve_python'
+  );
+
+  const resolver = runtimes.slice(start, end);
+
+  assert.match(
+    runtimes,
+    /fn global_python_command\(\)/
+  );
+
+  assert.match(
+    runtimes,
+    /pub fn global_python_available\(\)/
+  );
+
+  assert.match(
+    resolver,
+    /portable_python_exe\(\)/
+  );
+
+  assert.match(
+    resolver,
+    /global_python_command\(\)/
+  );
+
+  const portableIndex =
+    resolver.indexOf('portable_python_exe()');
+
+  const globalIndex =
+    resolver.indexOf('global_python_command()');
+
+  assert.ok(
+    portableIndex < globalIndex,
+    'Python portable debe comprobarse antes del Python global'
+  );
+
+  assert.match(
+    lib,
+    /"hasGlobal":\s*runtimes::global_python_available\(\)/
+  );
+
+  assert.doesNotMatch(
+    lib,
+    /resolve_python\(\)[\s\S]{0,100}p\s*!=\s*"python\.exe"/
+  );
+});

@@ -61,9 +61,7 @@ async fn download_python_runtime(app: tauri::AppHandle) -> ActionResult {
 #[tauri::command]
 async fn get_python_runtime_status() -> serde_json::Value {
     serde_json::json!({
-        "hasGlobal": runtimes::resolve_python()
-            .map(|p| p != "python.exe")
-            .unwrap_or(false),
+        "hasGlobal": runtimes::global_python_available(),
         "hasPortable": runtimes::portable_python_installed(),
         "resolvedPath": runtimes::resolve_python(),
         "version": runtimes::python_version(),

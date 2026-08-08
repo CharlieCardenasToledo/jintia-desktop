@@ -503,30 +503,39 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn resolve_python() -> Option<String> {
+fn global_python_command() -> Option<String> {
     let checker = if cfg!(target_os = "windows") {
         "where.exe"
     } else {
         "which"
     };
 
-    for cmd in &["python3", "python"] {
+    for command in ["python3", "python"] {
         if Command::new(checker)
-            .arg(cmd)
+            .arg(command)
             .output()
-            .map(|o| o.status.success())
+            .map(|output| output.status.success())
             .unwrap_or(false)
         {
-            return Some(cmd.to_string());
+            return Some(command.to_string());
         }
     }
 
+    None
+}
+
+pub fn global_python_available() -> bool {
+    global_python_command().is_some()
+}
+
+pub fn resolve_python() -> Option<String> {
     let portable = paths::portable_python_exe();
+
     if portable.is_file() {
         return Some(portable.to_string_lossy().into_owned());
     }
 
-    None
+    global_python_command()
 }
 
 pub fn portable_python_installed() -> bool {
