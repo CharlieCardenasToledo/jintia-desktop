@@ -2111,3 +2111,123 @@ test('Node CLI disciplinares usan exclusivamente el runtime administrado', async
     /Usando Mermaid CLI administrado por Jintia/
   );
 });
+
+test('el onboarding no avanza si falla la instalación del perfil disciplinar', async () => {
+  const source = await readFile(
+    new URL('src/onboarding.js', root),
+    'utf8'
+  );
+
+  const fnStart = source.indexOf(
+    'async function installDisciplinePackages()'
+  );
+
+  const fnEnd = source.indexOf(
+    'async function handleAction(',
+    fnStart
+  );
+
+  assert.ok(fnStart >= 0, 'installDisciplinePackages debe existir');
+  assert.ok(fnEnd > fnStart, 'debe poder aislarse installDisciplinePackages');
+
+  const installer = source.slice(fnStart, fnEnd);
+
+  assert.match(
+    installer,
+    /const pipResult\s*=\s*await installProfilePackages\(/,
+    'pip ActionResult debe guardarse'
+  );
+
+  assert.match(
+    installer,
+    /!pipResult\?\.success/,
+    'pip failure debe detectarse'
+  );
+
+  assert.match(
+    installer,
+    /const npmResult\s*=\s*await installNpmPackages\(/,
+    'npm ActionResult debe guardarse'
+  );
+
+  assert.match(
+    installer,
+    /!npmResult\?\.success/,
+    'npm failure debe detectarse'
+  );
+
+  assert.match(
+    installer,
+    /failedStage:\s*"python"/,
+    'failedStage debe distinguir python'
+  );
+
+  assert.match(
+    installer,
+    /failedStage:\s*"node"/,
+    'failedStage debe distinguir node'
+  );
+
+  const pipFailure = installer.indexOf('!pipResult?.success');
+  const npmInstall = installer.indexOf('await installNpmPackages(');
+
+  assert.ok(
+    pipFailure >= 0 && npmInstall > pipFailure,
+    'el fallo de pip debe aparecer antes de la llamada npm'
+  );
+
+  const segment = installer.slice(pipFailure, npmInstall);
+
+  assert.match(
+    segment,
+    /return\b/,
+    'debe haber return entre pip failure y la llamada npm (fail-fast)'
+  );
+});
+
+test('el onboarding bloquea el avance cuando profileInstall tiene error', async () => {
+  const source = await readFile(
+    new URL('src/onboarding.js', root),
+    'utf8'
+  );
+
+  const actionStart = source.indexOf(
+    'if (action === "save-profile-and-template")'
+  );
+
+  const actionEnd = source.indexOf(
+    'if (action === "export-zip")',
+    actionStart
+  );
+
+  assert.ok(actionStart >= 0, 'save-profile-and-template debe existir');
+  assert.ok(actionEnd > actionStart, 'debe poder aislarse el bloque');
+
+  const saveProfile = source.slice(actionStart, actionEnd);
+
+  const errorIndex = saveProfile.indexOf('profileInstall?.error');
+  const successIndex = saveProfile.indexOf(
+    'Perfil ${profileInstall.profileId} preparado'
+  );
+  const advanceIndex = saveProfile.indexOf('advance(current)');
+
+  assert.ok(errorIndex >= 0, 'profileInstall?.error debe evaluarse');
+
+  assert.ok(
+    successIndex > errorIndex,
+    'success toast debe ser posterior al check de error'
+  );
+
+  assert.ok(
+    advanceIndex > errorIndex,
+    'advance debe ser posterior al check de error'
+  );
+
+  const errorToAdvance = saveProfile.slice(errorIndex, advanceIndex);
+
+  assert.match(
+    errorToAdvance,
+    /return;/,
+    'el bloque de error debe hacer return sin avanzar'
+  );
+});

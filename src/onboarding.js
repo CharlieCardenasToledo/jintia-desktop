@@ -1800,6 +1800,7 @@ async function installDisciplinePackages() {
       : {};
 
     const pipPackages = profile?.python?.packages ?? [];
+    const npmPackages = profile?.node?.packages ?? [];
 
     if (pipPackages.length > 0) {
       toast(
@@ -1808,10 +1809,19 @@ async function installDisciplinePackages() {
         60000
       );
 
-      await installProfilePackages(pipPackages);
-    }
+      const pipResult = await installProfilePackages(pipPackages);
 
-    const npmPackages = profile?.node?.packages ?? [];
+      if (!pipResult?.success) {
+        return {
+          discipline,
+          profileId: profileId ?? null,
+          pythonPackages: pipPackages,
+          nodePackages: npmPackages,
+          failedStage: "python",
+          error: pipResult?.message || "No se pudieron instalar los paquetes Python del perfil.",
+        };
+      }
+    }
 
     if (npmPackages.length > 0) {
       toast(
@@ -1820,7 +1830,18 @@ async function installDisciplinePackages() {
         60000
       );
 
-      await installNpmPackages(npmPackages);
+      const npmResult = await installNpmPackages(npmPackages);
+
+      if (!npmResult?.success) {
+        return {
+          discipline,
+          profileId: profileId ?? null,
+          pythonPackages: pipPackages,
+          nodePackages: npmPackages,
+          failedStage: "node",
+          error: npmResult?.message || "No se pudieron instalar los paquetes Node del perfil.",
+        };
+      }
     }
 
     return {
@@ -1959,18 +1980,19 @@ async function performAction(action, current) {
     // La disciplina ya está guardada en state.config.
     // Ahora sí puede resolverse el perfil declarado por la Skill.
     const profileInstall = await installDisciplinePackages();
+    if (profileInstall?.error) {
+      toast(
+        `No se pudo preparar el perfil: ${profileInstall.error}`,
+        "error",
+        8000
+      );
+      return;
+    }
     if (profileInstall?.profileId) {
       toast(
         `Perfil ${profileInstall.profileId} preparado para ${discipline}.`,
         "success",
         4500
-      );
-    }
-    if (profileInstall?.error) {
-      toast(
-        "El perfil se guardó, pero algunas herramientas disciplinares no pudieron instalarse. Podrás revisarlas en Configuración > Entorno.",
-        "error",
-        8000
       );
     }
     return advance(current);
