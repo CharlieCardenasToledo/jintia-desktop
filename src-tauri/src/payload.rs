@@ -463,21 +463,6 @@ fn add_bytes(zip: &mut zip::ZipWriter<fs::File>, path: &str, bytes: &[u8]) -> Re
         .map_err(|error| format!("No se pudo escribir {path} en el ZIP: {error}"))
 }
 
-fn add_dir_to_zip(
-    zip: &mut zip::ZipWriter<fs::File>,
-    dir: &Dir<'_>,
-    prefix: &str,
-) -> Result<(), String> {
-    for file in dir.files() {
-        let relative = file.path().to_string_lossy().replace('\\', "/");
-        add_bytes(zip, &format!("{prefix}/{relative}"), file.contents())?;
-    }
-    for child in dir.dirs() {
-        add_dir_to_zip(zip, child, prefix)?;
-    }
-    Ok(())
-}
-
 fn add_fs_dir_to_zip(
     zip: &mut zip::ZipWriter<fs::File>,
     source: &Path,
@@ -515,64 +500,26 @@ fn add_fs_dir_to_zip(
     Ok(())
 }
 
-fn hash_embedded_dir(
-    dir: &Dir<'_>,
-    hasher: &mut DefaultHasher,
-    installed: Option<&Path>,
-    preserve_user_config: bool,
-) {
-    for file in dir.files() {
-        file.path().to_string_lossy().hash(hasher);
-        let name = file.path().file_name().and_then(|value| value.to_str());
-        let bytes = if preserve_user_config
-            && matches!(name, Some("institution.json" | "notebooks.json"))
-        {
-            name.and_then(|name| user_config(name, installed))
-                .unwrap_or_else(|| file.contents().to_vec())
-        } else {
-            file.contents().to_vec()
-        };
-        bytes.hash(hasher);
+fn portable_skill_export_source() -> Option<(PathBuf, String)> {
+    let package_root = crate::paths::portable_skill_npm_package_dir();
+    let skill_src = package_root.join("skill");
+    if !package_root.join("package.json").is_file()
+        || !skill_src.join("package.json").is_file()
+        || !skill_src.join("SKILL.md").is_file()
+        || !skill_src.join("bin").join("jintia.js").is_file()
+    {
+        return None;
     }
-    for child in dir.dirs() {
-        hash_embedded_dir(child, hasher, installed, preserve_user_config);
-    }
+    let package_version = read_skill_package_version(&package_root)?;
+    let skill_version = read_skill_package_version(&skill_src)?;
+    (package_version == skill_version).then_some((skill_src, skill_version))
 }
 
-fn payload_fingerprint(installed: Option<&Path>) -> String {
+fn file_fingerprint(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|error| format!("No se pudo leer {}: {error}", path.display()))?;
     let mut hasher = DefaultHasher::new();
-    SKILL_MD.hash(&mut hasher);
-    LICENSE.hash(&mut hasher);
-    REQUIREMENTS.hash(&mut hasher);
-    SKILL_VERSION.hash(&mut hasher);
-    hash_embedded_dir(&REFERENCES, &mut hasher, installed, false);
-    hash_embedded_dir(&SCRIPTS, &mut hasher, installed, false);
-    hash_embedded_dir(&THEMES, &mut hasher, installed, false);
-    hash_embedded_dir(&CONFIG, &mut hasher, installed, true);
-    hash_embedded_dir(&AGENTS, &mut hasher, installed, false);
-    hash_embedded_dir(&COMMANDS, &mut hasher, installed, false);
-    hash_embedded_dir(&BIN, &mut hasher, installed, false);
-    hash_embedded_dir(&RULES, &mut hasher, installed, false);
-    hash_embedded_dir(&SCHEMAS, &mut hasher, installed, false);
-    format!("{:016x}", hasher.finish())
-}
-
-fn export_record_matches(path: &Path, fingerprint: &str) -> bool {
-    let record_path = match app_config_dir() {
-        Ok(directory) => directory.join("export.json"),
-        Err(_) => return false,
-    };
-    fs::read(record_path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .is_some_and(|value| {
-            value
-                .get("lastExportPath")
-                .and_then(serde_json::Value::as_str)
-                == Some(path_text(path).as_str())
-                && value.get("fingerprint").and_then(serde_json::Value::as_str) == Some(fingerprint)
-                && path.is_file()
-        })
+    bytes.hash(&mut hasher);
+    Ok(format!("{:016x}", hasher.finish()))
 }
 
 fn files_equal(left: &Path, right: &Path) -> bool {
@@ -592,20 +539,20 @@ pub fn export_skill_zip(destination_dir: String) -> ActionResult {
         Ok(operation) => operation,
         Err(_) => return ActionResult::error("El estado interno de exportación está bloqueado."),
     };
+    let (skill_src, managed_version) = match portable_skill_export_source() {
+        Some(source) => source,
+        None => {
+            return ActionResult::error(
+                "El runtime Jintia administrado no contiene una Skill válida. Actualiza Jintia desde Configuración > Entorno.",
+            );
+        }
+    };
     let destination = match canonical_directory(&destination_dir) {
         Ok(path) => path,
         Err(error) => return ActionResult::error(error),
     };
-    let final_path = destination.join(format!("jintia-skill-{SKILL_VERSION}.zip"));
+    let final_path = destination.join(format!("jintia-skill-{managed_version}.zip"));
     let installed = installed_skill_dir().ok();
-    let fingerprint = payload_fingerprint(installed.as_deref());
-    if export_record_matches(&final_path, &fingerprint) {
-        return ActionResult::ok(format!(
-            "El ZIP existente ya corresponde a la versión actual de la skill; no se creó ningún archivo nuevo.\n{}",
-            path_text(&final_path)
-        ))
-        .with_path(path_text(&final_path));
-    }
     let temp_path = destination.join(format!(".jintia-skill-{}.tmp", timestamp()));
     let file = match fs::File::create(&temp_path) {
         Ok(file) => file,
@@ -614,21 +561,7 @@ pub fn export_skill_zip(destination_dir: String) -> ActionResult {
 
     let result = (|| -> Result<bool, String> {
         let mut zip = zip::ZipWriter::new(file);
-        add_bytes(&mut zip, "SKILL.md", SKILL_MD)?;
-        add_bytes(&mut zip, "LICENSE", LICENSE)?;
-        add_bytes(&mut zip, "requirements.txt", REQUIREMENTS)?;
-        add_bytes(&mut zip, "package.json", SKILL_PACKAGE_JSON)?;
-        add_bytes(&mut zip, "VERSION", SKILL_VERSION.as_bytes())?;
-        add_dir_to_zip(&mut zip, &REFERENCES, "references")?;
-        add_dir_to_zip(&mut zip, &SCRIPTS, "scripts")?;
-        add_dir_to_zip(&mut zip, &RUNTIME, "runtime")?;
-        add_dir_to_zip(&mut zip, &THEMES, "themes")?;
-        add_dir_to_zip(&mut zip, &CONFIG, "config")?;
-        add_dir_to_zip(&mut zip, &AGENTS, "agents")?;
-        add_dir_to_zip(&mut zip, &COMMANDS, "commands")?;
-        add_dir_to_zip(&mut zip, &BIN, "bin")?;
-        add_dir_to_zip(&mut zip, &RULES, "rules")?;
-        add_dir_to_zip(&mut zip, &SCHEMAS, "schemas")?;
+        add_fs_dir_to_zip(&mut zip, &skill_src, "")?;
 
         for name in ["institution.json", "notebooks.json"] {
             if let Some(bytes) = user_config(name, installed.as_deref()) {
@@ -655,6 +588,10 @@ pub fn export_skill_zip(destination_dir: String) -> ActionResult {
 
     match result {
         Ok(changed) => {
+            let fingerprint = match file_fingerprint(&final_path) {
+                Ok(fingerprint) => fingerprint,
+                Err(error) => return ActionResult::error(error),
+            };
             if !changed {
                 if last_export_path().as_deref() != Some(path_text(&final_path).as_str()) {
                     if let Err(error) = record_export(&final_path, &fingerprint) {

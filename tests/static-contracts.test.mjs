@@ -35,7 +35,7 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.match(paths, /\.join\("jintia-skill"\)/);
   assert.match(paths, /legacy_skill_dir/);
   assert.match(payload, /SKILL_VERSION/);
-  assert.match(payload, /jintia-skill-\{SKILL_VERSION\}\.zip/);
+  assert.match(payload, /jintia-skill-\{managed_version\}\.zip/);
   assert.match(payload, /instructional-designer-skill\.backup-/);
 });
 
@@ -146,7 +146,7 @@ test('la exportación del plugin OpenAI usa Jintia npm administrado', async () =
   const end = payload.indexOf('\npub fn record_export(', start);
   const exportFn = payload.slice(start, end);
   const helperStart = payload.indexOf('fn add_fs_dir_to_zip(');
-  const helperEnd = payload.indexOf('\nfn hash_embedded_dir(', helperStart);
+  const helperEnd = payload.indexOf('\nfn portable_skill_export_source(', helperStart);
   const helper = payload.slice(helperStart, helperEnd);
 
   assert.match(exportFn, /portable_openai_plugin_sources/);
@@ -169,6 +169,46 @@ test('la exportación del plugin OpenAI usa Jintia npm administrado', async () =
   assert.match(helper, /is_file/);
   assert.match(helper, /is_symlink/);
   assert.doesNotMatch(payload, /OPENAI_PLUGIN_MANIFEST|OPENAI_PLUGIN_MCP|OPENAI_PLUGIN_README/);
+});
+
+test('la exportación manual de Skill usa Jintia npm administrado', async () => {
+  const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
+  const sourceStart = payload.indexOf('fn portable_skill_export_source(');
+  const sourceEnd = payload.indexOf('\nfn file_fingerprint(', sourceStart);
+  const sourceFn = payload.slice(sourceStart, sourceEnd);
+  const exportStart = payload.indexOf('pub fn export_skill_zip(');
+  const exportEnd = payload.indexOf('\npub fn export_openai_plugin_zip(', exportStart);
+  const exportFn = payload.slice(exportStart, exportEnd);
+  const fingerprintStart = payload.indexOf('fn file_fingerprint(');
+  const fingerprintEnd = payload.indexOf('\nfn files_equal(', fingerprintStart);
+  const fingerprintFn = payload.slice(fingerprintStart, fingerprintEnd);
+
+  assert.match(sourceFn, /portable_skill_npm_package_dir/);
+  assert.match(sourceFn, /skill/);
+  assert.match(sourceFn, /package\.json/);
+  assert.match(sourceFn, /SKILL\.md/);
+  assert.match(sourceFn, /bin/);
+  assert.match(sourceFn, /jintia\.js/);
+  assert.match(sourceFn, /read_skill_package_version/);
+  assert.match(sourceFn, /package_version/);
+  assert.match(sourceFn, /skill_version/);
+  assert.match(exportFn, /portable_skill_export_source/);
+  assert.match(exportFn, /skill_src/);
+  assert.match(exportFn, /managed_version/);
+  assert.match(exportFn, /add_fs_dir_to_zip/);
+  assert.match(exportFn, /user_config/);
+  assert.match(exportFn, /institution\.json/);
+  assert.match(exportFn, /notebooks\.json/);
+  assert.match(exportFn, /files_equal/);
+  assert.match(exportFn, /file_fingerprint/);
+  assert.match(exportFn, /record_export/);
+  assert.doesNotMatch(exportFn, /SKILL_VERSION|SKILL_MD|LICENSE|REQUIREMENTS|SKILL_PACKAGE_JSON|REFERENCES|SCRIPTS|RUNTIME|THEMES|CONFIG|AGENTS|COMMANDS|BIN|RULES|SCHEMAS|add_dir_to_zip|payload_fingerprint|export_record_matches|"VERSION"/);
+  assert.match(exportFn, /jintia-skill-\{managed_version\}\.zip/);
+  assert.match(fingerprintFn, /fs::read/);
+  assert.match(fingerprintFn, /DefaultHasher/);
+  assert.match(fingerprintFn, /hash/);
+  assert.match(fingerprintFn, /finish/);
+  assert.doesNotMatch(fingerprintFn, /SKILL_VERSION|SKILL_MD|REFERENCES/);
 });
 
 test('el modo mock no anuncia plantillas que el backend no incorpora', async () => {
@@ -914,7 +954,7 @@ test('los payloads incluyen el runtime autocontenido de la release', async () =>
   assert.match(payload, /SKILL_PACKAGE_JSON/);
   assert.match(payload, /target\.join\("runtime"\)/);
   assert.match(payload, /target\.join\("package\.json"\)/);
-  assert.match(payload, /add_dir_to_zip\(&mut zip, &RUNTIME/);
+  assert.match(payload, /add_fs_dir_to_zip\(&mut zip, &skill_src/);
 });
 
 test('Ayuda cubre el flujo real del producto y ofrece FAQ local buscable', async () => {
