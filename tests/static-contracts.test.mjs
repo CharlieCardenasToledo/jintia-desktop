@@ -64,6 +64,30 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   }
 });
 
+test('install_local_skill requiere el runtime npm administrado', async () => {
+  const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
+  const start = payload.indexOf('pub fn install_local_skill()');
+  const end = payload.indexOf('\nfn add_bytes(', start);
+  const installFn = payload.slice(start, end);
+  const sourceIndex = installFn.indexOf('portable_skill_src');
+  const stageIndex = installFn.indexOf('.jintia-skill.stage-');
+
+  assert.ok(start >= 0 && end > start);
+  assert.match(installFn, /portable_skill_src/);
+  assert.match(installFn, /copy_dir_all/);
+  assert.match(installFn, /installed_portable_matches/);
+  assert.doesNotMatch(installFn, /materialize_payload/);
+  assert.doesNotMatch(installFn, /installed_payload_matches/);
+  assert.ok(sourceIndex >= 0 && sourceIndex < stageIndex);
+  assert.match(installFn.slice(sourceIndex, stageIndex), /None\s*=>[\s\S]*return ActionResult::error/);
+  assert.match(installFn, /legacy_skill_dir/);
+  assert.match(installFn, /migrating_legacy/);
+  assert.match(installFn, /instructional-designer-skill\.backup-/);
+  assert.match(installFn, /\.jintia-skill\.stage-/);
+  assert.match(installFn, /jintia-skill\.backup-/);
+  assert.match(installFn, /fs::rename/);
+});
+
 test('el modo mock no anuncia plantillas que el backend no incorpora', async () => {
   const mock = await readFile(new URL('src/mocks/tauri-core.mock.js', root), 'utf8');
   assert.match(mock, /id:\s*"elegantbook-clasico"/);

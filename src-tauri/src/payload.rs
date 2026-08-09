@@ -310,6 +310,14 @@ pub fn install_local_skill() -> ActionResult {
         Ok(operation) => operation,
         Err(_) => return ActionResult::error("El estado interno de instalación está bloqueado."),
     };
+    let portable_src = match portable_skill_src() {
+        Some(path) => path,
+        None => {
+            return ActionResult::error(
+                "Jintia administrado no está instalado. Instálalo primero desde Configuración > Entorno.",
+            );
+        }
+    };
     let target = match skill_dir() {
         Ok(path) => path,
         Err(error) => return ActionResult::error(error),
@@ -321,7 +329,7 @@ pub fn install_local_skill() -> ActionResult {
     if let Err(error) = fs::create_dir_all(&parent) {
         return ActionResult::error(format!("No se pudo crear {}: {error}", parent.display()));
     }
-    if target.exists() && (installed_payload_matches(&target) || installed_portable_matches(&target)) {
+    if target.exists() && installed_portable_matches(&target) {
         return ActionResult::ok(format!(
             "La skill ya estaba instalada y actualizada; no se creó otra copia ni respaldo.\n{}",
             path_text(&target)
@@ -331,18 +339,8 @@ pub fn install_local_skill() -> ActionResult {
 
     let legacy = legacy_skill_dir().ok().filter(|path| path.exists());
     let migrating_legacy = !target.exists() && legacy.is_some();
-    let installed = if target.exists() {
-        Some(target.as_path())
-    } else {
-        legacy.as_deref()
-    };
     let stage = parent.join(format!(".jintia-skill.stage-{}", timestamp()));
-    if let Some(portable_src) = portable_skill_src() {
-        if let Err(error) = copy_dir_all(&portable_src, &stage) {
-            let _ = fs::remove_dir_all(&stage);
-            return ActionResult::error(error);
-        }
-    } else if let Err(error) = materialize_payload(&stage, installed) {
+    if let Err(error) = copy_dir_all(&portable_src, &stage) {
         let _ = fs::remove_dir_all(&stage);
         return ActionResult::error(error);
     }
