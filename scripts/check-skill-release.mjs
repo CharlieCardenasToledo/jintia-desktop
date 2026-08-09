@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 const resources = new URL("../src-tauri/resources/", import.meta.url);
+const CANONICAL_REPOSITORY = "CharlieCardenasToledo/jintia";
 const lock = JSON.parse(await readFile(new URL("skill.lock.json", root), "utf8"));
 
 function fail(message) {
@@ -30,6 +31,7 @@ async function readVerifiedManifest(entry) {
 
 if (lock.schemaVersion !== 1) fail("schemaVersion no soportado");
 const repository = requiredString(lock, "repository");
+if (repository !== CANONICAL_REPOSITORY) fail(`repository debe ser ${CANONICAL_REPOSITORY}`);
 const manifestFile = requiredString(lock.manifest, "file");
 const manifestSha256 = requiredString(lock.manifest, "sha256");
 if (!/^[a-f0-9]{64}$/.test(manifestSha256)) {

@@ -3,7 +3,7 @@
 ## Límites del producto
 
 ```text
-instructional-designer-skill                 jintia-desktop
+jintia                                       jintia-desktop
   release manifest + ZIPs  ───────────────▶  skill.lock.json
                                                │
                                                ├─ build.rs verifica SHA-256
@@ -40,7 +40,7 @@ actualizarlos.
 
 La instalación conserva configuraciones de usuario, crea respaldos antes de
 reemplazar una instalación y mantiene compatibilidad con la antigua carpeta
-`instructional-designer-skill` durante la migración.
+`jintia` durante la migración.
 
 ## Persistencia
 

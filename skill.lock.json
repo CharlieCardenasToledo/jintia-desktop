@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "repository": "CharlieCardenasToledo/instructional-designer-skill",
-  "tag": "v11.6.5",
+  "repository": "CharlieCardenasToledo/jintia",
+  "tag": "v11.6.6",
   "manifest": {
     "file": "jintia-release-manifest.json",
-    "sha256": "b31506b3e9fa094a3a315e3de518b3bddddf217573195c3dd762d59e1b488d89"
+    "sha256": "e318c1c57c6b9f58f1e4edce482a8cd299420c996309743403977f4c907808f3"
   },
   "mcp": {
     "package": "@charlie.act7/gemini-notebook-mcp",

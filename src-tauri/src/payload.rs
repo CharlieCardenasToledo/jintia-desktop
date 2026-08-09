@@ -312,7 +312,7 @@ pub fn install_local_skill() -> ActionResult {
             let legacy_backup = if migrating_legacy {
                 legacy.as_ref().and_then(|previous| {
                     let archived = parent.join(format!(
-                        "instructional-designer-skill.backup-{}",
+                        "jintia.backup-{}",
                         timestamp()
                     ));
                     fs::rename(previous, &archived).ok().map(|_| archived)

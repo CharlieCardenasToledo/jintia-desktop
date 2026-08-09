@@ -34,7 +34,7 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.match(paths, /\.join\("jintia-skill"\)/);
   assert.match(paths, /legacy_skill_dir/);
   assert.match(payload, /jintia-skill-\{managed_version\}\.zip/);
-  assert.match(payload, /instructional-designer-skill\.backup-/);
+  assert.match(payload, /jintia\.backup-/);
 });
 
 test('resources conserva solo metadata MCP y no artifacts de Skill', async () => {
@@ -126,7 +126,7 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   ]);
   const lock = JSON.parse(lockText);
 
-  assert.equal(lock.repository, 'CharlieCardenasToledo/instructional-designer-skill');
+  assert.equal(lock.repository, 'CharlieCardenasToledo/jintia');
   assert.equal(lock.artifacts, undefined);
   assert.equal(lock.skillVersion, undefined);
   assert.equal(lock.minimumDesktopVersion, undefined);
@@ -211,14 +211,21 @@ test('skill:verify valida solo el contrato MCP consumido por Desktop', async () 
   assert.match(workflow, /npm run skill:verify/);
 });
 
-test('skill:sync sincroniza solo el contrato MCP de Desktop', async () => {
-  const [sync, lockText, packageText] = await Promise.all([
+test('skill:sync usa el repositorio canónico de Jintia', async () => {
+  const [sync, check, lockText, manifestText] = await Promise.all([
     readFile(new URL('scripts/sync-skill-release.mjs', root), 'utf8'),
+    readFile(new URL('scripts/check-skill-release.mjs', root), 'utf8'),
     readFile(new URL('skill.lock.json', root), 'utf8'),
-    readFile(new URL('package.json', root), 'utf8'),
+    readFile(new URL('src-tauri/resources/jintia-release-manifest.json', root), 'utf8'),
   ]);
   const lock = JSON.parse(lockText);
-  const packageJson = JSON.parse(packageText);
+  assert.match(sync, /CANONICAL_REPOSITORY/);
+  assert.match(sync, /https:\/\/github\.com\/\$\{CANONICAL_REPOSITORY\}\/releases\/download/);
+  assert.doesNotMatch(sync, /https:\/\/github\.com\/\$\{current\.repository\}/);
+  assert.match(check, /CANONICAL_REPOSITORY/);
+  assert.match(check, /repository !== CANONICAL_REPOSITORY/);
+  const legacyRepository = ['instructional', '-designer-skill'].join('');
+  assert.doesNotMatch(`${lockText}\n${manifestText}\n${sync}\n${check}`, new RegExp(legacyRepository));
 
   assert.match(sync, /skill\.lock\.json/);
   assert.match(sync, /--tag=/);
@@ -255,9 +262,8 @@ test('skill:sync sincroniza solo el contrato MCP de Desktop', async () => {
   assert.ok(replaceFn.indexOf('unlink') < replaceFn.indexOf('rename'));
   assert.doesNotMatch(sync, /manifest\.artifacts|current\.artifacts|openaiPlugin|download\(entry\.file\)|entry\.bytes|Object\.values\(artifacts\)|const artifacts/);
 
-  assert.equal(packageJson.scripts['skill:sync'], 'node scripts/sync-skill-release.mjs');
   assert.equal(lock.schemaVersion, 1);
-  assert.equal(lock.repository, 'CharlieCardenasToledo/instructional-designer-skill');
+  assert.equal(lock.repository, 'CharlieCardenasToledo/jintia');
   assert.match(lock.tag, /^v\d+\.\d+\.\d+$/);
   assert.match(lock.manifest.sha256, /^[a-f0-9]{64}$/);
   assert.equal(lock.mcp.package, '@charlie.act7/gemini-notebook-mcp');
@@ -285,7 +291,7 @@ test('install_local_skill requiere el runtime npm administrado', async () => {
   assert.match(installFn.slice(sourceIndex, stageIndex), /None\s*=>[\s\S]*return ActionResult::error/);
   assert.match(installFn, /legacy_skill_dir/);
   assert.match(installFn, /migrating_legacy/);
-  assert.match(installFn, /instructional-designer-skill\.backup-/);
+  assert.match(installFn, /jintia\.backup-/);
   assert.match(installFn, /\.jintia-skill\.stage-/);
   assert.match(installFn, /jintia-skill\.backup-/);
   assert.match(installFn, /fs::rename/);

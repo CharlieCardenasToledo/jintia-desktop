@@ -3,12 +3,13 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
 const resources = new URL("../src-tauri/resources/", import.meta.url);
+const CANONICAL_REPOSITORY = "CharlieCardenasToledo/jintia";
 const current = JSON.parse(await readFile(new URL("skill.lock.json", root), "utf8"));
 const tagArgument = process.argv.find(argument => argument.startsWith("--tag="));
 const tag = tagArgument?.slice("--tag=".length) || current.tag;
 if (!/^v\d+\.\d+\.\d+$/.test(tag)) throw new Error("Usa --tag=vX.Y.Z");
 
-const base = `https://github.com/${current.repository}/releases/download/${tag}`;
+const base = `https://github.com/${CANONICAL_REPOSITORY}/releases/download/${tag}`;
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 
 async function download(name) {
@@ -35,7 +36,7 @@ if (!/^\d+\.\d+\.\d+$/.test(manifest.skillVersion || "")) {
   throw new Error("El manifest no contiene una versión válida");
 }
 if (tag !== `v${manifest.skillVersion}`) throw new Error("El tag no coincide con la versión del manifest");
-if (manifest.source?.repository !== current.repository) throw new Error("El manifest pertenece a otro repositorio");
+if (manifest.source?.repository !== CANONICAL_REPOSITORY) throw new Error("El manifest no pertenece al repositorio canónico de Jintia");
 if (!manifest.mcp || typeof manifest.mcp !== "object") throw new Error("El manifest no contiene mcp");
 if (typeof manifest.mcp.package !== "string" || manifest.mcp.package.trim() === "") {
   throw new Error("El manifest no contiene mcp.package válido");
@@ -54,7 +55,7 @@ await replace(manifestFile, manifestBytes);
 
 const next = {
   schemaVersion: 1,
-  repository: current.repository,
+  repository: CANONICAL_REPOSITORY,
   tag,
   manifest: { file: manifestFile, sha256: digest(manifestBytes) },
   mcp: manifest.mcp,

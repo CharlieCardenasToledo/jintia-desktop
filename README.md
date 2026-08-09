@@ -5,7 +5,7 @@ preparar sílabos e instalar Jintia Skill para Claude, ChatGPT y Codex.
 
 Este repositorio contiene únicamente la aplicación. La skill se desarrolla y
 publica de forma independiente en
-[`instructional-designer-skill`](https://github.com/CharlieCardenasToledo/instructional-designer-skill).
+[`jintia`](https://github.com/CharlieCardenasToledo/jintia).
 Desktop consume una release inmutable declarada en `skill.lock.json`; durante
 el build verifica el manifest y los SHA-256 antes de incorporar los payloads.
 
