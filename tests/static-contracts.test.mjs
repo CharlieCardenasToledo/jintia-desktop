@@ -80,6 +80,33 @@ test('el build Rust no consume artifacts Skill legacy', async () => {
   assert.match(runtimeDeps, /zip\s*=|zip\s*=/);
 });
 
+test('el smoke de CI ejecuta el engine publicado en npm', async () => {
+  const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
+  const start = workflow.indexOf('- name: Engine contract smoke test');
+  const end = workflow.indexOf('\n      - ', start + 1);
+  const smoke = workflow.slice(start, end < 0 ? workflow.length : end);
+
+  assert.ok(start >= 0);
+  assert.match(smoke, /RUNNER_TEMP/);
+  assert.match(smoke, /jintia-engine-smoke/);
+  assert.match(smoke, /npm install/);
+  assert.match(smoke, /--prefix/);
+  assert.match(smoke, /--no-save/);
+  assert.match(smoke, /--no-audit/);
+  assert.match(smoke, /--no-fund/);
+  assert.match(smoke, /@charlie\.act7\/jintia@latest/);
+  assert.match(smoke, /node_modules\/\@charlie\.act7\/jintia\/skill\/bin\/jintia\.js/);
+  assert.match(smoke, /doctor/);
+  assert.match(smoke, /--json/);
+  assert.doesNotMatch(smoke, /target\/debug\/build|OUT_DIR|out\/jintia-skill|if \[ -f|if test|\|\| true|npx|continue-on-error/);
+
+  assert.match(workflow, /npm run skill:verify/);
+  assert.match(workflow, /npm test/);
+  assert.match(workflow, /npm run build/);
+  assert.match(workflow, /cargo test --manifest-path src-tauri\/Cargo\.toml/);
+  assert.match(workflow, /node-version: 22\.13\.0/);
+});
+
 test('install_local_skill requiere el runtime npm administrado', async () => {
   const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
   const start = payload.indexOf('pub fn install_local_skill()');

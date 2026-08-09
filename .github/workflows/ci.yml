@@ -34,7 +34,16 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - name: Engine contract smoke test
         run: |
-          if [ -f "src-tauri/target/debug/build/jintia-desktop-*/out/jintia-skill/bin/jintia.js" ]; then
-            node src-tauri/target/debug/build/jintia-desktop-*/out/jintia-skill/bin/jintia.js doctor --json
-          fi
+          SMOKE_PREFIX="$RUNNER_TEMP/jintia-engine-smoke"
+          rm -rf "$SMOKE_PREFIX"
+          npm install \
+            --prefix "$SMOKE_PREFIX" \
+            --no-save \
+            --no-audit \
+            --no-fund \
+            @charlie.act7/jintia@latest
+          node \
+            "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/bin/jintia.js" \
+            doctor \
+            --json
         shell: bash
