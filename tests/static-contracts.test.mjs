@@ -107,6 +107,27 @@ test('el smoke de CI ejecuta el engine publicado en npm', async () => {
   assert.match(workflow, /node-version: 22\.13\.0/);
 });
 
+test('skill:verify valida solo el contrato MCP consumido por Desktop', async () => {
+  const checker = await readFile(new URL('scripts/check-skill-release.mjs', root), 'utf8');
+  assert.match(checker, /skill\.lock\.json/);
+  assert.match(checker, /schemaVersion/);
+  assert.match(checker, /manifest/);
+  assert.match(checker, /sha256/);
+  assert.match(checker, /createHash/);
+  assert.match(checker, /repository/);
+  assert.match(checker, /source/);
+  assert.match(checker, /mcp/);
+  assert.match(checker, /package/);
+  assert.match(checker, /version/);
+  assert.match(checker, /JSON\.stringify/);
+  assert.match(checker, /src-tauri\/resources/);
+  assert.match(checker, /Contrato MCP de Desktop/);
+  assert.doesNotMatch(checker, /lock\.tag|lock\.skillVersion|manifest\.skillVersion|\.artifacts|openaiPlugin|compatibility|entry\.bytes|\bstat\s*\(/);
+
+  const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
+  assert.match(workflow, /npm run skill:verify/);
+});
+
 test('install_local_skill requiere el runtime npm administrado', async () => {
   const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
   const start = payload.indexOf('pub fn install_local_skill()');
