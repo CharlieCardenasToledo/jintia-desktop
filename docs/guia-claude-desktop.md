@@ -163,8 +163,9 @@ incluye.
 
 - Confirma que `SKILL.md` está directamente dentro de la carpeta de la skill.
 - Confirma que la carpeta se llama `jintia-skill`.
-- Si conservas una instalación anterior en `jintia`,
-  vuelve a instalar desde Jintia Desktop para migrar la configuración.
+- Si conservas una instalación anterior en
+  `instructional-designer-skill`, vuelve a instalar desde Jintia Desktop
+  para migrarla a `jintia-skill`.
 - Reinicia Claude Code.
 
 ### NotebookLM no autentica

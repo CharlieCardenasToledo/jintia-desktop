@@ -39,8 +39,8 @@ actualizarlos.
 - `.github/workflows/`: CI e instaladores por plataforma.
 
 La instalación conserva configuraciones de usuario, crea respaldos antes de
-reemplazar una instalación y mantiene compatibilidad con la antigua carpeta
-`jintia` durante la migración.
+reemplazar una instalación y mantiene compatibilidad de migración con la antigua
+carpeta histórica de filesystem `instructional-designer-skill`.
 
 ## Persistencia
 

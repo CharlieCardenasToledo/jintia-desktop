@@ -34,7 +34,21 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.match(paths, /\.join\("jintia-skill"\)/);
   assert.match(paths, /legacy_skill_dir/);
   assert.match(payload, /jintia-skill-\{managed_version\}\.zip/);
-  assert.match(payload, /jintia\.backup-/);
+  assert.match(payload, /instructional-designer-skill\.backup-/);
+});
+
+test('la identidad canónica y la ruta legacy permanecen separadas', async () => {
+  const [paths, payload, lockText] = await Promise.all([
+    readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
+    readFile(new URL('skill.lock.json', root), 'utf8'),
+  ]);
+  const lock = JSON.parse(lockText);
+
+  assert.equal(lock.repository, 'CharlieCardenasToledo/jintia');
+  assert.match(paths, /pub fn skill_dir[\s\S]*\.join\("jintia-skill"\)/);
+  assert.match(paths, /pub fn legacy_skill_dir[\s\S]*\.join\("instructional-designer-skill"\)/);
+  assert.match(payload, /instructional-designer-skill\.backup-/);
 });
 
 test('resources conserva solo metadata MCP y no artifacts de Skill', async () => {
@@ -291,7 +305,7 @@ test('install_local_skill requiere el runtime npm administrado', async () => {
   assert.match(installFn.slice(sourceIndex, stageIndex), /None\s*=>[\s\S]*return ActionResult::error/);
   assert.match(installFn, /legacy_skill_dir/);
   assert.match(installFn, /migrating_legacy/);
-  assert.match(installFn, /jintia\.backup-/);
+  assert.match(installFn, /instructional-designer-skill\.backup-/);
   assert.match(installFn, /\.jintia-skill\.stage-/);
   assert.match(installFn, /jintia-skill\.backup-/);
   assert.match(installFn, /fs::rename/);

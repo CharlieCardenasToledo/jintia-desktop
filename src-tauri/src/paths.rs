@@ -101,7 +101,7 @@ pub fn legacy_skill_dir() -> Result<PathBuf, String> {
     Ok(home_dir()?
         .join(".claude")
         .join("skills")
-        .join("jintia"))
+        .join("instructional-designer-skill"))
 }
 
 pub fn installed_skill_dir() -> Result<PathBuf, String> {
