@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
 const resources = new URL("../src-tauri/resources/", import.meta.url);
@@ -31,39 +31,27 @@ await mkdir(resources, { recursive: true });
 const manifestFile = "jintia-release-manifest.json";
 const manifestBytes = await download(manifestFile);
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
+if (!/^\d+\.\d+\.\d+$/.test(manifest.skillVersion || "")) {
+  throw new Error("El manifest no contiene una versión válida");
+}
 if (tag !== `v${manifest.skillVersion}`) throw new Error("El tag no coincide con la versión del manifest");
 if (manifest.source?.repository !== current.repository) throw new Error("El manifest pertenece a otro repositorio");
-
-const artifacts = {};
-for (const key of ["skill", "openaiPlugin"]) {
-  const entry = manifest.artifacts?.[key];
-  if (!entry?.file || !entry?.sha256) throw new Error(`El manifest no contiene artifacts.${key}`);
-  const bytes = await download(entry.file);
-  if (digest(bytes) !== entry.sha256 || bytes.length !== entry.bytes) {
-    throw new Error(`${entry.file} no coincide con el manifest`);
-  }
-  artifacts[key] = { entry, bytes };
+if (!manifest.mcp || typeof manifest.mcp !== "object") throw new Error("El manifest no contiene mcp");
+if (typeof manifest.mcp.package !== "string" || manifest.mcp.package.trim() === "") {
+  throw new Error("El manifest no contiene mcp.package válido");
+}
+if (typeof manifest.mcp.version !== "string" || manifest.mcp.version.trim() === "") {
+  throw new Error("El manifest no contiene mcp.version válido");
 }
 
 await replace(manifestFile, manifestBytes);
-for (const { entry, bytes } of Object.values(artifacts)) await replace(entry.file, bytes);
-for (const entry of Object.values(current.artifacts || {})) {
-  if (entry?.file && !Object.values(manifest.artifacts).some(next => next.file === entry.file)) {
-    await unlink(new URL(entry.file, resources)).catch(error => {
-      if (error.code !== "ENOENT") throw error;
-    });
-  }
-}
 
 const next = {
   schemaVersion: 1,
   repository: current.repository,
   tag,
-  skillVersion: manifest.skillVersion,
-  minimumDesktopVersion: manifest.minimumDesktopVersion,
   manifest: { file: manifestFile, sha256: digest(manifestBytes) },
   mcp: manifest.mcp,
-  artifacts: manifest.artifacts,
 };
 await writeFile(new URL("skill.lock.json", root), `${JSON.stringify(next, null, 2)}\n`);
 console.log(`Jintia Desktop quedó sincronizado con ${tag}. Ejecuta npm run skill:verify y las pruebas.`);

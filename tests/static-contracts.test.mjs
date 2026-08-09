@@ -30,8 +30,7 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.equal(tauri.identifier, 'com.charliecardenas.jintia');
   assert.equal(appPackage.name, 'jintia-desktop');
   assert.equal(brand.brandName, 'Jintia');
-  assert.match(lock.skillVersion, /^\d+\.\d+\.\d+$/);
-  assert.equal(lock.tag, `v${lock.skillVersion}`);
+  assert.match(lock.tag, /^v\d+\.\d+\.\d+$/);
   assert.match(paths, /\.join\("jintia-skill"\)/);
   assert.match(paths, /legacy_skill_dir/);
   assert.match(payload, /jintia-skill-\{managed_version\}\.zip/);
@@ -50,8 +49,11 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   const lock = JSON.parse(lockText);
 
   assert.equal(lock.repository, 'CharlieCardenasToledo/instructional-designer-skill');
-  assert.match(lock.artifacts.skill.sha256, /^[a-f0-9]{64}$/);
-  assert.match(lock.artifacts.openaiPlugin.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(lock.artifacts, undefined);
+  assert.equal(lock.skillVersion, undefined);
+  assert.equal(lock.minimumDesktopVersion, undefined);
+  assert.equal(lock.mcp.package, '@charlie.act7/gemini-notebook-mcp');
+  assert.match(lock.mcp.version, /^\d+\.\d+\.\d+$/);
   assert.doesNotMatch(payload, /\$OUT_DIR\/jintia-skill/);
   assert.match(config, /portable_skill_source_dir/);
   assert.match(config, /themes/);
@@ -126,6 +128,42 @@ test('skill:verify valida solo el contrato MCP consumido por Desktop', async () 
 
   const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
   assert.match(workflow, /npm run skill:verify/);
+});
+
+test('skill:sync sincroniza solo el contrato MCP de Desktop', async () => {
+  const [sync, lockText, packageText] = await Promise.all([
+    readFile(new URL('scripts/sync-skill-release.mjs', root), 'utf8'),
+    readFile(new URL('skill.lock.json', root), 'utf8'),
+    readFile(new URL('package.json', root), 'utf8'),
+  ]);
+  const lock = JSON.parse(lockText);
+  const packageJson = JSON.parse(packageText);
+
+  assert.match(sync, /skill\.lock\.json/);
+  assert.match(sync, /--tag=/);
+  assert.match(sync, /current\.tag/);
+  assert.match(sync, /releases\/download/);
+  assert.match(sync, /jintia-release-manifest\.json/);
+  assert.match(sync, /manifest\.skillVersion/);
+  assert.match(sync, /manifest\.source/);
+  assert.match(sync, /repository/);
+  assert.match(sync, /manifest\.mcp/);
+  assert.match(sync, /createHash/);
+  assert.match(sync, /sha256/);
+  assert.match(sync, /replace\(manifestFile, manifestBytes\)/);
+  assert.match(sync, /writeFile/);
+  assert.doesNotMatch(sync, /manifest\.artifacts|current\.artifacts|openaiPlugin|download\(entry\.file\)|entry\.bytes|Object\.values\(artifacts\)|const artifacts/);
+
+  assert.equal(packageJson.scripts['skill:sync'], 'node scripts/sync-skill-release.mjs');
+  assert.equal(lock.schemaVersion, 1);
+  assert.equal(lock.repository, 'CharlieCardenasToledo/instructional-designer-skill');
+  assert.match(lock.tag, /^v\d+\.\d+\.\d+$/);
+  assert.match(lock.manifest.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(lock.mcp.package, '@charlie.act7/gemini-notebook-mcp');
+  assert.match(lock.mcp.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(lock.skillVersion, undefined);
+  assert.equal(lock.minimumDesktopVersion, undefined);
+  assert.equal(lock.artifacts, undefined);
 });
 
 test('install_local_skill requiere el runtime npm administrado', async () => {
@@ -701,7 +739,7 @@ test('Entorno ofrece perfiles visuales desde el runtime npm sin instalación aut
   ]);
   const lock = JSON.parse(lockText);
   assert.equal(lock.schemaVersion, 1);
-  assert.equal(lock.minimumDesktopVersion, '1.1.0');
+  assert.equal(lock.minimumDesktopVersion, undefined);
   assert.match(api, /getVisualInstallProfiles/);
   assert.match(lib, /get_visual_install_profiles/);
   assert.match(lib, /runtimes::visual_install_profiles/);
@@ -994,8 +1032,7 @@ test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () 
     readFile(new URL("src/api.js", root), "utf8"),
   ]);
   const lock = JSON.parse(lockText);
-  assert.equal(lock.tag, `v${lock.skillVersion}`);
-  assert.equal(lock.artifacts.openaiPlugin.installRoot, "jintia");
+  assert.match(lock.tag, /^v\d+\.\d+\.\d+$/);
   assert.equal(lock.mcp.package, "@charlie.act7/gemini-notebook-mcp");
   assert.equal(lock.mcp.version, "2.3.3");
   assert.match(payload, /materialize_openai_plugin/);

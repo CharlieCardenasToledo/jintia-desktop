@@ -2,8 +2,6 @@
   "schemaVersion": 1,
   "repository": "CharlieCardenasToledo/instructional-designer-skill",
   "tag": "v11.6.1",
-  "skillVersion": "11.6.1",
-  "minimumDesktopVersion": "1.1.0",
   "manifest": {
     "file": "jintia-release-manifest.json",
     "sha256": "781820a86e1a171ab8712d5edbfbf11f4045824c4d6435690559ac6efa1ce430"
@@ -13,19 +11,5 @@
     "version": "2.3.3",
     "node": ">=22.13.0",
     "npmIntegrity": "sha512-+USWTG9F07fWz6qxamEXk16Btt6ME/KJxihZJPCB5ODVoNRnxx9cPOAyujcHF4bHvzDRkLrhKtvKBzbs+nzjeA=="
-  },
-  "artifacts": {
-    "skill": {
-      "file": "jintia-skill-11.6.1.zip",
-      "sha256": "b4fc0e3b81b6ee907cde6a31814afbb1558d4e7a667c01a1d890696b9aa27c1b",
-      "bytes": 190430,
-      "installRoot": "jintia-skill"
-    },
-    "openaiPlugin": {
-      "file": "jintia-openai-plugin-11.6.1.zip",
-      "sha256": "4aa00a183bc002818f150251b176a368c5c16746396f404e24ec36d421965389",
-      "bytes": 195412,
-      "installRoot": "jintia"
-    }
   }
 }
