@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
 const resources = new URL("../src-tauri/resources/", import.meta.url);

@@ -152,6 +152,15 @@ test('skill:sync sincroniza solo el contrato MCP de Desktop', async () => {
   assert.match(sync, /sha256/);
   assert.match(sync, /replace\(manifestFile, manifestBytes\)/);
   assert.match(sync, /writeFile/);
+  assert.match(sync, /import\s*\{[^}]*\bunlink\b[^}]*\}\s*from\s*"node:fs\/promises"/s);
+  const replaceStart = sync.indexOf('async function replace(');
+  const replaceEnd = sync.indexOf('\n}\n', replaceStart);
+  const replaceFn = sync.slice(replaceStart, replaceEnd + 2);
+  assert.match(replaceFn, /writeFile/);
+  assert.match(replaceFn, /unlink/);
+  assert.match(replaceFn, /rename/);
+  assert.ok(replaceFn.indexOf('writeFile') < replaceFn.indexOf('unlink'));
+  assert.ok(replaceFn.indexOf('unlink') < replaceFn.indexOf('rename'));
   assert.doesNotMatch(sync, /manifest\.artifacts|current\.artifacts|openaiPlugin|download\(entry\.file\)|entry\.bytes|Object\.values\(artifacts\)|const artifacts/);
 
   assert.equal(packageJson.scripts['skill:sync'], 'node scripts/sync-skill-release.mjs');
