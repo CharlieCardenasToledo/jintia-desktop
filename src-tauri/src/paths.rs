@@ -394,10 +394,6 @@ pub fn portable_notebooklm_mcp_package_dir() -> PathBuf {
         .join("gemini-notebook-mcp")
 }
 
-pub fn portable_notebooklm_mcp_entrypoint() -> PathBuf {
-    portable_notebooklm_mcp_package_dir().join("dist").join("index.js")
-}
-
 pub fn portable_notebooklm_mcp_lock() -> PathBuf {
     portable_notebooklm_mcp_prefix().join("package-lock.json")
 }

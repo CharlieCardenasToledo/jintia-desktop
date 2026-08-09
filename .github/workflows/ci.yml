@@ -47,3 +47,5 @@ jobs:
             doctor \
             --json
         shell: bash
+      - name: NotebookLM MCP browser contract smoke
+        run: node scripts/smoke-notebooklm-browser.mjs

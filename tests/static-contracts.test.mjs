@@ -63,18 +63,18 @@ test('resources conserva solo metadata MCP y no artifacts de Skill', async () =>
   assert.match(attributes, /skill\.lock\.json text eol=lf/);
 });
 
-test('NotebookLM MCP ejecuta el entrypoint instalado con el Node administrado', async () => {
-  const [paths, mcp, runtimes] = await Promise.all([
+test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
+  const [paths, mcp, runtimes, smoke] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('scripts/smoke-notebooklm-browser.mjs', root), 'utf8'),
   ]);
   assert.match(paths, /portable_node_exe/);
   assert.match(paths, /portable_npm_cli/);
   assert.match(paths, /portable_notebooklm_mcp_prefix/);
   assert.match(paths, /portable_notebooklm_mcp_package_dir/);
   assert.match(paths, /portable_notebooklm_mcp_lock/);
-  assert.match(paths, /portable_notebooklm_mcp_entrypoint/);
   const npxStart = paths.indexOf('pub fn portable_npm_cli()');
   const npxEnd = paths.indexOf('\npub fn', npxStart + 1);
   const npxFn = paths.slice(npxStart, npxEnd < 0 ? paths.length : npxEnd);
@@ -86,7 +86,15 @@ test('NotebookLM MCP ejecuta el entrypoint instalado con el Node administrado', 
 
   assert.match(mcp, /fn managed_mcp/);
   assert.match(mcp, /portable_node_exe/);
-  assert.match(mcp, /portable_notebooklm_mcp_entrypoint/);
+  assert.match(runtimes, /resolve_notebooklm_mcp_bin/);
+  assert.match(runtimes, /browser/);
+  assert.match(runtimes, /install/);
+  assert.match(runtimes, /status/);
+  assert.match(runtimes, /rollback|backup/);
+  assert.match(smoke, /skill\.lock\.json/);
+  assert.match(smoke, /browser/);
+  assert.match(smoke, /installed/);
+  assert.match(smoke, /hermetic/);
   assert.match(mcp, /NOTEBOOKLM_MCP_NODE_REQUIREMENT/);
   assert.match(mcp, /NOTEBOOKLM_MCP_NPM_INTEGRITY/);
   assert.match(runtimes, /install_notebooklm_mcp/);
@@ -115,7 +123,7 @@ test('NotebookLM MCP ejecuta el entrypoint instalado con el Node administrado', 
     const fn = mcp.slice(start, end < 0 ? mcp.length : end);
     assert.match(fn, /managed_mcp/);
     assert.match(fn, /managed\.node/);
-    assert.match(fn, /managed\.entrypoint/);
+    assert.match(fn, /managed\.bin/);
     assert.ok(fn.indexOf('managed_mcp') < fn.indexOf('backup_file'));
     assert.ok(fn.indexOf('managed_mcp') < fn.indexOf('atomic_write'));
     assert.ok(name);
@@ -126,7 +134,8 @@ test('NotebookLM MCP ejecuta el entrypoint instalado con el Node administrado', 
   const spawnFn = mcp.slice(spawnStart, spawnEnd < 0 ? mcp.length : spawnEnd);
   assert.match(spawnFn, /managed_mcp/);
   assert.match(spawnFn, /Command::new\(&managed\.node\)/);
-  assert.match(spawnFn, /\.arg\(&managed\.entrypoint\)/);
+  assert.match(spawnFn, /\.arg\(&managed\.bin\)/);
+  assert.doesNotMatch(`${paths}\n${runtimes}\n${mcp}`, /dist\/(?:index|cli)\.js|patchright|\.local-browsers|PLAYWRIGHT_BROWSERS_PATH/);
 });
 
 test('la arquitectura separa la app de escritorio y el paquete instalable de la skill', async () => {

@@ -175,7 +175,7 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         required: true,
         installable: true,
         note: "Servidor MCP administrado para consultar fuentes de NotebookLM.".to_string(),
-        command: "node dist/index.js".to_string(),
+        command: "managed Node + bin público del MCP".to_string(),
     });
 
     let latex = command_exists("pdflatex") && command_exists("biber");

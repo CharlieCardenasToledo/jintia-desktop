@@ -29,12 +29,11 @@ static MCP_CONFIG_OPERATION: Mutex<()> = Mutex::new(());
 
 struct ManagedMcp {
     node: PathBuf,
-    entrypoint: PathBuf,
+    bin: PathBuf,
 }
 
 fn managed_mcp() -> Result<ManagedMcp, String> {
     let node = crate::paths::portable_node_exe();
-    let entrypoint = crate::paths::portable_notebooklm_mcp_entrypoint();
     if !node.is_file() {
         return Err("NotebookLM MCP requiere el Node.js administrado por Jintia.".to_string());
     }
@@ -42,10 +41,10 @@ fn managed_mcp() -> Result<ManagedMcp, String> {
         return Err("NotebookLM MCP no está instalado o no coincide con el contrato aprobado.".to_string());
     }
     validate_managed_node(&node)?;
-    if !entrypoint.is_file() {
-        return Err("La instalación administrada de NotebookLM MCP no contiene dist/index.js.".to_string());
-    }
-    Ok(ManagedMcp { node, entrypoint })
+    let bin = crate::runtimes::resolve_notebooklm_mcp_bin(
+        &crate::paths::portable_notebooklm_mcp_package_dir(),
+    )?;
+    Ok(ManagedMcp { node, bin })
 }
 
 fn managed_node_version(node: &std::path::Path) -> Result<Version, String> {
@@ -140,7 +139,7 @@ pub fn configure_mcp(target: String) -> ActionResult {
     root["mcpServers"]["notebooklm"] = json!({
         "command": managed.node.to_string_lossy(),
         "args": [
-            managed.entrypoint.to_string_lossy()
+            managed.bin.to_string_lossy()
         ]
     });
     if root == previous {
@@ -262,7 +261,7 @@ pub fn configure_codex_mcp() -> ActionResult {
     doc["mcp_servers"]["notebooklm"]["command"] =
         toml_edit::value(managed.node.to_string_lossy().into_owned());
     let mut args = toml_edit::Array::new();
-    args.push(managed.entrypoint.to_string_lossy().into_owned());
+    args.push(managed.bin.to_string_lossy().into_owned());
     doc["mcp_servers"]["notebooklm"]["args"] = toml_edit::value(args);
 
     let next = doc.to_string();
@@ -356,7 +355,7 @@ impl McpConnection {
     fn spawn() -> Result<Self, String> {
         let managed = managed_mcp()?;
         let mut child = Command::new(&managed.node)
-            .arg(&managed.entrypoint)
+            .arg(&managed.bin)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -934,7 +933,8 @@ mod tests {
         let text = fs::read_to_string(dir.join("config.toml")).unwrap();
         assert!(text.contains("model = \"gpt-5.6-luna\""), "preserva claves ajenas");
         assert!(text.contains("[projects.'D:\\Curso']"), "preserva otras tablas");
-        assert!(text.contains("dist/index.js"));
+        assert!(text.contains("[mcp_servers.notebooklm]"));
+        assert!(!text.contains(&format!("dist/{}", "index.js")));
         assert!(text.contains(NOTEBOOKLM_MCP_PACKAGE));
         assert!(!text.contains("notebooklm-mcp@latest"), "reemplaza el paquete viejo en notebooklm");
         assert!(text.contains("[mcp_servers.gemini-notebook]"), "no toca el servidor duplicado, solo avisa");
