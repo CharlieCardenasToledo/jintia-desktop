@@ -76,6 +76,10 @@ test('NotebookLM MCP ejecuta el entrypoint instalado con el Node administrado', 
   assert.match(mcp, /NOTEBOOKLM_MCP_NODE_REQUIREMENT/);
   assert.match(mcp, /NOTEBOOKLM_MCP_NPM_INTEGRITY/);
   assert.match(runtimes, /install_notebooklm_mcp/);
+  assert.match(runtimes, /notebooklm_lock_entry/);
+  assert.match(runtimes, /NOTEBOOKLM_MCP_PACKAGE_NAME/);
+  assert.match(runtimes, /get\("packages"\)/);
+  assert.doesNotMatch(runtimes, /pointer\(\s*"\/packages\/node_modules\/@charlie\.act7\/gemini-notebook-mcp/s);
   assert.match(runtimes, /package-lock\.json/);
   assert.match(runtimes, /package-lock-only/);
   assert.match(runtimes, /npmIntegrity|NPM_INTEGRITY/);

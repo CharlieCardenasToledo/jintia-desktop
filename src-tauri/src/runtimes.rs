@@ -707,6 +707,11 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
 
 // ==================== NPM PACKAGES ====================
 
+fn notebooklm_lock_entry<'a>(lock: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+    let key = format!("node_modules/{}", crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME);
+    lock.get("packages")?.get(&key)
+}
+
 pub fn portable_notebooklm_mcp_installed() -> bool {
     let package = paths::portable_notebooklm_mcp_package_dir().join("package.json");
     let lock = paths::portable_notebooklm_mcp_lock();
@@ -716,7 +721,9 @@ pub fn portable_notebooklm_mcp_installed() -> bool {
     let Ok(lock) = serde_json::from_str::<serde_json::Value>(&lock) else { return false; };
     package.get("name").and_then(|v| v.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME)
         && package.get("version").and_then(|v| v.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_VERSION)
-        && lock.pointer("/packages/node_modules/@charlie.act7/gemini-notebook-mcp/integrity").and_then(|v| v.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_NPM_INTEGRITY)
+        && notebooklm_lock_entry(&lock)
+            .and_then(|entry| entry.get("integrity"))
+            .and_then(|value| value.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_NPM_INTEGRITY)
         && paths::portable_notebooklm_mcp_entrypoint().is_file()
 }
 
@@ -740,7 +747,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
         };
         run(&["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"])?;
         let lock: serde_json::Value = serde_json::from_slice(&fs::read(stage.join("package-lock.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        let entry = lock.pointer("/packages/node_modules/@charlie.act7/gemini-notebook-mcp").ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
+        let entry = notebooklm_lock_entry(&lock).ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
         if entry.get("version").and_then(|v| v.as_str()) != Some(crate::mcp::NOTEBOOKLM_MCP_VERSION) || entry.get("integrity").and_then(|v| v.as_str()) != Some(crate::mcp::NOTEBOOKLM_MCP_NPM_INTEGRITY) { return Err("El integrity de NotebookLM MCP no coincide con el contrato aprobado.".to_string()); }
         run(&["ci", "--ignore-scripts", "--no-audit", "--no-fund"])?;
         if !stage.join("node_modules/@charlie.act7/gemini-notebook-mcp/dist/index.js").is_file() { return Err("La instalación de NotebookLM MCP no contiene dist/index.js.".to_string()); }
@@ -753,6 +760,33 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
     })();
     if result.is_err() { let _ = fs::remove_dir_all(&stage); }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::notebooklm_lock_entry;
+
+    #[test]
+    fn notebooklm_lock_entry_resolves_scoped_package() {
+        let lock = serde_json::json!({
+            "lockfileVersion": 3,
+            "packages": {
+                "node_modules/@charlie.act7/gemini-notebook-mcp": {
+                    "version": "2.3.3",
+                    "integrity": "sha512-test"
+                }
+            }
+        });
+        let entry = notebooklm_lock_entry(&lock).expect("debe resolver la clave scoped completa");
+        assert_eq!(entry.get("version").and_then(|value| value.as_str()), Some("2.3.3"));
+        assert_eq!(entry.get("integrity").and_then(|value| value.as_str()), Some("sha512-test"));
+    }
+
+    #[test]
+    fn notebooklm_lock_entry_returns_none_when_package_is_missing() {
+        let lock = serde_json::json!({ "packages": {} });
+        assert!(notebooklm_lock_entry(&lock).is_none());
+    }
 }
 
 fn npm_exe() -> Option<std::path::PathBuf> {
