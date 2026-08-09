@@ -4,8 +4,6 @@ use crate::paths::{
     installed_skill_dir, legacy_skill_dir, openai_marketplace_path, openai_plugin_dir, path_text,
     skill_dir, timestamp,
 };
-pub use crate::release::SKILL_VERSION;
-use include_dir::{include_dir, Dir};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
@@ -13,32 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zip::write::SimpleFileOptions;
 
-const SKILL_MD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/SKILL.md"));
-const LICENSE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/LICENSE"));
-const REQUIREMENTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/requirements.txt"));
-const SKILL_PACKAGE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/package.json"));
-static REFERENCES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/references");
-static SCRIPTS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/scripts");
-static RUNTIME: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/runtime");
-static THEMES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/themes");
-static CONFIG: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/config");
-static AGENTS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/agents");
-static COMMANDS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/commands");
-static BIN: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/bin");
-static RULES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/rules");
-static SCHEMAS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/schemas");
 static PAYLOAD_OPERATION: Mutex<()> = Mutex::new(());
-
-fn write_embedded_dir(dir: &Dir<'_>, target: &Path) -> Result<(), String> {
-    for entry in dir.files() {
-        let destination = target.join(entry.path());
-        atomic_write(&destination, entry.contents())?;
-    }
-    for child in dir.dirs() {
-        write_embedded_dir(child, target)?;
-    }
-    Ok(())
-}
 
 fn read_valid_json(path: &Path) -> Option<Vec<u8>> {
     let bytes = fs::read(path).ok()?;
@@ -50,79 +23,6 @@ fn user_config(name: &str, installed: Option<&Path>) -> Option<Vec<u8>> {
     let manager_path = app_config_dir().ok()?.join(name);
     read_valid_json(&manager_path)
         .or_else(|| installed.and_then(|root| read_valid_json(&root.join("config").join(name))))
-}
-
-fn materialize_payload(target: &Path, installed: Option<&Path>) -> Result<(), String> {
-    fs::create_dir_all(target)
-        .map_err(|error| format!("No se pudo crear {}: {error}", target.display()))?;
-    atomic_write(&target.join("SKILL.md"), SKILL_MD)?;
-    atomic_write(&target.join("LICENSE"), LICENSE)?;
-    atomic_write(&target.join("requirements.txt"), REQUIREMENTS)?;
-    atomic_write(&target.join("package.json"), SKILL_PACKAGE_JSON)?;
-    atomic_write(&target.join("VERSION"), SKILL_VERSION.as_bytes())?;
-    write_embedded_dir(&REFERENCES, &target.join("references"))?;
-    write_embedded_dir(&SCRIPTS, &target.join("scripts"))?;
-    write_embedded_dir(&RUNTIME, &target.join("runtime"))?;
-    write_embedded_dir(&THEMES, &target.join("themes"))?;
-    write_embedded_dir(&CONFIG, &target.join("config"))?;
-    write_embedded_dir(&AGENTS, &target.join("agents"))?;
-    write_embedded_dir(&COMMANDS, &target.join("commands"))?;
-    write_embedded_dir(&BIN, &target.join("bin"))?;
-    write_embedded_dir(&RULES, &target.join("rules"))?;
-    write_embedded_dir(&SCHEMAS, &target.join("schemas"))?;
-
-    for name in ["institution.json", "notebooks.json"] {
-        if let Some(bytes) = user_config(name, installed) {
-            atomic_write(&target.join("config").join(name), &bytes)?;
-        }
-    }
-    Ok(())
-}
-
-fn embedded_dir_matches(
-    dir: &Dir<'_>,
-    target: &Path,
-    installed: &Path,
-    preserve_user_config: bool,
-) -> bool {
-    let files_match = dir.files().all(|file| {
-        let name = file.path().file_name().and_then(|value| value.to_str());
-        let expected = if preserve_user_config
-            && matches!(name, Some("institution.json" | "notebooks.json"))
-        {
-            name.and_then(|name| user_config(name, Some(installed)))
-                .unwrap_or_else(|| file.contents().to_vec())
-        } else {
-            file.contents().to_vec()
-        };
-        fs::read(target.join(file.path()))
-            .ok()
-            .is_some_and(|actual| actual == expected)
-    });
-    files_match
-        && dir
-            .dirs()
-            .all(|child| embedded_dir_matches(child, target, installed, preserve_user_config))
-}
-
-fn installed_payload_matches(target: &Path) -> bool {
-    fs::read(target.join("SKILL.md")).ok().as_deref() == Some(SKILL_MD)
-        && fs::read(target.join("LICENSE")).ok().as_deref() == Some(LICENSE)
-        && fs::read(target.join("requirements.txt")).ok().as_deref() == Some(REQUIREMENTS)
-        && fs::read(target.join("package.json")).ok().as_deref() == Some(SKILL_PACKAGE_JSON)
-        && fs::read_to_string(target.join("VERSION"))
-            .ok()
-            .is_some_and(|version| version.trim() == SKILL_VERSION)
-        && embedded_dir_matches(&REFERENCES, &target.join("references"), target, false)
-        && embedded_dir_matches(&SCRIPTS, &target.join("scripts"), target, false)
-        && embedded_dir_matches(&RUNTIME, &target.join("runtime"), target, false)
-        && embedded_dir_matches(&THEMES, &target.join("themes"), target, false)
-        && embedded_dir_matches(&CONFIG, &target.join("config"), target, true)
-        && embedded_dir_matches(&AGENTS, &target.join("agents"), target, false)
-        && embedded_dir_matches(&COMMANDS, &target.join("commands"), target, false)
-        && embedded_dir_matches(&BIN, &target.join("bin"), target, false)
-        && embedded_dir_matches(&RULES, &target.join("rules"), target, false)
-        && embedded_dir_matches(&SCHEMAS, &target.join("schemas"), target, false)
 }
 
 fn files_match(source: &Path, target: &Path) -> bool {

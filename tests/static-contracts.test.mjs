@@ -34,7 +34,6 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.equal(lock.tag, `v${lock.skillVersion}`);
   assert.match(paths, /\.join\("jintia-skill"\)/);
   assert.match(paths, /legacy_skill_dir/);
-  assert.match(payload, /SKILL_VERSION/);
   assert.match(payload, /jintia-skill-\{managed_version\}\.zip/);
   assert.match(payload, /instructional-designer-skill\.backup-/);
 });
@@ -53,7 +52,7 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   assert.equal(lock.repository, 'CharlieCardenasToledo/instructional-designer-skill');
   assert.match(lock.artifacts.skill.sha256, /^[a-f0-9]{64}$/);
   assert.match(lock.artifacts.openaiPlugin.sha256, /^[a-f0-9]{64}$/);
-  assert.match(payload, /\$OUT_DIR\/jintia-skill/);
+  assert.doesNotMatch(payload, /\$OUT_DIR\/jintia-skill/);
   assert.match(config, /portable_skill_source_dir/);
   assert.match(config, /themes/);
   assert.match(build, /skill\.lock\.json/);
@@ -915,8 +914,8 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
     readFile(new URL("src/onboarding.js", root), "utf8"),
     readFile(new URL("src/pages/settings.js", root), "utf8"),
   ]);
-  assert.match(payload, /pub use crate::release::SKILL_VERSION/);
   assert.match(payload, /pub fn skill_is_current/);
+  assert.match(payload, /installed_portable_matches/);
   assert.match(models, /skill_current/);
   assert.match(onboarding, /Paquete listo para importar en Claude/);
   assert.match(settings, /Skill desactualizada/);
@@ -942,18 +941,23 @@ test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () 
   assert.match(api, /installOpenAIPlugin/);
 });
 
-test('el paquete OpenAI incluye los contratos agents de la skill', async () => {
+test('el paquete OpenAI conserva su fuente npm administrada', async () => {
   const payload = await readFile(new URL("src-tauri/src/payload.rs", root), "utf8");
-  assert.match(payload, /static AGENTS/);
-  assert.match(payload, /target\.join\("agents"\)/);
+  assert.match(payload, /portable_openai_plugin_sources/);
+  assert.match(payload, /materialize_openai_plugin_from_portable/);
 });
 
-test('los payloads incluyen el runtime autocontenido de la release', async () => {
+test('payload.rs no incorpora una Skill embebida', async () => {
   const payload = await readFile(new URL("src-tauri/src/payload.rs", root), "utf8");
-  assert.match(payload, /static RUNTIME/);
-  assert.match(payload, /SKILL_PACKAGE_JSON/);
-  assert.match(payload, /target\.join\("runtime"\)/);
-  assert.match(payload, /target\.join\("package\.json"\)/);
+  const cargo = await readFile(new URL("src-tauri/Cargo.toml", root), "utf8");
+  assert.doesNotMatch(payload, /include_dir|include_bytes!|\$OUT_DIR\/jintia-skill/);
+  assert.doesNotMatch(payload, /SKILL_MD|SKILL_PACKAGE_JSON|materialize_payload|write_embedded_dir|embedded_dir_matches|installed_payload_matches/);
+  assert.doesNotMatch(cargo, /include_dir/);
+  assert.match(payload, /portable_openai_plugin_sources/);
+  assert.match(payload, /portable_skill_src/);
+  assert.match(payload, /installed_portable_matches/);
+  assert.match(payload, /portable_skill_export_source/);
+  assert.match(payload, /copy_dir_all/);
   assert.match(payload, /add_fs_dir_to_zip\(&mut zip, &skill_src/);
 });
 
