@@ -57,11 +57,27 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   assert.match(config, /themes/);
   assert.match(build, /skill\.lock\.json/);
   assert.match(build, /fn verify/);
-  assert.match(build, /enclosed_name/);
+  assert.doesNotMatch(build, /ZipArchive|fn extract\(|enclosed_name|io::copy|\/artifacts|skill_file|plugin_file|SKILL_VERSION|\/skillVersion|jintia-skill|openaiPlugin/);
 
   for (const source of [payload, config, build, windowsWorkflow, macosWorkflow]) {
     assert.doesNotMatch(source, /\.\.\/\.\.\/\.\.\/skill|app\/desktop/);
   }
+});
+
+test('el build Rust no consume artifacts Skill legacy', async () => {
+  const [build, cargo] = await Promise.all([
+    readFile(new URL('src-tauri/build.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/Cargo.toml', root), 'utf8'),
+  ]);
+  const buildDeps = cargo.slice(cargo.indexOf('[build-dependencies]'), cargo.indexOf('[dependencies]'));
+  const runtimeDeps = cargo.slice(cargo.indexOf('[dependencies]'));
+  assert.match(build, /skill\.lock\.json|manifest_file/);
+  assert.match(build, /\/manifest\/file|\/manifest\/sha256/);
+  assert.match(build, /\/mcp\/package|\/mcp\/version|source\/repository/);
+  assert.match(build, /NOTEBOOKLM_MCP_PACKAGE|skill_release\.rs|fn verify|sha256/);
+  assert.doesNotMatch(build, /ZipArchive|fn extract\(|enclosed_name|io::copy|\/artifacts\/skill|\/artifacts\/openaiPlugin|skill_file|plugin_file|out_dir\.join\("jintia-skill"\)|out_dir\.join\("jintia"\)|SKILL_VERSION|\/skillVersion/);
+  assert.doesNotMatch(buildDeps, /zip\s*=/);
+  assert.match(runtimeDeps, /zip\s*=|zip\s*=/);
 });
 
 test('install_local_skill requiere el runtime npm administrado', async () => {
