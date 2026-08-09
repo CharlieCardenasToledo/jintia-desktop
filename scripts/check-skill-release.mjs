@@ -37,6 +37,7 @@ if (!/^[a-f0-9]{64}$/.test(manifestSha256)) {
 }
 const mcpPackage = requiredString(lock.mcp, "package");
 const mcpVersion = requiredString(lock.mcp, "version");
+const mcpNode = requiredString(lock.mcp, "node");
 
 const manifestBytes = await readVerifiedManifest({ file: manifestFile, sha256: manifestSha256 });
 let manifest;

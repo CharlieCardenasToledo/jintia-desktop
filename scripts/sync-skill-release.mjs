@@ -43,6 +43,9 @@ if (typeof manifest.mcp.package !== "string" || manifest.mcp.package.trim() === 
 if (typeof manifest.mcp.version !== "string" || manifest.mcp.version.trim() === "") {
   throw new Error("El manifest no contiene mcp.version válido");
 }
+if (typeof manifest.mcp.node !== "string" || manifest.mcp.node.trim() === "") {
+  throw new Error("El manifest no contiene mcp.node válido");
+}
 
 await replace(manifestFile, manifestBytes);
 

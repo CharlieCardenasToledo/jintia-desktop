@@ -78,9 +78,13 @@ fn main() {
     );
     let package = required(&lock, "/mcp/package");
     let version = required(&lock, "/mcp/version");
+    let node_requirement = required(&lock, "/mcp/node");
+    semver::VersionReq::parse(node_requirement)
+        .unwrap_or_else(|error| panic!("/mcp/node inválido: {error}"));
     let generated = format!(
-        "pub const NOTEBOOKLM_MCP_PACKAGE: &str = {};\n",
+        "pub const NOTEBOOKLM_MCP_PACKAGE: &str = {};\npub const NOTEBOOKLM_MCP_NODE_REQUIREMENT: &str = {};\n",
         quoted(&format!("{package}@{version}")),
+        quoted(node_requirement),
     );
     fs::write(out_dir.join("skill_release.rs"), generated)
         .expect("No se pudo generar el contrato Rust de la release");

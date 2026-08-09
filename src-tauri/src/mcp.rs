@@ -1,5 +1,5 @@
 use crate::models::{ActionResult, NotebookLmAuthStatus, NotebookLmEntry};
-pub use crate::release::NOTEBOOKLM_MCP_PACKAGE;
+pub use crate::release::{NOTEBOOKLM_MCP_NODE_REQUIREMENT, NOTEBOOKLM_MCP_PACKAGE};
 use crate::paths::{
     atomic_write, backup_file, claude_code_config_path, claude_desktop_config_path, path_text,
 };
@@ -12,6 +12,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use semver::{Version, VersionReq};
 
 const AUTH_STATE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const AUTH_VALIDATION_TTL: Duration = Duration::from_secs(5 * 60);
@@ -34,7 +35,37 @@ fn managed_npx() -> Result<ManagedNpx, String> {
     if !cli.is_file() {
         return Err("El runtime Node.js administrado no contiene npx-cli.js.".to_string());
     }
+    validate_managed_node(&node)?;
     Ok(ManagedNpx { node, cli })
+}
+
+fn managed_node_version(node: &std::path::Path) -> Result<Version, String> {
+    let output = Command::new(node)
+        .arg("--version")
+        .output()
+        .map_err(|error| format!("No se pudo consultar el Node administrado: {error}"))?;
+    if !output.status.success() {
+        return Err("El Node administrado no pudo informar su versión.".to_string());
+    }
+    parse_node_version(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_node_version(text: &str) -> Result<Version, String> {
+    let version = text.trim().trim_start_matches('v');
+    Version::parse(version).map_err(|error| format!("Versión inválida del Node administrado: {error}"))
+}
+
+fn validate_managed_node(node: &std::path::Path) -> Result<(), String> {
+    let requirement = VersionReq::parse(NOTEBOOKLM_MCP_NODE_REQUIREMENT)
+        .map_err(|error| format!("Requisito Node inválido para NotebookLM MCP: {error}"))?;
+    let version = managed_node_version(node)?;
+    if !requirement.matches(&version) {
+        return Err(format!(
+            "NotebookLM MCP requiere Node {}, pero Jintia administra Node {}.",
+            NOTEBOOKLM_MCP_NODE_REQUIREMENT, version
+        ));
+    }
+    Ok(())
 }
 
 pub fn configure_mcp(target: String) -> ActionResult {
@@ -900,7 +931,8 @@ mod tests {
         let text = fs::read_to_string(dir.join("config.toml")).unwrap();
         assert!(text.contains("model = \"gpt-5.6-luna\""), "preserva claves ajenas");
         assert!(text.contains("[projects.'D:\\Curso']"), "preserva otras tablas");
-        assert!(text.contains(&format!("args = [\"-y\", \"{NOTEBOOKLM_MCP_PACKAGE}\"]")));
+        assert!(text.contains("npx-cli.js"));
+        assert!(text.contains(NOTEBOOKLM_MCP_PACKAGE));
         assert!(!text.contains("notebooklm-mcp@latest"), "reemplaza el paquete viejo en notebooklm");
         assert!(text.contains("[mcp_servers.gemini-notebook]"), "no toca el servidor duplicado, solo avisa");
 
@@ -913,5 +945,16 @@ mod tests {
             Some(value) => std::env::set_var("CODEX_HOME", value),
             None => std::env::remove_var("CODEX_HOME"),
         }
+    }
+
+    #[test]
+    fn managed_node_versions_match_mcp_requirement() {
+        let requirement = VersionReq::parse(">=22.13.0").unwrap();
+        for version in ["v22.13.0", "22.14.0", "v23.0.0"] {
+            assert!(requirement.matches(&parse_node_version(version).unwrap()));
+        }
+        assert!(!requirement.matches(&parse_node_version("v22.12.0").unwrap()));
+        assert!(parse_node_version("not-a-version").is_err());
+        assert!(VersionReq::parse("not-a-range").is_err());
     }
 }

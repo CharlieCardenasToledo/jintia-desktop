@@ -68,6 +68,11 @@ test('NotebookLM MCP ejecuta npx-cli con el Node administrado', async () => {
   assert.match(mcp, /fn managed_npx/);
   assert.match(mcp, /portable_node_exe/);
   assert.match(mcp, /portable_npx_cli/);
+  assert.match(mcp, /NOTEBOOKLM_MCP_NODE_REQUIREMENT/);
+  assert.match(mcp, /--version/);
+  assert.match(mcp, /Version::parse/);
+  assert.match(mcp, /VersionReq::parse/);
+  assert.match(mcp, /matches/);
   assert.match(mcp, /is_file/);
   assert.match(mcp, /NOTEBOOKLM_MCP_PACKAGE/);
   assert.doesNotMatch(mcp, /portable_npx_bin|fn npx_command|Command::new\("node"\)|Command::new\("npx"\)|Command::new\("npx\.cmd"\)|toml_edit::value\("npx"\)/);
@@ -135,7 +140,7 @@ test('el build Rust no consume artifacts Skill legacy', async () => {
   assert.match(build, /skill\.lock\.json|manifest_file/);
   assert.match(build, /\/manifest\/file|\/manifest\/sha256/);
   assert.match(build, /\/mcp\/package|\/mcp\/version|source\/repository/);
-  assert.match(build, /NOTEBOOKLM_MCP_PACKAGE|skill_release\.rs|fn verify|sha256/);
+  assert.match(build, /\/mcp\/node|VersionReq|NOTEBOOKLM_MCP_NODE_REQUIREMENT|NOTEBOOKLM_MCP_PACKAGE|skill_release\.rs|fn verify|sha256/);
   assert.doesNotMatch(build, /ZipArchive|fn extract\(|enclosed_name|io::copy|\/artifacts\/skill|\/artifacts\/openaiPlugin|skill_file|plugin_file|out_dir\.join\("jintia-skill"\)|out_dir\.join\("jintia"\)|SKILL_VERSION|\/skillVersion/);
   assert.doesNotMatch(buildDeps, /zip\s*=/);
   assert.match(runtimeDeps, /zip\s*=|zip\s*=/);
@@ -180,6 +185,7 @@ test('skill:verify valida solo el contrato MCP consumido por Desktop', async () 
   assert.match(checker, /mcp/);
   assert.match(checker, /package/);
   assert.match(checker, /version/);
+  assert.match(checker, /requiredString\(lock\.mcp, "node"\)/);
   assert.match(checker, /JSON\.stringify/);
   assert.match(checker, /src-tauri\/resources/);
   assert.match(checker, /Contrato MCP de Desktop/);
@@ -207,6 +213,12 @@ test('skill:sync sincroniza solo el contrato MCP de Desktop', async () => {
   assert.match(sync, /manifest\.source/);
   assert.match(sync, /repository/);
   assert.match(sync, /manifest\.mcp/);
+  assert.match(sync, /manifest\.mcp\.node/);
+  assert.match(sync, /trim/);
+  assert.ok(
+    sync.indexOf('manifest.mcp.node') < sync.indexOf('replace(manifestFile, manifestBytes)'),
+    'mcp.node debe validarse antes de reemplazar el manifest local'
+  );
   assert.match(sync, /createHash/);
   assert.match(sync, /sha256/);
   assert.match(sync, /replace\(manifestFile, manifestBytes\)/);
