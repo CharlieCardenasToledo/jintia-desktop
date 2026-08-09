@@ -20,12 +20,25 @@ const GOOGLE_SECURE_AUTH_COOKIES: [&[u8]; 2] = [b"__Secure-1PSID", b"__Secure-3P
 static AUTH_VALIDATION: Mutex<Option<(Instant, NotebookLmAuthStatus)>> = Mutex::new(None);
 static MCP_CONFIG_OPERATION: Mutex<()> = Mutex::new(());
 
+fn managed_npx() -> Result<PathBuf, String> {
+    let path = crate::paths::portable_npx_bin();
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err("NotebookLM MCP requiere el Node.js administrado por Jintia.".to_string())
+    }
+}
+
 pub fn configure_mcp(target: String) -> ActionResult {
     let _operation = match MCP_CONFIG_OPERATION.lock() {
         Ok(operation) => operation,
         Err(_) => {
             return ActionResult::error("El estado interno de configuración MCP está bloqueado.")
         }
+    };
+    let npx = match managed_npx() {
+        Ok(path) => path,
+        Err(error) => return ActionResult::error(error),
     };
     let (path, label) = match target.as_str() {
         "desktop" => match claude_desktop_config_path() {
@@ -77,7 +90,7 @@ pub fn configure_mcp(target: String) -> ActionResult {
     }
     let previous = root.clone();
     root["mcpServers"]["notebooklm"] = json!({
-        "command": "npx",
+        "command": npx.to_string_lossy(),
         "args": ["-y", NOTEBOOKLM_MCP_PACKAGE]
     });
     if root == previous {
@@ -124,6 +137,10 @@ pub fn configure_codex_mcp() -> ActionResult {
         Err(_) => {
             return ActionResult::error("El estado interno de configuración MCP está bloqueado.")
         }
+    };
+    let npx = match managed_npx() {
+        Ok(path) => path,
+        Err(error) => return ActionResult::error(error),
     };
     let path = match crate::paths::codex_config_path() {
         Ok(path) => path,
@@ -192,7 +209,8 @@ pub fn configure_codex_mcp() -> ActionResult {
     if doc["mcp_servers"].get("notebooklm").is_none() {
         doc["mcp_servers"]["notebooklm"] = toml_edit::table();
     }
-    doc["mcp_servers"]["notebooklm"]["command"] = toml_edit::value("npx");
+    doc["mcp_servers"]["notebooklm"]["command"] =
+        toml_edit::value(npx.to_string_lossy().into_owned());
     let mut args = toml_edit::Array::new();
     args.push("-y");
     args.push(NOTEBOOKLM_MCP_PACKAGE);
@@ -234,14 +252,6 @@ pub fn configure_codex_mcp() -> ActionResult {
         result.with_backup(path_text(&backup))
     } else {
         result
-    }
-}
-
-fn npx_command() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "npx.cmd"
-    } else {
-        "npx"
     }
 }
 
@@ -295,7 +305,8 @@ struct McpConnection {
 
 impl McpConnection {
     fn spawn() -> Result<Self, String> {
-        let mut child = Command::new(npx_command())
+        let npx = managed_npx()?;
+        let mut child = Command::new(&npx)
             .arg("-y")
             .arg(NOTEBOOKLM_MCP_PACKAGE)
             .stdin(Stdio::piped())
@@ -848,6 +859,18 @@ mod tests {
             "model = \"gpt-5.6-luna\"\n\n[projects.'D:\\Curso']\ntrust_level = \"trusted\"\n\n[mcp_servers.notebooklm]\ncommand = \"npx\"\nargs = [\"notebooklm-mcp@latest\"]\n\n[mcp_servers.gemini-notebook]\ncommand = \"npx\"\nargs = [\"@charlie.act7/gemini-notebook-mcp@latest\"]\n",
         )
         .unwrap();
+
+        if !crate::paths::portable_npx_bin().is_file() {
+            let result = configure_codex_mcp();
+            assert!(!result.success);
+            assert!(result.message.contains("Node.js administrado"));
+            fs::remove_dir_all(&dir).ok();
+            match previous_codex_home {
+                Some(value) => std::env::set_var("CODEX_HOME", value),
+                None => std::env::remove_var("CODEX_HOME"),
+            }
+            return;
+        }
 
         let result = configure_codex_mcp();
         assert!(result.success, "{}", result.message);

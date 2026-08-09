@@ -374,6 +374,14 @@ pub fn portable_skill_source_dir() -> PathBuf {
     portable_skill_npm_source_dir()
 }
 
+pub fn portable_npx_bin() -> PathBuf {
+    portable_node_bin_dir().join(if cfg!(target_os = "windows") {
+        "npx.cmd"
+    } else {
+        "npx"
+    })
+}
+
 pub fn portable_skill_bin() -> PathBuf {
     portable_skill_source_dir().join("bin").join("jintia.js")
 }

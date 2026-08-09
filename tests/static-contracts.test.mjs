@@ -49,6 +49,46 @@ test('resources conserva solo metadata MCP y no artifacts de Skill', async () =>
   assert.match(attributes, /skill\.lock\.json text eol=lf/);
 });
 
+test('NotebookLM MCP usa exclusivamente el npx administrado', async () => {
+  const [paths, mcp] = await Promise.all([
+    readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
+  ]);
+  assert.match(paths, /portable_npx_bin/);
+  const npxStart = paths.indexOf('pub fn portable_npx_bin()');
+  const npxEnd = paths.indexOf('\npub fn', npxStart + 1);
+  const npxFn = paths.slice(npxStart, npxEnd < 0 ? paths.length : npxEnd);
+  assert.match(npxFn, /portable_node_bin_dir/);
+  assert.match(npxFn, /npx\.cmd/);
+  assert.match(npxFn, /npx/);
+
+  assert.match(mcp, /fn managed_npx/);
+  assert.match(mcp, /portable_npx_bin/);
+  assert.match(mcp, /is_file/);
+  assert.match(mcp, /NOTEBOOKLM_MCP_PACKAGE/);
+  assert.doesNotMatch(mcp, /fn npx_command|Command::new\("npx"\)|Command::new\("npx\.cmd"\)|toml_edit::value\("npx"\)/);
+
+  for (const [name, marker] of [
+    ['configure_mcp', 'pub fn configure_mcp(target: String)'],
+    ['configure_codex_mcp', 'pub fn configure_codex_mcp()'],
+  ]) {
+    const start = mcp.indexOf(marker);
+    const end = mcp.indexOf('\npub fn ', start + marker.length);
+    const fn = mcp.slice(start, end < 0 ? mcp.length : end);
+    assert.match(fn, /managed_npx/);
+    assert.ok(fn.indexOf('managed_npx') < fn.indexOf('backup_file'));
+    assert.ok(fn.indexOf('managed_npx') < fn.indexOf('atomic_write'));
+    assert.ok(name);
+  }
+
+  const spawnStart = mcp.indexOf('fn spawn() -> Result<Self, String>');
+  const spawnEnd = mcp.indexOf('\n    fn ', spawnStart + 1);
+  const spawnFn = mcp.slice(spawnStart, spawnEnd < 0 ? mcp.length : spawnEnd);
+  assert.match(spawnFn, /managed_npx/);
+  assert.match(spawnFn, /Command::new\(&npx\)/);
+  assert.match(spawnFn, /NOTEBOOKLM_MCP_PACKAGE/);
+});
+
 test('la arquitectura separa la app de escritorio y el paquete instalable de la skill', async () => {
   const [payload, config, build, lockText, windowsWorkflow, macosWorkflow] = await Promise.all([
     readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
