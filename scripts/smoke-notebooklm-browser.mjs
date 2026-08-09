@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, isAbsolute } from 'node:path';
 
 const lock = JSON.parse(readFileSync('skill.lock.json', 'utf8'));
@@ -10,9 +10,13 @@ const packageDir = join(prefix, 'node_modules', ...packageName.split('/'));
 const nodeModulesRoot = join(prefix, 'node_modules');
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 mkdirSync(prefix, { recursive: true });
+writeFileSync(join(prefix, 'package.json'), JSON.stringify({
+  private: true,
+  dependencies: { [packageName]: packageVersion },
+}, null, 2));
 const npmOptions = { stdio: 'inherit', shell: process.platform === 'win32' };
 
-execFileSync(npm, ['install', '--prefix', prefix, '--package-lock-only', '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', `${packageName}@${packageVersion}`], npmOptions);
+execFileSync(npm, ['install', '--prefix', prefix, '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], npmOptions);
 execFileSync(npm, ['ci', '--prefix', prefix, '--ignore-scripts', '--no-audit', '--no-fund'], npmOptions);
 
 const installedLock = JSON.parse(readFileSync(join(prefix, 'package-lock.json'), 'utf8'));
