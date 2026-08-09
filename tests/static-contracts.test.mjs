@@ -140,6 +140,37 @@ test('el plugin ChatGPT Codex se instala desde el paquete npm administrado', asy
   assert.match(payload, /"installation": "AVAILABLE"/);
 });
 
+test('la exportación del plugin OpenAI usa Jintia npm administrado', async () => {
+  const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
+  const start = payload.indexOf('pub fn export_openai_plugin_zip(');
+  const end = payload.indexOf('\npub fn record_export(', start);
+  const exportFn = payload.slice(start, end);
+  const helperStart = payload.indexOf('fn add_fs_dir_to_zip(');
+  const helperEnd = payload.indexOf('\nfn hash_embedded_dir(', helperStart);
+  const helper = payload.slice(helperStart, helperEnd);
+
+  assert.match(exportFn, /portable_openai_plugin_sources/);
+  assert.match(exportFn, /wrapper_src/);
+  assert.match(exportFn, /skill_src/);
+  assert.match(exportFn, /managed_version/);
+  assert.match(exportFn, /skills/);
+  assert.match(exportFn, /jintia-skill/);
+  assert.match(exportFn, /user_config/);
+  assert.match(exportFn, /institution\.json/);
+  assert.match(exportFn, /notebooks\.json/);
+  assert.match(exportFn, /files_equal/);
+  assert.doesNotMatch(exportFn, /SKILL_VERSION|OPENAI_PLUGIN_MANIFEST|OPENAI_PLUGIN_MCP|OPENAI_PLUGIN_README|SKILL_MD|SKILL_PACKAGE_JSON|REQUIREMENTS|REFERENCES|SCRIPTS|RUNTIME|THEMES|CONFIG|AGENTS|COMMANDS|BIN|RULES|SCHEMAS|add_dir_to_zip/);
+  assert.match(exportFn, /jintia-openai-plugin-\{managed_version\}\.zip/);
+  assert.match(helper, /fs::read_dir/);
+  assert.match(helper, /file_type/);
+  assert.match(helper, /sort/);
+  assert.match(helper, /add_bytes/);
+  assert.match(helper, /is_dir/);
+  assert.match(helper, /is_file/);
+  assert.match(helper, /is_symlink/);
+  assert.doesNotMatch(payload, /OPENAI_PLUGIN_MANIFEST|OPENAI_PLUGIN_MCP|OPENAI_PLUGIN_README/);
+});
+
 test('el modo mock no anuncia plantillas que el backend no incorpora', async () => {
   const mock = await readFile(new URL('src/mocks/tauri-core.mock.js', root), 'utf8');
   assert.match(mock, /id:\s*"elegantbook-clasico"/);

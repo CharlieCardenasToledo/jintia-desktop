@@ -17,10 +17,6 @@ const SKILL_MD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/S
 const LICENSE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/LICENSE"));
 const REQUIREMENTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/requirements.txt"));
 const SKILL_PACKAGE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia-skill/package.json"));
-const OPENAI_PLUGIN_MANIFEST: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/jintia/.codex-plugin/plugin.json"));
-const OPENAI_PLUGIN_MCP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia/.mcp.json"));
-const OPENAI_PLUGIN_README: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jintia/README.md"));
 static REFERENCES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/references");
 static SCRIPTS: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/scripts");
 static RUNTIME: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/runtime");
@@ -482,6 +478,43 @@ fn add_dir_to_zip(
     Ok(())
 }
 
+fn add_fs_dir_to_zip(
+    zip: &mut zip::ZipWriter<fs::File>,
+    source: &Path,
+    prefix: &str,
+) -> Result<(), String> {
+    let mut entries = fs::read_dir(source)
+        .map_err(|error| format!("No se pudo leer {}: {error}", source.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("No se pudo leer una entrada de {}: {error}", source.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("No se pudo inspeccionar {}: {error}", entry.path().display()))?;
+        if file_type.is_symlink() {
+            return Err(format!("No se permiten enlaces simbólicos en {}", entry.path().display()));
+        }
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let zip_path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if file_type.is_dir() {
+            add_fs_dir_to_zip(zip, &path, &zip_path)?;
+        } else if file_type.is_file() {
+            let bytes = fs::read(&path)
+                .map_err(|error| format!("No se pudo leer {}: {error}", path.display()))?;
+            add_bytes(zip, &zip_path, &bytes)?;
+        } else {
+            return Err(format!("Entrada no compatible en {}", path.display()));
+        }
+    }
+    Ok(())
+}
+
 fn hash_embedded_dir(
     dir: &Dir<'_>,
     hasher: &mut DefaultHasher,
@@ -660,11 +693,19 @@ pub fn export_openai_plugin_zip(destination_dir: String) -> ActionResult {
         Ok(operation) => operation,
         Err(_) => return ActionResult::error("El estado interno de exportación está bloqueado."),
     };
+    let (wrapper_src, skill_src, managed_version) = match portable_openai_plugin_sources() {
+        Some(sources) => sources,
+        None => {
+            return ActionResult::error(
+                "El runtime Jintia administrado no incluye el plugin para ChatGPT/Codex. Actualiza Jintia desde Configuración > Entorno.",
+            );
+        }
+    };
     let destination = match canonical_directory(&destination_dir) {
         Ok(path) => path,
         Err(error) => return ActionResult::error(error),
     };
-    let final_path = destination.join(format!("jintia-openai-plugin-{SKILL_VERSION}.zip"));
+    let final_path = destination.join(format!("jintia-openai-plugin-{managed_version}.zip"));
     let temp_path = destination.join(format!(".jintia-openai-{}.tmp", timestamp()));
     let file = match fs::File::create(&temp_path) {
         Ok(file) => file,
@@ -673,41 +714,9 @@ pub fn export_openai_plugin_zip(destination_dir: String) -> ActionResult {
     let installed = installed_skill_dir().ok();
     let result = (|| -> Result<bool, String> {
         let mut zip = zip::ZipWriter::new(file);
-        add_bytes(
-            &mut zip,
-            ".codex-plugin/plugin.json",
-            OPENAI_PLUGIN_MANIFEST,
-        )?;
-        add_bytes(&mut zip, ".mcp.json", OPENAI_PLUGIN_MCP)?;
-        add_bytes(&mut zip, "README.md", OPENAI_PLUGIN_README)?;
+        add_fs_dir_to_zip(&mut zip, &wrapper_src, "")?;
         let prefix = "skills/jintia-skill";
-        add_bytes(&mut zip, &format!("{prefix}/SKILL.md"), SKILL_MD)?;
-        add_bytes(&mut zip, &format!("{prefix}/LICENSE"), LICENSE)?;
-        add_bytes(
-            &mut zip,
-            &format!("{prefix}/requirements.txt"),
-            REQUIREMENTS,
-        )?;
-        add_bytes(
-            &mut zip,
-            &format!("{prefix}/package.json"),
-            SKILL_PACKAGE_JSON,
-        )?;
-        add_bytes(
-            &mut zip,
-            &format!("{prefix}/VERSION"),
-            SKILL_VERSION.as_bytes(),
-        )?;
-        add_dir_to_zip(&mut zip, &REFERENCES, &format!("{prefix}/references"))?;
-        add_dir_to_zip(&mut zip, &SCRIPTS, &format!("{prefix}/scripts"))?;
-        add_dir_to_zip(&mut zip, &RUNTIME, &format!("{prefix}/runtime"))?;
-        add_dir_to_zip(&mut zip, &THEMES, &format!("{prefix}/themes"))?;
-        add_dir_to_zip(&mut zip, &CONFIG, &format!("{prefix}/config"))?;
-        add_dir_to_zip(&mut zip, &AGENTS, &format!("{prefix}/agents"))?;
-        add_dir_to_zip(&mut zip, &COMMANDS, &format!("{prefix}/commands"))?;
-        add_dir_to_zip(&mut zip, &BIN, &format!("{prefix}/bin"))?;
-        add_dir_to_zip(&mut zip, &RULES, &format!("{prefix}/rules"))?;
-        add_dir_to_zip(&mut zip, &SCHEMAS, &format!("{prefix}/schemas"))?;
+        add_fs_dir_to_zip(&mut zip, &skill_src, prefix)?;
         for name in ["institution.json", "notebooks.json"] {
             if let Some(bytes) = user_config(name, installed.as_deref()) {
                 add_bytes(&mut zip, &format!("{prefix}/config/{name}"), &bytes)?;
