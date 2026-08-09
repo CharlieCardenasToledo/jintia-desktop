@@ -2423,10 +2423,10 @@ test('Jintia se instala mediante npm administrado, no mediante descarga manual d
 });
 
 test('resolve_skill usa exclusivamente Jintia portable administrado', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const [runtimes, paths] = await Promise.all([
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
+  ]);
 
   assert.match(runtimes, /pub fn resolve_skill\(\)/);
 
@@ -2439,6 +2439,8 @@ test('resolve_skill usa exclusivamente Jintia portable administrado', async () =
   assert.doesNotMatch(resolver, /"which"/);
   // No devuelve la cadena literal "jintia" como fallback global
   assert.doesNotMatch(resolver, /Some\("jintia"\)/);
+  const legacyHelper = 'portable_skill_' + 'legacy_source_dir';
+  assert.doesNotMatch(paths, new RegExp(legacyHelper));
 
   // global_skill_available sí puede usar detección, pero es función aparte
   assert.match(runtimes, /pub fn global_skill_available/);
@@ -2498,7 +2500,7 @@ test('las plantillas provienen del runtime Jintia administrado', async () => {
   assert.match(config, /DEFAULT_THEME:\s*&str\s*=\s*"jintia-clasico"/);
 });
 
-test('paths.rs conoce el layout npm del paquete Jintia en Windows y Unix', async () => {
+test('paths.rs resuelve Jintia exclusivamente desde el layout npm administrado', async () => {
   const paths = await readFile(
     new URL('src-tauri/src/paths.rs', root),
     'utf8'
@@ -2507,8 +2509,8 @@ test('paths.rs conoce el layout npm del paquete Jintia en Windows y Unix', async
   assert.match(paths, /pub fn portable_skill_prefix\(\)/);
   assert.match(paths, /pub fn portable_skill_npm_package_dir_for/);
   assert.match(paths, /pub fn portable_skill_npm_source_dir\(\)/);
-  assert.match(paths, /pub fn portable_skill_legacy_source_dir\(\)/);
   assert.match(paths, /pub fn portable_skill_source_dir\(\)/);
+  assert.doesNotMatch(paths, new RegExp('portable_skill_' + 'legacy_source_dir'));
 
   // Conoce las dos rutas de layout npm según plataforma
   assert.match(paths, /"node_modules"/);      // Windows
@@ -2516,11 +2518,19 @@ test('paths.rs conoce el layout npm del paquete Jintia en Windows y Unix', async
   assert.match(paths, /@charlie\.act7/);
   assert.match(paths, /"jintia"/);
 
+  const sourceStart = paths.indexOf('pub fn portable_skill_source_dir()');
+  const sourceEnd = paths.indexOf('\npub fn portable_skill_bin()', sourceStart);
+  const sourceFn = paths.slice(sourceStart, sourceEnd);
+  assert.match(sourceFn, /portable_skill_npm_source_dir/);
+  assert.doesNotMatch(sourceFn, /is_file|exists|return npm/);
+
   // portable_skill_bin delega en portable_skill_source_dir
   const binStart = paths.indexOf('pub fn portable_skill_bin()');
   const binEnd = paths.indexOf('\npub fn migrate_runtimes', binStart);
   const binFn = paths.slice(binStart, binEnd);
   assert.match(binFn, /portable_skill_source_dir/);
+  assert.match(binFn, /bin/);
+  assert.match(binFn, /jintia\.js/);
   assert.doesNotMatch(binFn, /portable_runtimes_dir\(\)\.join\("jintia"\)/);
 });
 

@@ -370,16 +370,8 @@ pub fn portable_skill_npm_source_dir() -> PathBuf {
     portable_skill_npm_package_dir().join("skill")
 }
 
-pub fn portable_skill_legacy_source_dir() -> PathBuf {
-    portable_skill_prefix().join("skill")
-}
-
 pub fn portable_skill_source_dir() -> PathBuf {
-    let npm = portable_skill_npm_source_dir();
-    if npm.join("bin").join("jintia.js").is_file() {
-        return npm;
-    }
-    portable_skill_legacy_source_dir()
+    portable_skill_npm_source_dir()
 }
 
 pub fn portable_skill_bin() -> PathBuf {
