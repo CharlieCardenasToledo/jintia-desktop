@@ -374,12 +374,13 @@ pub fn portable_skill_source_dir() -> PathBuf {
     portable_skill_npm_source_dir()
 }
 
-pub fn portable_npx_bin() -> PathBuf {
-    portable_node_bin_dir().join(if cfg!(target_os = "windows") {
-        "npx.cmd"
+pub fn portable_npx_cli() -> PathBuf {
+    let prefix = portable_node_prefix();
+    if cfg!(target_os = "windows") {
+        prefix.join("node_modules").join("npm").join("bin").join("npx-cli.js")
     } else {
-        "npx"
-    })
+        prefix.join("lib").join("node_modules").join("npm").join("bin").join("npx-cli.js")
+    }
 }
 
 pub fn portable_skill_bin() -> PathBuf {

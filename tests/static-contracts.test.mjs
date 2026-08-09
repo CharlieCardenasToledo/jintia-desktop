@@ -49,24 +49,28 @@ test('resources conserva solo metadata MCP y no artifacts de Skill', async () =>
   assert.match(attributes, /skill\.lock\.json text eol=lf/);
 });
 
-test('NotebookLM MCP usa exclusivamente el npx administrado', async () => {
+test('NotebookLM MCP ejecuta npx-cli con el Node administrado', async () => {
   const [paths, mcp] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
   ]);
-  assert.match(paths, /portable_npx_bin/);
-  const npxStart = paths.indexOf('pub fn portable_npx_bin()');
+  assert.match(paths, /portable_node_exe/);
+  assert.match(paths, /portable_npx_cli/);
+  const npxStart = paths.indexOf('pub fn portable_npx_cli()');
   const npxEnd = paths.indexOf('\npub fn', npxStart + 1);
   const npxFn = paths.slice(npxStart, npxEnd < 0 ? paths.length : npxEnd);
-  assert.match(npxFn, /portable_node_bin_dir/);
-  assert.match(npxFn, /npx\.cmd/);
-  assert.match(npxFn, /npx/);
+  assert.match(npxFn, /portable_node_prefix/);
+  assert.match(npxFn, /node_modules/);
+  assert.match(npxFn, /npm/);
+  assert.match(npxFn, /bin/);
+  assert.match(npxFn, /npx-cli\.js/);
 
   assert.match(mcp, /fn managed_npx/);
-  assert.match(mcp, /portable_npx_bin/);
+  assert.match(mcp, /portable_node_exe/);
+  assert.match(mcp, /portable_npx_cli/);
   assert.match(mcp, /is_file/);
   assert.match(mcp, /NOTEBOOKLM_MCP_PACKAGE/);
-  assert.doesNotMatch(mcp, /fn npx_command|Command::new\("npx"\)|Command::new\("npx\.cmd"\)|toml_edit::value\("npx"\)/);
+  assert.doesNotMatch(mcp, /portable_npx_bin|fn npx_command|Command::new\("node"\)|Command::new\("npx"\)|Command::new\("npx\.cmd"\)|toml_edit::value\("npx"\)/);
 
   for (const [name, marker] of [
     ['configure_mcp', 'pub fn configure_mcp(target: String)'],
@@ -76,6 +80,8 @@ test('NotebookLM MCP usa exclusivamente el npx administrado', async () => {
     const end = mcp.indexOf('\npub fn ', start + marker.length);
     const fn = mcp.slice(start, end < 0 ? mcp.length : end);
     assert.match(fn, /managed_npx/);
+    assert.match(fn, /managed\.node/);
+    assert.match(fn, /managed\.cli/);
     assert.ok(fn.indexOf('managed_npx') < fn.indexOf('backup_file'));
     assert.ok(fn.indexOf('managed_npx') < fn.indexOf('atomic_write'));
     assert.ok(name);
@@ -85,7 +91,8 @@ test('NotebookLM MCP usa exclusivamente el npx administrado', async () => {
   const spawnEnd = mcp.indexOf('\n    fn ', spawnStart + 1);
   const spawnFn = mcp.slice(spawnStart, spawnEnd < 0 ? mcp.length : spawnEnd);
   assert.match(spawnFn, /managed_npx/);
-  assert.match(spawnFn, /Command::new\(&npx\)/);
+  assert.match(spawnFn, /Command::new\(&managed\.node\)/);
+  assert.match(spawnFn, /\.arg\(&managed\.cli\)/);
   assert.match(spawnFn, /NOTEBOOKLM_MCP_PACKAGE/);
 });
 
