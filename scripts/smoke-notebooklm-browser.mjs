@@ -8,8 +8,10 @@ const packageVersion = lock.mcp.version;
 const prefix = join(process.env.RUNNER_TEMP || process.env.TEMP || '.', 'jintia-notebooklm-browser-smoke');
 const packageDir = join(prefix, 'node_modules', ...packageName.split('/'));
 const nodeModulesRoot = join(prefix, 'node_modules');
+const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
-execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', `${packageName}@${packageVersion}`], { stdio: 'inherit' });
+execFileSync(npm, ['install', '--prefix', prefix, '--package-lock-only', '--no-save', '--ignore-scripts', '--no-audit', '--no-fund', `${packageName}@${packageVersion}`], { stdio: 'inherit' });
+execFileSync(npm, ['ci', '--prefix', prefix, '--ignore-scripts', '--no-audit', '--no-fund'], { stdio: 'inherit' });
 
 const installedLock = JSON.parse(readFileSync(join(prefix, 'package-lock.json'), 'utf8'));
 const entry = installedLock.packages?.[`node_modules/${packageName}`];
