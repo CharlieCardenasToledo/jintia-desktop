@@ -2321,6 +2321,30 @@ test('resolve_skill usa exclusivamente Jintia portable administrado', async () =
   assert.match(runtimes, /pub fn global_skill_available/);
 });
 
+test('la detección de harnesses usa el runtime Jintia administrado', async () => {
+  const [harnesses, toolchain] = await Promise.all([
+    readFile(new URL('src-tauri/src/harnesses.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
+  ]);
+  const detectStart = harnesses.indexOf('pub fn detect(');
+  const detectEnd = harnesses.indexOf('\nfn fallback_detect(', detectStart);
+  const detect = harnesses.slice(detectStart, detectEnd);
+  const manageStart = toolchain.indexOf('pub fn manage_harness(');
+  const manageEnd = toolchain.indexOf('\n}', toolchain.indexOf('match engine::run_jintia', manageStart));
+  const manage = toolchain.slice(manageStart, manageEnd);
+
+  assert.ok(detectStart >= 0 && detectEnd > detectStart);
+  assert.match(detect, /runtimes::resolve_skill/);
+  assert.match(detect, /engine::run_jintia/);
+  assert.match(detect, /fallback_detect/);
+  assert.match(detect, /detect/);
+  assert.match(detect, /--json/);
+  assert.match(detect, /--providers=/);
+  assert.doesNotMatch(detect, /payload::installed_skill_path|installed_skill_path|skill_dir|legacy_skill_dir/);
+  assert.doesNotMatch(harnesses, /use crate::payload;/);
+  assert.match(manage, /runtimes::resolve_skill/);
+});
+
 test('paths.rs conoce el layout npm del paquete Jintia en Windows y Unix', async () => {
   const paths = await readFile(
     new URL('src-tauri/src/paths.rs', root),

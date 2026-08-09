@@ -1,5 +1,4 @@
 use crate::engine;
-use crate::payload;
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -14,8 +13,6 @@ use std::path::Path;
 /// // Devuelve JSON con lista de proveedores detectados
 /// ```
 pub fn detect(project_path: String, explicit: Option<Vec<String>>) -> Value {
-    let skill_path = payload::installed_skill_path();
-
     let mut args: Vec<String> = vec!["detect".to_string(), project_path.clone(), "--json".to_string()];
 
     if let Some(ref providers) = explicit {
@@ -25,6 +22,9 @@ pub fn detect(project_path: String, explicit: Option<Vec<String>>) -> Value {
     }
 
     let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let Some(skill_path) = crate::runtimes::resolve_skill() else {
+        return fallback_detect(&project_path, explicit);
+    };
 
     match engine::run_jintia(Path::new(&skill_path), &args_refs) {
         Ok(result) => {
