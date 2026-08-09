@@ -129,26 +129,69 @@ fn installed_payload_matches(target: &Path) -> bool {
         && embedded_dir_matches(&SCHEMAS, &target.join("schemas"), target, false)
 }
 
-fn materialize_openai_plugin(target: &Path, installed: Option<&Path>) -> Result<(), String> {
-    fs::create_dir_all(target.join(".codex-plugin"))
-        .map_err(|error| format!("No se pudo preparar el plugin: {error}"))?;
-    atomic_write(
-        &target.join(".codex-plugin").join("plugin.json"),
-        OPENAI_PLUGIN_MANIFEST,
-    )?;
-    atomic_write(&target.join(".mcp.json"), OPENAI_PLUGIN_MCP)?;
-    atomic_write(&target.join("README.md"), OPENAI_PLUGIN_README)?;
-    materialize_payload(&target.join("skills").join("jintia-skill"), installed)
+fn files_match(source: &Path, target: &Path) -> bool {
+    fs::read(source).ok() == fs::read(target).ok()
 }
 
-fn openai_plugin_payload_matches(target: &Path) -> bool {
-    fs::read(target.join(".codex-plugin").join("plugin.json"))
+fn portable_openai_plugin_sources() -> Option<(PathBuf, PathBuf, String)> {
+    let package_root = crate::paths::portable_skill_npm_package_dir();
+    let wrapper_src = package_root.join("openai-plugin");
+    let skill_src = package_root.join("skill");
+    let plugin_manifest = wrapper_src.join(".codex-plugin").join("plugin.json");
+    let required = [
+        package_root.join("package.json"),
+        skill_src.join("package.json"),
+        skill_src.join("SKILL.md"),
+        skill_src.join("bin").join("jintia.js"),
+        plugin_manifest.clone(),
+        wrapper_src.join(".mcp.json"),
+        wrapper_src.join("README.md"),
+    ];
+    if required.iter().any(|path| !path.is_file()) {
+        return None;
+    }
+    let package_version = read_skill_package_version(&package_root)?;
+    let skill_version = read_skill_package_version(&skill_src)?;
+    let plugin_version = fs::read_to_string(plugin_manifest)
         .ok()
-        .as_deref()
-        == Some(OPENAI_PLUGIN_MANIFEST)
-        && fs::read(target.join(".mcp.json")).ok().as_deref() == Some(OPENAI_PLUGIN_MCP)
-        && fs::read(target.join("README.md")).ok().as_deref() == Some(OPENAI_PLUGIN_README)
-        && installed_payload_matches(&target.join("skills").join("jintia-skill"))
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value.get("version")?.as_str().map(str::to_string))?;
+    (package_version == skill_version && skill_version == plugin_version)
+        .then_some((wrapper_src, skill_src, skill_version))
+}
+
+fn materialize_openai_plugin_from_portable(
+    target: &Path,
+    wrapper_src: &Path,
+    skill_src: &Path,
+    installed: Option<&Path>,
+) -> Result<(), String> {
+    copy_dir_all(wrapper_src, target)?;
+    copy_dir_all(skill_src, &target.join("skills").join("jintia-skill"))?;
+    for name in ["institution.json", "notebooks.json"] {
+        if let Some(bytes) = user_config(name, installed) {
+            atomic_write(
+                &target.join("skills").join("jintia-skill").join("config").join(name),
+                &bytes,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn openai_plugin_portable_matches(target: &Path) -> bool {
+    let Some((wrapper_src, skill_src, managed_version)) = portable_openai_plugin_sources() else {
+        return false;
+    };
+    let installed_skill = target.join("skills").join("jintia-skill");
+    files_match(
+        &wrapper_src.join(".codex-plugin").join("plugin.json"),
+        &target.join(".codex-plugin").join("plugin.json"),
+    ) && files_match(&wrapper_src.join(".mcp.json"), &target.join(".mcp.json"))
+        && files_match(&wrapper_src.join("README.md"), &target.join("README.md"))
+        && installed_skill.join("SKILL.md").is_file()
+        && read_skill_package_version(&installed_skill).as_deref() == Some(&managed_version)
+        && read_skill_package_version(&skill_src).as_deref() == Some(&managed_version)
 }
 
 fn register_openai_marketplace() -> Result<(), String> {
@@ -198,11 +241,19 @@ pub fn install_openai_plugin() -> ActionResult {
         Ok(operation) => operation,
         Err(_) => return ActionResult::error("El estado interno de instalación está bloqueado."),
     };
+    let (wrapper_src, skill_src, managed_version) = match portable_openai_plugin_sources() {
+        Some(sources) => sources,
+        None => {
+            return ActionResult::error(
+                "El runtime Jintia administrado no incluye el plugin para ChatGPT/Codex. Actualiza Jintia desde Configuración > Entorno.",
+            );
+        }
+    };
     let target = match openai_plugin_dir() {
         Ok(path) => path,
         Err(error) => return ActionResult::error(error),
     };
-    if target.exists() && openai_plugin_payload_matches(&target) {
+    if target.exists() && openai_plugin_portable_matches(&target) {
         return match register_openai_marketplace() {
             Ok(_) => ActionResult::ok(format!(
                 "Jintia ya está actualizado para ChatGPT y Codex.\n{}",
@@ -224,7 +275,12 @@ pub fn install_openai_plugin() -> ActionResult {
         .join("jintia-skill")
         .is_dir()
         .then(|| target.join("skills").join("jintia-skill"));
-    if let Err(error) = materialize_openai_plugin(&stage, installed.as_deref()) {
+    if let Err(error) = materialize_openai_plugin_from_portable(
+        &stage,
+        &wrapper_src,
+        &skill_src,
+        installed.as_deref(),
+    ) {
         let _ = fs::remove_dir_all(&stage);
         return ActionResult::error(error);
     }
@@ -248,7 +304,7 @@ pub fn install_openai_plugin() -> ActionResult {
         ));
     }
     let result = ActionResult::ok(format!(
-        "Jintia {SKILL_VERSION} quedó preparado para ChatGPT desktop y Codex.\nReinicia el cliente que usarás y activa Jintia desde Plugins.\n{}",
+        "Jintia {managed_version} quedó preparado para ChatGPT desktop y Codex.\nReinicia el cliente que usarás y activa Jintia desde Plugins.\n{}",
         path_text(&target)
     ))
     .with_path(path_text(&target));
@@ -766,7 +822,7 @@ pub fn openai_plugin_is_installed() -> bool {
 pub fn openai_plugin_is_current() -> bool {
     openai_plugin_dir()
         .ok()
-        .is_some_and(|path| openai_plugin_payload_matches(&path))
+        .is_some_and(|path| openai_plugin_portable_matches(&path))
 }
 
 pub fn openai_plugin_path() -> String {

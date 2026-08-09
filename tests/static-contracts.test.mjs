@@ -89,6 +89,57 @@ test('install_local_skill requiere el runtime npm administrado', async () => {
   assert.match(installFn, /fs::rename/);
 });
 
+test('el plugin ChatGPT Codex se instala desde el paquete npm administrado', async () => {
+  const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
+  const sourceStart = payload.indexOf('fn portable_openai_plugin_sources(');
+  const sourceEnd = payload.indexOf('\nfn materialize_openai_plugin_from_portable(', sourceStart);
+  const sourceFn = payload.slice(sourceStart, sourceEnd);
+  const installStart = payload.indexOf('pub fn install_openai_plugin()');
+  const installEnd = payload.indexOf('\nfn copy_dir_all(', installStart);
+  const installFn = payload.slice(installStart, installEnd);
+  const materializeStart = payload.indexOf('fn materialize_openai_plugin_from_portable(');
+  const materializeEnd = payload.indexOf('\nfn openai_plugin_portable_matches(', materializeStart);
+  const materializeFn = payload.slice(materializeStart, materializeEnd);
+  const currentStart = payload.indexOf('pub fn openai_plugin_is_current()');
+  const currentEnd = payload.indexOf('\npub fn openai_plugin_path()', currentStart);
+  const currentFn = payload.slice(currentStart, currentEnd);
+  const sourceIndex = installFn.indexOf('portable_openai_plugin_sources');
+  const stageIndex = installFn.indexOf('.jintia-plugin.stage-');
+
+  assert.match(sourceFn, /portable_skill_npm_package_dir/);
+  assert.match(sourceFn, /openai-plugin/);
+  assert.match(sourceFn, /skill/);
+  assert.match(sourceFn, /\.codex-plugin/);
+  assert.match(sourceFn, /plugin\.json/);
+  assert.match(sourceFn, /\.mcp\.json/);
+  assert.match(sourceFn, /README\.md/);
+  assert.match(sourceFn, /package\.json/);
+  assert.match(sourceFn, /version/);
+  assert.match(installFn, /portable_openai_plugin_sources/);
+  assert.match(installFn, /openai_plugin_portable_matches/);
+  assert.match(installFn, /register_openai_marketplace/);
+  assert.match(installFn, /\.jintia-plugin\.stage-/);
+  assert.match(installFn, /jintia\.backup-/);
+  assert.match(installFn, /fs::rename/);
+  assert.match(installFn, /managed_version/);
+  assert.doesNotMatch(installFn, /materialize_payload|OPENAI_PLUGIN_MANIFEST|OPENAI_PLUGIN_MCP|OPENAI_PLUGIN_README|SKILL_VERSION|openai_plugin_payload_matches/);
+  assert.ok(sourceIndex >= 0 && sourceIndex < stageIndex);
+  assert.match(installFn.slice(sourceIndex, stageIndex), /None\s*=>[\s\S]*return ActionResult::error/);
+  assert.match(materializeFn, /copy_dir_all/);
+  assert.match(materializeFn, /skills/);
+  assert.match(materializeFn, /jintia-skill/);
+  assert.match(materializeFn, /user_config/);
+  assert.match(materializeFn, /institution\.json/);
+  assert.match(materializeFn, /notebooks\.json/);
+  assert.doesNotMatch(materializeFn, /materialize_payload|OPENAI_PLUGIN_/);
+  assert.match(currentFn, /openai_plugin_portable_matches/);
+  assert.doesNotMatch(currentFn, /openai_plugin_payload_matches|installed_payload_matches/);
+  assert.match(payload, /"name": "jintia"/);
+  assert.match(payload, /"source": "local"/);
+  assert.match(payload, /\.\/\.codex\/plugins\/jintia/);
+  assert.match(payload, /"installation": "AVAILABLE"/);
+});
+
 test('el modo mock no anuncia plantillas que el backend no incorpora', async () => {
   const mock = await readFile(new URL('src/mocks/tauri-core.mock.js', root), 'utf8');
   assert.match(mock, /id:\s*"elegantbook-clasico"/);
