@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "repository": "CharlieCardenasToledo/instructional-designer-skill",
-  "tag": "v11.6.1",
+  "tag": "v11.6.5",
   "manifest": {
     "file": "jintia-release-manifest.json",
-    "sha256": "781820a86e1a171ab8712d5edbfbf11f4045824c4d6435690559ac6efa1ce430"
+    "sha256": "b31506b3e9fa094a3a315e3de518b3bddddf217573195c3dd762d59e1b488d89"
   },
   "mcp": {
     "package": "@charlie.act7/gemini-notebook-mcp",
-    "version": "2.3.3",
+    "version": "2.3.4",
     "node": ">=22.13.0",
-    "npmIntegrity": "sha512-+USWTG9F07fWz6qxamEXk16Btt6ME/KJxihZJPCB5ODVoNRnxx9cPOAyujcHF4bHvzDRkLrhKtvKBzbs+nzjeA=="
+    "npmIntegrity": "sha512-L5+05Ij2zePaIkPZ99en70LOPRes0xqqhE/MvCizJrAUFp+Sgql3P3ADPr3FqqhT/ZC+Xv/YP4ff8jU7PKVIkA=="
   }
 }

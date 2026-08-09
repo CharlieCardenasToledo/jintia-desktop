@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "skillVersion": "11.6.1",
+  "skillVersion": "11.6.5",
   "minimumDesktopVersion": "1.1.0",
   "source": {
     "repository": "CharlieCardenasToledo/instructional-designer-skill",
-    "commit": "ed330f55b5c1ba0b58e30706c5c832fd4b9e82e7"
+    "commit": "720349ca344da4a0b275fa72c13c4432fe91513e"
   },
   "compatibility": [
     "claude",
@@ -13,21 +13,21 @@
   ],
   "mcp": {
     "package": "@charlie.act7/gemini-notebook-mcp",
-    "version": "2.3.3",
+    "version": "2.3.4",
     "node": ">=22.13.0",
-    "npmIntegrity": "sha512-+USWTG9F07fWz6qxamEXk16Btt6ME/KJxihZJPCB5ODVoNRnxx9cPOAyujcHF4bHvzDRkLrhKtvKBzbs+nzjeA=="
+    "npmIntegrity": "sha512-L5+05Ij2zePaIkPZ99en70LOPRes0xqqhE/MvCizJrAUFp+Sgql3P3ADPr3FqqhT/ZC+Xv/YP4ff8jU7PKVIkA=="
   },
   "artifacts": {
     "skill": {
-      "file": "jintia-skill-11.6.1.zip",
-      "sha256": "b4fc0e3b81b6ee907cde6a31814afbb1558d4e7a667c01a1d890696b9aa27c1b",
-      "bytes": 190430,
+      "file": "jintia-skill-11.6.5.zip",
+      "sha256": "17d38b3a9f4a311f902281fd3f4bc2c51fb7245d8351820e228b9e7937aef9d7",
+      "bytes": 190405,
       "installRoot": "jintia-skill"
     },
     "openaiPlugin": {
-      "file": "jintia-openai-plugin-11.6.1.zip",
-      "sha256": "4aa00a183bc002818f150251b176a368c5c16746396f404e24ec36d421965389",
-      "bytes": 195412,
+      "file": "jintia-openai-plugin-11.6.5.zip",
+      "sha256": "e96d2f5d7a6d5b0b65634d7568a4829759057d3fd68640cac780ecec1a3a2e72",
+      "bytes": 195388,
       "installRoot": "jintia"
     }
   }

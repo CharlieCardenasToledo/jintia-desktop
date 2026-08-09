@@ -1135,7 +1135,7 @@ test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () 
   const lock = JSON.parse(lockText);
   assert.match(lock.tag, /^v\d+\.\d+\.\d+$/);
   assert.equal(lock.mcp.package, "@charlie.act7/gemini-notebook-mcp");
-  assert.equal(lock.mcp.version, "2.3.3");
+  assert.equal(lock.mcp.version, "2.3.4");
   assert.match(payload, /materialize_openai_plugin/);
   assert.match(payload, /register_openai_marketplace/);
   assert.match(paths, /\.codex.*plugins.*jintia/s);
