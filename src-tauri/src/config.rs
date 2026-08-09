@@ -1,20 +1,19 @@
 use crate::models::{ActionResult, InstitutionConfig, NotebookEntry, SetupStatus, TemplateMeta};
 use crate::paths::{
     app_config_dir, atomic_write, atomic_write_if_changed, claude_code_config_path,
-    claude_desktop_config_path, path_text,
+    claude_desktop_config_path, path_text, portable_skill_source_dir,
 };
 use crate::payload::{
     config_file_path, installed_skill_path, installed_skill_version, openai_plugin_is_current,
     openai_plugin_is_installed, openai_plugin_path, portable_skill_version, skill_is_current,
     skill_is_installed, sync_user_config_to_install, SKILL_VERSION,
 };
-use include_dir::{include_dir, Dir};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
-static THEMES: Dir<'_> = include_dir!("$OUT_DIR/jintia-skill/themes");
 const DEFAULT_THEME: &str = "jintia-clasico";
 static CONFIG_WRITE_OPERATION: Mutex<()> = Mutex::new(());
 
@@ -52,12 +51,19 @@ fn active_theme_from_settings() -> String {
         .unwrap_or_else(|| DEFAULT_THEME.to_string())
 }
 
-pub fn theme_exists(id: &str) -> bool {
+fn themes_dir() -> PathBuf {
+    portable_skill_source_dir().join("themes")
+}
+
+fn valid_theme_id(id: &str) -> bool {
     !id.is_empty()
         && id
             .chars()
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
-        && THEMES.get_file(format!("{id}/meta.json")).is_some()
+}
+
+pub fn theme_exists(id: &str) -> bool {
+    valid_theme_id(id) && themes_dir().join(id).join("meta.json").is_file()
 }
 
 pub struct ActiveInstitution {
@@ -249,13 +255,16 @@ pub fn save_notebooks(entries: Vec<NotebookEntry>) -> ActionResult {
 }
 
 pub fn list_templates() -> Vec<TemplateMeta> {
-    let mut templates = THEMES
-        .dirs()
-        .filter_map(|dir| {
-            let id = dir.path().file_name()?.to_str()?;
-            THEMES.get_file(format!("{id}/meta.json"))
+    let Ok(entries) = fs::read_dir(themes_dir()) else {
+        return Vec::new();
+    };
+    let mut templates = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().ok().is_some_and(|kind| kind.is_dir()))
+        .filter_map(|entry| {
+            fs::read(entry.path().join("meta.json")).ok()
         })
-        .filter_map(|file| serde_json::from_slice::<TemplateMeta>(file.contents()).ok())
+        .filter_map(|bytes| serde_json::from_slice::<TemplateMeta>(&bytes).ok())
         .filter(|meta| theme_exists(&meta.id))
         .collect::<Vec<_>>();
     templates.sort_by(|a, b| {
@@ -289,15 +298,15 @@ pub fn institution_is_configured() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::list_templates;
+    use super::valid_theme_id;
 
     #[test]
-    fn embedded_themes_are_available() {
-        let ids = list_templates()
-            .into_iter()
-            .map(|theme| theme.id)
-            .collect::<Vec<_>>();
-        assert!(ids.contains(&"jintia-clasico".to_string()));
+    fn theme_ids_are_safe_path_segments() {
+        assert!(valid_theme_id("jintia-clasico"));
+        assert!(valid_theme_id("tema-2"));
+        assert!(!valid_theme_id("../tema"));
+        assert!(!valid_theme_id("Tema"));
+        assert!(!valid_theme_id("tema/otro"));
     }
 }
 

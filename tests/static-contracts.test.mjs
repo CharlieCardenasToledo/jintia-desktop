@@ -54,7 +54,8 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   assert.match(lock.artifacts.skill.sha256, /^[a-f0-9]{64}$/);
   assert.match(lock.artifacts.openaiPlugin.sha256, /^[a-f0-9]{64}$/);
   assert.match(payload, /\$OUT_DIR\/jintia-skill/);
-  assert.match(config, /\$OUT_DIR\/jintia-skill\/themes/);
+  assert.match(config, /portable_skill_source_dir/);
+  assert.match(config, /themes/);
   assert.match(build, /skill\.lock\.json/);
   assert.match(build, /fn verify/);
   assert.match(build, /enclosed_name/);
@@ -2343,6 +2344,36 @@ test('la detección de harnesses usa el runtime Jintia administrado', async () =
   assert.doesNotMatch(detect, /payload::installed_skill_path|installed_skill_path|skill_dir|legacy_skill_dir/);
   assert.doesNotMatch(harnesses, /use crate::payload;/);
   assert.match(manage, /runtimes::resolve_skill/);
+});
+
+test('las plantillas provienen del runtime Jintia administrado', async () => {
+  const config = await readFile(new URL('src-tauri/src/config.rs', root), 'utf8');
+  const themeStart = config.indexOf('pub fn theme_exists(');
+  const themeEnd = config.indexOf('\npub struct ActiveInstitution', themeStart);
+  const themeFn = config.slice(themeStart, themeEnd);
+  const listStart = config.indexOf('pub fn list_templates()');
+  const listEnd = config.indexOf('\npub fn get_active_template()', listStart);
+  const listFn = config.slice(listStart, listEnd);
+
+  assert.match(config, /portable_skill_source_dir/);
+  assert.match(config, /themes/);
+  assert.match(config, /meta\.json/);
+  assert.match(config, /fs::read_dir/);
+  assert.match(config, /TemplateMeta/);
+  assert.match(config, /theme_exists/);
+  assert.doesNotMatch(config, /include_dir|\$OUT_DIR\/jintia-skill\/themes|static THEMES|THEMES\.(get_file|dirs)/);
+  assert.match(themeFn, /themes/);
+  assert.match(themeFn, /meta\.json/);
+  assert.doesNotMatch(themeFn, /THEMES|OUT_DIR/);
+  assert.match(listFn, /fs::read_dir/);
+  assert.match(listFn, /meta\.json/);
+  assert.match(listFn, /TemplateMeta/);
+  assert.match(listFn, /theme_exists/);
+  assert.match(listFn, /featured/);
+  assert.match(listFn, /name/);
+  assert.match(listFn, /sort/);
+  assert.doesNotMatch(listFn, /jintia-clasico|jintia-cuaderno|jintia-tecnico/);
+  assert.match(config, /DEFAULT_THEME:\s*&str\s*=\s*"jintia-clasico"/);
 });
 
 test('paths.rs conoce el layout npm del paquete Jintia en Windows y Unix', async () => {
