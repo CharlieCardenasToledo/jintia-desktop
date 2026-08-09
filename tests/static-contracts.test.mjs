@@ -153,9 +153,12 @@ test('skill:sync sincroniza solo el contrato MCP de Desktop', async () => {
   assert.match(sync, /replace\(manifestFile, manifestBytes\)/);
   assert.match(sync, /writeFile/);
   assert.match(sync, /import\s*\{[^}]*\bunlink\b[^}]*\}\s*from\s*"node:fs\/promises"/s);
-  const replaceStart = sync.indexOf('async function replace(');
-  const replaceEnd = sync.indexOf('\n}\n', replaceStart);
-  const replaceFn = sync.slice(replaceStart, replaceEnd + 2);
+  const normalizedSync = sync.replace(/\r\n?/g, '\n');
+  const replaceStart = normalizedSync.indexOf('async function replace(');
+  const replaceEnd = normalizedSync.indexOf('\n}\n', replaceStart);
+  assert.ok(replaceStart >= 0, 'replace() debe existir en skill:sync');
+  assert.ok(replaceEnd > replaceStart, 'replace() debe poder aislarse independientemente de CRLF/LF');
+  const replaceFn = normalizedSync.slice(replaceStart, replaceEnd + 2);
   assert.match(replaceFn, /writeFile/);
   assert.match(replaceFn, /unlink/);
   assert.match(replaceFn, /rename/);
