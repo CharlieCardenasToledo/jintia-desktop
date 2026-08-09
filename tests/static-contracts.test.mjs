@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
 
@@ -35,6 +35,18 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.match(paths, /legacy_skill_dir/);
   assert.match(payload, /jintia-skill-\{managed_version\}\.zip/);
   assert.match(payload, /instructional-designer-skill\.backup-/);
+});
+
+test('resources conserva solo metadata MCP y no artifacts de Skill', async () => {
+  const [resources, attributes] = await Promise.all([
+    readdir(new URL('src-tauri/resources/', root)),
+    readFile(new URL('.gitattributes', root), 'utf8'),
+  ]);
+  assert.ok(resources.includes('jintia-release-manifest.json'));
+  assert.deepEqual(resources.filter(name => name.endsWith('.zip')), []);
+  assert.doesNotMatch(attributes, /src-tauri\/resources\/\*\.zip\s+binary/);
+  assert.match(attributes, /jintia-release-manifest\.json text eol=lf/);
+  assert.match(attributes, /skill\.lock\.json text eol=lf/);
 });
 
 test('la arquitectura separa la app de escritorio y el paquete instalable de la skill', async () => {
