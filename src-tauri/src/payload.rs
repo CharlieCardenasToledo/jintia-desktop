@@ -753,10 +753,7 @@ pub fn skill_is_current() -> bool {
     if !path.join("SKILL.md").is_file() {
         return false;
     }
-    if portable_skill_src().is_some() {
-        return installed_portable_matches(&path);
-    }
-    installed_payload_matches(&path)
+    installed_portable_matches(&path)
 }
 
 pub fn openai_plugin_is_installed() -> bool {

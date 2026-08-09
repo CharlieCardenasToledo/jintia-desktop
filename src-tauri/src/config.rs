@@ -6,7 +6,7 @@ use crate::paths::{
 use crate::payload::{
     config_file_path, installed_skill_path, installed_skill_version, openai_plugin_is_current,
     openai_plugin_is_installed, openai_plugin_path, portable_skill_version, skill_is_current,
-    skill_is_installed, sync_user_config_to_install, SKILL_VERSION,
+    skill_is_installed, sync_user_config_to_install,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -390,7 +390,7 @@ pub fn setup_status() -> SetupStatus {
         skill_installed: skill_is_installed(),
         skill_current: skill_is_current(),
         skill_version: installed_skill_version(),
-        available_skill_version: portable_skill_version().unwrap_or_else(|| SKILL_VERSION.to_string()),
+        available_skill_version: portable_skill_version().unwrap_or_default(),
         openai_plugin_installed: openai_plugin_is_installed(),
         openai_plugin_current: openai_plugin_is_current(),
         openai_plugin_path: openai_plugin_path(),

@@ -2643,11 +2643,14 @@ test('los perfiles visuales provienen del runtime npm administrado', async () =>
   assert.match(cmd, /"profiles"/);
 });
 
-test('el estado de la Skill instalada prioriza el runtime npm', async () => {
-  const payload = await readFile(
+test('el estado de la Skill requiere el runtime npm administrado', async () => {
+  const [payload, config] = await Promise.all([
+    readFile(
     new URL('src-tauri/src/payload.rs', root),
     'utf8'
-  );
+    ),
+    readFile(new URL('src-tauri/src/config.rs', root), 'utf8')
+  ]);
 
   // Helper centralizado existe y lee package.json
   assert.match(payload, /fn read_skill_package_version/);
@@ -2676,21 +2679,24 @@ test('el estado de la Skill instalada prioriza el runtime npm', async () => {
     'package.json debe tener prioridad sobre VERSION'
   );
 
-  // skill_is_current prioriza portable runtime como autoridad
+  // skill_is_current solo acepta la autoridad npm administrada
   const curStart = payload.indexOf('pub fn skill_is_current()');
   const curEnd = payload.indexOf('\npub fn openai_plugin_is_installed', curStart);
   const curFn = payload.slice(curStart, curEnd);
-  assert.match(curFn, /portable_skill_src/);
+  assert.match(curFn, /installed_skill_dir/);
+  assert.match(curFn, /SKILL\.md/);
   assert.match(curFn, /installed_portable_matches/);
-  assert.match(curFn, /installed_payload_matches/);
+  assert.doesNotMatch(curFn, /installed_payload_matches|SKILL_VERSION|SKILL_PACKAGE_JSON/);
 
-  // No usa OR entre ambas fuentes (serían fuentes equivalentes, no lo son)
-  assert.doesNotMatch(
-    curFn,
-    /installed_portable_matches[\s\S]{0,20}\|\|[\s\S]{0,20}installed_payload_matches/
-  );
-  assert.doesNotMatch(
-    curFn,
-    /installed_payload_matches[\s\S]{0,20}\|\|[\s\S]{0,20}installed_portable_matches/
-  );
+  // Si el runtime npm falta, installed_portable_matches devuelve false.
+  assert.match(matchFn, /portable_skill_src/);
+  assert.match(matchFn, /let Some\(src\) = portable_skill_src\(\) else \{[\s\S]*return false/);
+
+  const setupStart = config.indexOf('pub fn setup_status()');
+  const setupEnd = config.indexOf('\n}', setupStart) + 2;
+  const setupFn = config.slice(setupStart, setupEnd);
+  assert.match(setupFn, /portable_skill_version/);
+  assert.match(setupFn, /unwrap_or_default/);
+  assert.doesNotMatch(setupFn, /SKILL_VERSION/);
+  assert.doesNotMatch(config, /SKILL_VERSION/);
 });
