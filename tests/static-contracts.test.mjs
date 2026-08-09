@@ -49,33 +49,44 @@ test('resources conserva solo metadata MCP y no artifacts de Skill', async () =>
   assert.match(attributes, /skill\.lock\.json text eol=lf/);
 });
 
-test('NotebookLM MCP ejecuta npx-cli con el Node administrado', async () => {
-  const [paths, mcp] = await Promise.all([
+test('NotebookLM MCP ejecuta el entrypoint instalado con el Node administrado', async () => {
+  const [paths, mcp, runtimes] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
   ]);
   assert.match(paths, /portable_node_exe/);
-  assert.match(paths, /portable_npx_cli/);
-  const npxStart = paths.indexOf('pub fn portable_npx_cli()');
+  assert.match(paths, /portable_npm_cli/);
+  assert.match(paths, /portable_notebooklm_mcp_prefix/);
+  assert.match(paths, /portable_notebooklm_mcp_package_dir/);
+  assert.match(paths, /portable_notebooklm_mcp_lock/);
+  assert.match(paths, /portable_notebooklm_mcp_entrypoint/);
+  const npxStart = paths.indexOf('pub fn portable_npm_cli()');
   const npxEnd = paths.indexOf('\npub fn', npxStart + 1);
   const npxFn = paths.slice(npxStart, npxEnd < 0 ? paths.length : npxEnd);
   assert.match(npxFn, /portable_node_prefix/);
   assert.match(npxFn, /node_modules/);
   assert.match(npxFn, /npm/);
   assert.match(npxFn, /bin/);
-  assert.match(npxFn, /npx-cli\.js/);
+  assert.match(npxFn, /npm-cli\.js/);
 
-  assert.match(mcp, /fn managed_npx/);
+  assert.match(mcp, /fn managed_mcp/);
   assert.match(mcp, /portable_node_exe/);
-  assert.match(mcp, /portable_npx_cli/);
+  assert.match(mcp, /portable_notebooklm_mcp_entrypoint/);
   assert.match(mcp, /NOTEBOOKLM_MCP_NODE_REQUIREMENT/);
+  assert.match(mcp, /NOTEBOOKLM_MCP_NPM_INTEGRITY/);
+  assert.match(runtimes, /install_notebooklm_mcp/);
+  assert.match(runtimes, /package-lock\.json/);
+  assert.match(runtimes, /package-lock-only/);
+  assert.match(runtimes, /npmIntegrity|NPM_INTEGRITY/);
+  assert.match(runtimes, /npm.*ci|\["ci"/);
   assert.match(mcp, /--version/);
   assert.match(mcp, /Version::parse/);
   assert.match(mcp, /VersionReq::parse/);
   assert.match(mcp, /matches/);
   assert.match(mcp, /is_file/);
   assert.match(mcp, /NOTEBOOKLM_MCP_PACKAGE/);
-  assert.doesNotMatch(mcp, /portable_npx_bin|fn npx_command|Command::new\("node"\)|Command::new\("npx"\)|Command::new\("npx\.cmd"\)|toml_edit::value\("npx"\)/);
+  assert.doesNotMatch(mcp, /ManagedNpx|managed_npx|portable_npx_cli|npx-cli\.js|Command::new\("node"\)|Command::new\("npx"\)|Command::new\("npx\.cmd"\)|toml_edit::value\("npx"\)/);
 
   for (const [name, marker] of [
     ['configure_mcp', 'pub fn configure_mcp(target: String)'],
@@ -84,21 +95,20 @@ test('NotebookLM MCP ejecuta npx-cli con el Node administrado', async () => {
     const start = mcp.indexOf(marker);
     const end = mcp.indexOf('\npub fn ', start + marker.length);
     const fn = mcp.slice(start, end < 0 ? mcp.length : end);
-    assert.match(fn, /managed_npx/);
+    assert.match(fn, /managed_mcp/);
     assert.match(fn, /managed\.node/);
-    assert.match(fn, /managed\.cli/);
-    assert.ok(fn.indexOf('managed_npx') < fn.indexOf('backup_file'));
-    assert.ok(fn.indexOf('managed_npx') < fn.indexOf('atomic_write'));
+    assert.match(fn, /managed\.entrypoint/);
+    assert.ok(fn.indexOf('managed_mcp') < fn.indexOf('backup_file'));
+    assert.ok(fn.indexOf('managed_mcp') < fn.indexOf('atomic_write'));
     assert.ok(name);
   }
 
   const spawnStart = mcp.indexOf('fn spawn() -> Result<Self, String>');
   const spawnEnd = mcp.indexOf('\n    fn ', spawnStart + 1);
   const spawnFn = mcp.slice(spawnStart, spawnEnd < 0 ? mcp.length : spawnEnd);
-  assert.match(spawnFn, /managed_npx/);
+  assert.match(spawnFn, /managed_mcp/);
   assert.match(spawnFn, /Command::new\(&managed\.node\)/);
-  assert.match(spawnFn, /\.arg\(&managed\.cli\)/);
-  assert.match(spawnFn, /NOTEBOOKLM_MCP_PACKAGE/);
+  assert.match(spawnFn, /\.arg\(&managed\.entrypoint\)/);
 });
 
 test('la arquitectura separa la app de escritorio y el paquete instalable de la skill', async () => {
@@ -186,6 +196,8 @@ test('skill:verify valida solo el contrato MCP consumido por Desktop', async () 
   assert.match(checker, /package/);
   assert.match(checker, /version/);
   assert.match(checker, /requiredString\(lock\.mcp, "node"\)/);
+  assert.match(checker, /requiredString\(lock\.mcp, "npmIntegrity"\)/);
+  assert.match(checker, /sha512-/);
   assert.match(checker, /JSON\.stringify/);
   assert.match(checker, /src-tauri\/resources/);
   assert.match(checker, /Contrato MCP de Desktop/);
@@ -215,6 +227,8 @@ test('skill:sync sincroniza solo el contrato MCP de Desktop', async () => {
   assert.match(sync, /manifest\.mcp/);
   assert.match(sync, /manifest\.mcp\.node/);
   assert.match(sync, /trim/);
+  assert.match(sync, /manifest\.mcp\.npmIntegrity/);
+  assert.match(sync, /sha512-/);
   assert.ok(
     sync.indexOf('manifest.mcp.node') < sync.indexOf('replace(manifestFile, manifestBytes)'),
     'mcp.node debe validarse antes de reemplazar el manifest local'

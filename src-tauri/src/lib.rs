@@ -79,6 +79,15 @@ async fn download_skill_runtime(app: tauri::AppHandle) -> ActionResult {
 }
 
 #[tauri::command]
+async fn install_notebooklm_mcp_runtime() -> ActionResult {
+    tauri::async_runtime::spawn_blocking(|| {
+        runtimes::install_notebooklm_mcp()
+            .map(|_| ActionResult::ok("NotebookLM MCP administrado instalado correctamente."))
+            .unwrap_or_else(ActionResult::error)
+    }).await.unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar NotebookLM MCP: {e}")))
+}
+
+#[tauri::command]
 async fn get_skill_runtime_status() -> serde_json::Value {
     serde_json::json!({
         "hasGlobal": runtimes::global_skill_available(),
@@ -489,6 +498,7 @@ pub fn run() {
             download_python_runtime,
             get_python_runtime_status,
             download_skill_runtime,
+            install_notebooklm_mcp_runtime,
             get_skill_runtime_status,
             get_visual_install_profiles,
             install_dependency,

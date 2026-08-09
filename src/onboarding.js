@@ -18,6 +18,7 @@ import {
   getSkillPath,
   goToOnboardingStep,
   installDependency,
+  installNotebookLmMcpRuntime,
   installOpenAIPlugin,
   installSkill,
   listTemplates,
@@ -1773,6 +1774,7 @@ async function performDependencyInstall(name) {
   }
   else if (name === "Vivliostyle CLI") result = await installVivliostyleCli();
   else if (name === "Jintia Skill") result = await downloadSkillRuntime();
+  else if (name === "NotebookLM MCP") result = await installNotebookLmMcpRuntime();
   else result = await installDependency(name, true);
   toast(result.message, result.success ? "success" : "error", 9000);
   runtime.dependencies = await checkDependencies();

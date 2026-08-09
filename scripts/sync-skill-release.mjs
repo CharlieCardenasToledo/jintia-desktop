@@ -46,6 +46,9 @@ if (typeof manifest.mcp.version !== "string" || manifest.mcp.version.trim() === 
 if (typeof manifest.mcp.node !== "string" || manifest.mcp.node.trim() === "") {
   throw new Error("El manifest no contiene mcp.node válido");
 }
+if (typeof manifest.mcp.npmIntegrity !== "string" || !manifest.mcp.npmIntegrity.startsWith("sha512-") || manifest.mcp.npmIntegrity.length <= "sha512-".length) {
+  throw new Error("El manifest no contiene mcp.npmIntegrity válido");
+}
 
 await replace(manifestFile, manifestBytes);
 

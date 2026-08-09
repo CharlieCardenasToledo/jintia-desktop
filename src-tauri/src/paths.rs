@@ -374,13 +374,32 @@ pub fn portable_skill_source_dir() -> PathBuf {
     portable_skill_npm_source_dir()
 }
 
-pub fn portable_npx_cli() -> PathBuf {
+pub fn portable_npm_cli() -> PathBuf {
     let prefix = portable_node_prefix();
     if cfg!(target_os = "windows") {
-        prefix.join("node_modules").join("npm").join("bin").join("npx-cli.js")
+        prefix.join("node_modules").join("npm").join("bin").join("npm-cli.js")
     } else {
-        prefix.join("lib").join("node_modules").join("npm").join("bin").join("npx-cli.js")
+        prefix.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js")
     }
+}
+
+pub fn portable_notebooklm_mcp_prefix() -> PathBuf {
+    portable_runtimes_dir().join("notebooklm-mcp")
+}
+
+pub fn portable_notebooklm_mcp_package_dir() -> PathBuf {
+    portable_notebooklm_mcp_prefix()
+        .join("node_modules")
+        .join("@charlie.act7")
+        .join("gemini-notebook-mcp")
+}
+
+pub fn portable_notebooklm_mcp_entrypoint() -> PathBuf {
+    portable_notebooklm_mcp_package_dir().join("dist").join("index.js")
+}
+
+pub fn portable_notebooklm_mcp_lock() -> PathBuf {
+    portable_notebooklm_mcp_prefix().join("package-lock.json")
 }
 
 pub fn portable_skill_bin() -> PathBuf {

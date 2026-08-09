@@ -168,6 +168,16 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
     // El compilador LaTeX es opcional. La skill puede renderizar a través de
     // Vivliostyle en lugar de LaTeX. Detección local únicamente para capacidades
     // avanzadas (plantillas LaTeX personalizadas, si existen en el futuro).
+    dependencies.push(DependencyStatus {
+        name: "NotebookLM MCP".to_string(),
+        installed: crate::runtimes::portable_notebooklm_mcp_installed(),
+        version: if crate::runtimes::portable_notebooklm_mcp_installed() { Some(crate::mcp::NOTEBOOKLM_MCP_VERSION.to_string()) } else { None },
+        required: true,
+        installable: true,
+        note: "Servidor MCP administrado para consultar fuentes de NotebookLM.".to_string(),
+        command: "node dist/index.js".to_string(),
+    });
+
     let latex = command_exists("pdflatex") && command_exists("biber");
     dependencies.push(DependencyStatus {
         name: "Compilador LaTeX".to_string(),
@@ -276,6 +286,11 @@ pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
     // Jintia Skill se descarga como portable via comando Tauri
     if name == "Jintia Skill" {
         return ActionResult::error("Usa el botón 'Descargar Jintia Skill' en el panel de dependencias.");
+    }
+    if name == "NotebookLM MCP" {
+        return crate::runtimes::install_notebooklm_mcp()
+            .map(|_| ActionResult::ok("NotebookLM MCP administrado instalado correctamente."))
+            .unwrap_or_else(ActionResult::error);
     }
 
     #[cfg(target_os = "windows")]

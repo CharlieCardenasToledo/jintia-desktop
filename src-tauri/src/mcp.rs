@@ -1,5 +1,11 @@
 use crate::models::{ActionResult, NotebookLmAuthStatus, NotebookLmEntry};
-pub use crate::release::{NOTEBOOKLM_MCP_NODE_REQUIREMENT, NOTEBOOKLM_MCP_PACKAGE};
+pub use crate::release::{
+    NOTEBOOKLM_MCP_NODE_REQUIREMENT,
+    NOTEBOOKLM_MCP_NPM_INTEGRITY,
+    NOTEBOOKLM_MCP_PACKAGE,
+    NOTEBOOKLM_MCP_PACKAGE_NAME,
+    NOTEBOOKLM_MCP_VERSION,
+};
 use crate::paths::{
     atomic_write, backup_file, claude_code_config_path, claude_desktop_config_path, path_text,
 };
@@ -21,22 +27,25 @@ const GOOGLE_SECURE_AUTH_COOKIES: [&[u8]; 2] = [b"__Secure-1PSID", b"__Secure-3P
 static AUTH_VALIDATION: Mutex<Option<(Instant, NotebookLmAuthStatus)>> = Mutex::new(None);
 static MCP_CONFIG_OPERATION: Mutex<()> = Mutex::new(());
 
-struct ManagedNpx {
+struct ManagedMcp {
     node: PathBuf,
-    cli: PathBuf,
+    entrypoint: PathBuf,
 }
 
-fn managed_npx() -> Result<ManagedNpx, String> {
+fn managed_mcp() -> Result<ManagedMcp, String> {
     let node = crate::paths::portable_node_exe();
-    let cli = crate::paths::portable_npx_cli();
+    let entrypoint = crate::paths::portable_notebooklm_mcp_entrypoint();
     if !node.is_file() {
         return Err("NotebookLM MCP requiere el Node.js administrado por Jintia.".to_string());
     }
-    if !cli.is_file() {
-        return Err("El runtime Node.js administrado no contiene npx-cli.js.".to_string());
+    if !crate::runtimes::portable_notebooklm_mcp_installed() {
+        return Err("NotebookLM MCP no está instalado o no coincide con el contrato aprobado.".to_string());
     }
     validate_managed_node(&node)?;
-    Ok(ManagedNpx { node, cli })
+    if !entrypoint.is_file() {
+        return Err("La instalación administrada de NotebookLM MCP no contiene dist/index.js.".to_string());
+    }
+    Ok(ManagedMcp { node, entrypoint })
 }
 
 fn managed_node_version(node: &std::path::Path) -> Result<Version, String> {
@@ -75,7 +84,7 @@ pub fn configure_mcp(target: String) -> ActionResult {
             return ActionResult::error("El estado interno de configuración MCP está bloqueado.")
         }
     };
-    let managed = match managed_npx() {
+    let managed = match managed_mcp() {
         Ok(managed) => managed,
         Err(error) => return ActionResult::error(error),
     };
@@ -131,9 +140,7 @@ pub fn configure_mcp(target: String) -> ActionResult {
     root["mcpServers"]["notebooklm"] = json!({
         "command": managed.node.to_string_lossy(),
         "args": [
-            managed.cli.to_string_lossy(),
-            "-y",
-            NOTEBOOKLM_MCP_PACKAGE
+            managed.entrypoint.to_string_lossy()
         ]
     });
     if root == previous {
@@ -181,7 +188,7 @@ pub fn configure_codex_mcp() -> ActionResult {
             return ActionResult::error("El estado interno de configuración MCP está bloqueado.")
         }
     };
-    let managed = match managed_npx() {
+    let managed = match managed_mcp() {
         Ok(managed) => managed,
         Err(error) => return ActionResult::error(error),
     };
@@ -255,9 +262,7 @@ pub fn configure_codex_mcp() -> ActionResult {
     doc["mcp_servers"]["notebooklm"]["command"] =
         toml_edit::value(managed.node.to_string_lossy().into_owned());
     let mut args = toml_edit::Array::new();
-    args.push(managed.cli.to_string_lossy().into_owned());
-    args.push("-y");
-    args.push(NOTEBOOKLM_MCP_PACKAGE);
+    args.push(managed.entrypoint.to_string_lossy().into_owned());
     doc["mcp_servers"]["notebooklm"]["args"] = toml_edit::value(args);
 
     let next = doc.to_string();
@@ -349,11 +354,9 @@ struct McpConnection {
 
 impl McpConnection {
     fn spawn() -> Result<Self, String> {
-        let managed = managed_npx()?;
+        let managed = managed_mcp()?;
         let mut child = Command::new(&managed.node)
-            .arg(&managed.cli)
-            .arg("-y")
-            .arg(NOTEBOOKLM_MCP_PACKAGE)
+            .arg(&managed.entrypoint)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -906,7 +909,7 @@ mod tests {
         .unwrap();
 
         if !crate::paths::portable_node_exe().is_file()
-            || !crate::paths::portable_npx_cli().is_file()
+            || !crate::runtimes::portable_notebooklm_mcp_installed()
         {
             let result = configure_codex_mcp();
             assert!(!result.success);
@@ -931,7 +934,7 @@ mod tests {
         let text = fs::read_to_string(dir.join("config.toml")).unwrap();
         assert!(text.contains("model = \"gpt-5.6-luna\""), "preserva claves ajenas");
         assert!(text.contains("[projects.'D:\\Curso']"), "preserva otras tablas");
-        assert!(text.contains("npx-cli.js"));
+        assert!(text.contains("dist/index.js"));
         assert!(text.contains(NOTEBOOKLM_MCP_PACKAGE));
         assert!(!text.contains("notebooklm-mcp@latest"), "reemplaza el paquete viejo en notebooklm");
         assert!(text.contains("[mcp_servers.gemini-notebook]"), "no toca el servidor duplicado, solo avisa");

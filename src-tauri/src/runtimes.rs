@@ -707,6 +707,54 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
 
 // ==================== NPM PACKAGES ====================
 
+pub fn portable_notebooklm_mcp_installed() -> bool {
+    let package = paths::portable_notebooklm_mcp_package_dir().join("package.json");
+    let lock = paths::portable_notebooklm_mcp_lock();
+    let Ok(package) = fs::read_to_string(package) else { return false; };
+    let Ok(package) = serde_json::from_str::<serde_json::Value>(&package) else { return false; };
+    let Ok(lock) = fs::read_to_string(lock) else { return false; };
+    let Ok(lock) = serde_json::from_str::<serde_json::Value>(&lock) else { return false; };
+    package.get("name").and_then(|v| v.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME)
+        && package.get("version").and_then(|v| v.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_VERSION)
+        && lock.pointer("/packages/node_modules/@charlie.act7/gemini-notebook-mcp/integrity").and_then(|v| v.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_NPM_INTEGRITY)
+        && paths::portable_notebooklm_mcp_entrypoint().is_file()
+}
+
+pub fn install_notebooklm_mcp() -> Result<(), String> {
+    let node = paths::portable_node_exe();
+    let npm = paths::portable_npm_cli();
+    if !node.is_file() || !npm.is_file() {
+        return Err("NotebookLM MCP requiere Node.js y npm administrados por Jintia.".to_string());
+    }
+    let root = paths::portable_runtimes_dir();
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let stage = root.join(format!(".notebooklm-mcp-stage-{}", paths::timestamp()));
+    fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
+    let package = serde_json::json!({"private": true, "dependencies": {crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME: crate::mcp::NOTEBOOKLM_MCP_VERSION}});
+    let result = (|| -> Result<(), String> {
+        fs::write(stage.join("package.json"), serde_json::to_vec_pretty(&package).unwrap()).map_err(|e| e.to_string())?;
+        let run = |args: &[&str]| -> Result<(), String> {
+            let output = Command::new(&node).arg(&npm).args(args).current_dir(&stage).output().map_err(|e| e.to_string())?;
+            if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).to_string()); }
+            Ok(())
+        };
+        run(&["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"])?;
+        let lock: serde_json::Value = serde_json::from_slice(&fs::read(stage.join("package-lock.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let entry = lock.pointer("/packages/node_modules/@charlie.act7/gemini-notebook-mcp").ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
+        if entry.get("version").and_then(|v| v.as_str()) != Some(crate::mcp::NOTEBOOKLM_MCP_VERSION) || entry.get("integrity").and_then(|v| v.as_str()) != Some(crate::mcp::NOTEBOOKLM_MCP_NPM_INTEGRITY) { return Err("El integrity de NotebookLM MCP no coincide con el contrato aprobado.".to_string()); }
+        run(&["ci", "--ignore-scripts", "--no-audit", "--no-fund"])?;
+        if !stage.join("node_modules/@charlie.act7/gemini-notebook-mcp/dist/index.js").is_file() { return Err("La instalación de NotebookLM MCP no contiene dist/index.js.".to_string()); }
+        let active = paths::portable_notebooklm_mcp_prefix();
+        let backup = root.join(format!(".notebooklm-mcp-backup-{}", paths::timestamp()));
+        if active.exists() { fs::rename(&active, &backup).map_err(|e| e.to_string())?; }
+        if let Err(error) = fs::rename(&stage, &active) { if backup.exists() { let _ = fs::rename(&backup, &active); } return Err(error.to_string()); }
+        if backup.exists() { let _ = fs::remove_dir_all(backup); }
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_dir_all(&stage); }
+    result
+}
+
 fn npm_exe() -> Option<std::path::PathBuf> {
     let node_exe = paths::portable_node_exe();
     if !node_exe.is_file() {

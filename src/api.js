@@ -41,6 +41,10 @@ export async function checkDependencies() {
   return invoke("check_dependencies");
 }
 
+export async function installNotebookLmMcpRuntime() {
+  return invoke("install_notebooklm_mcp_runtime");
+}
+
 export async function getVisualInstallProfiles() {
   return invoke("get_visual_install_profiles");
 }
