@@ -18,7 +18,8 @@ function npmRun(prefix, args) {
   log(`npm terminó correctamente: ${args.join(' ')}`);
 }
 function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }
-function exactVersion(value) { return typeof value === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value); }
+function exactVersion(value) { return typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value); }
+function nodeRequirement(value) { return typeof value === 'string' && /^(?:[<>=~^]*\s*)?\d+(?:\.\d+){1,2}(?:\s+(?:[<>=~^]*\s*)?\d+(?:\.\d+){1,2})*$/.test(value); }
 function sri(value) { return typeof value === 'string' && /^sha512-[A-Za-z0-9+/]+={0,2}$/.test(value); }
 function resolveBin(packageDir, manifest) {
   const value = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.['gemini-notebook-mcp'];
@@ -40,8 +41,10 @@ function browser(bin, action, managedRoot) {
   const executable = realpathSync(status.executablePath);
   const rel = relative(realpathSync(managedRoot), executable);
   if (!statSync(executable).isFile() || !rel || isAbsolute(rel) || rel.startsWith('..')) throw new Error('Chromium queda fuera del entorno administrado.');
+  return executable;
 }
 
+try {
 log(`prefijo Jintia: ${jintiaPrefix}`);
 mkdirSync(jintiaPrefix, { recursive: true });
 const [jintiaPackage, jintiaRange] = [JINTIA_SPEC.slice(0, JINTIA_SPEC.lastIndexOf('@')), JINTIA_SPEC.slice(JINTIA_SPEC.lastIndexOf('@') + 1)];
@@ -54,21 +57,30 @@ if (jintia.name !== '@charlie.act7/jintia' || !exactVersion(jintia.version)) thr
 log(`Jintia instalado: ${jintia.name}@${jintia.version}`);
 if (contract.$schemaVersion !== '1.0.0' || contract.repository !== 'CharlieCardenasToledo/jintia' || !exactVersion(contract.minimumDesktopVersion)) throw new Error('Contrato Jintia inválido.');
 const mcp = contract.mcp;
-if (mcp?.package !== '@charlie.act7/gemini-notebook-mcp' || !exactVersion(mcp.version) || typeof mcp.node !== 'string' || !mcp.node || !sri(mcp.npmIntegrity)) throw new Error('Contrato MCP inválido.');
+if (mcp?.package !== '@charlie.act7/gemini-notebook-mcp' || !exactVersion(mcp.version) || !nodeRequirement(mcp.node) || !sri(mcp.npmIntegrity)) throw new Error('Contrato MCP inválido.');
 log(`contrato distribuido: MCP ${mcp.package}@${mcp.version}`);
 
 log(`creando prefijo MCP: ${mcpPrefix}`);
 mkdirSync(mcpPrefix, { recursive: true });
 writeFileSync(join(mcpPrefix, 'package.json'), JSON.stringify({ private: true, dependencies: { [mcp.package]: mcp.version } }));
 npmRun(mcpPrefix, ['install', '--package-lock-only']);
-npmRun(mcpPrefix, ['ci']);
 const lock = readJson(join(mcpPrefix, 'package-lock.json'));
 const entry = lock.packages?.[`node_modules/${mcp.package}`];
 if (entry?.version !== mcp.version || entry?.integrity !== mcp.npmIntegrity) throw new Error('El lock MCP no coincide con el contrato instalado.');
 log(`integrity del lock coincide con el contrato distribuido`);
+npmRun(mcpPrefix, ['ci']);
 const mcpRoot = join(mcpPrefix, 'node_modules', ...mcp.package.split('/'));
-const bin = resolveBin(mcpRoot, readJson(join(mcpRoot, 'package.json')));
+const installedMcp = readJson(join(mcpRoot, 'package.json'));
+if (installedMcp.name !== mcp.package || installedMcp.version !== mcp.version) throw new Error('El package MCP instalado no coincide con el contrato.');
+const bin = resolveBin(mcpRoot, installedMcp);
 log(`bin público resuelto: ${bin}`);
-browser(bin, 'install', join(mcpPrefix, 'node_modules'));
-browser(bin, 'status', join(mcpPrefix, 'node_modules'));
+const first = browser(bin, 'install', join(mcpPrefix, 'node_modules'));
+const firstStatus = browser(bin, 'status', join(mcpPrefix, 'node_modules'));
+const second = browser(bin, 'install', join(mcpPrefix, 'node_modules'));
+const secondStatus = browser(bin, 'status', join(mcpPrefix, 'node_modules'));
+if (![firstStatus, second, secondStatus].every((path) => path === first)) throw new Error('Chromium no fue idempotente.');
 console.log(`Jintia ${jintia.version} -> NotebookLM MCP ${mcp.version} browser contract OK`);
+} finally {
+  rmSync(jintiaPrefix, { recursive: true, force: true });
+  rmSync(mcpPrefix, { recursive: true, force: true });
+}

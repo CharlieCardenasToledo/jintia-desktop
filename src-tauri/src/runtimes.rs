@@ -1425,6 +1425,9 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
         format!("La prueba de humo devolvió JSON inválido: {e}")
     })?;
 
+    crate::release::managed_mcp_contract_from(&pkg_dir, env!("CARGO_PKG_VERSION"))
+        .map_err(|error| { let _ = fs::remove_dir_all(&stage); error })?;
+
     emit_skill_progress(app, "activating", 92.0, "Activando instalación...");
 
     let active = paths::portable_skill_prefix();

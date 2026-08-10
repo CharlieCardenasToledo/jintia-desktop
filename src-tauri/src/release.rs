@@ -80,9 +80,16 @@ pub fn parse_managed_mcp_contract(
 }
 
 pub fn managed_mcp_contract_from(package_root: &Path, desktop_version: &str) -> Result<ManagedMcpContract, String> {
-    let package_json = fs::read(package_root.join("package.json"))
+    let root = fs::canonicalize(package_root).map_err(|e| format!("No se pudo resolver el package Jintia: {e}"))?;
+    if !root.is_dir() { return Err("El package Jintia no es un directorio.".into()); }
+    let package_path = fs::canonicalize(root.join("package.json")).map_err(|e| format!("package.json de Jintia inválido: {e}"))?;
+    let release_path = fs::canonicalize(root.join("release").join("release-config.json")).map_err(|e| format!("release/release-config.json inválido: {e}"))?;
+    if !package_path.starts_with(&root) || !release_path.starts_with(&root) || !package_path.is_file() || !release_path.is_file() {
+        return Err("El contrato Jintia escapa del package administrado.".into());
+    }
+    let package_json = fs::read(package_path)
         .map_err(|_| "El Jintia administrado no contiene el contrato MCP distribuido. Actualiza Jintia desde Configuración > Entorno.".to_string())?;
-    let release_config = fs::read(package_root.join("release").join("release-config.json"))
+    let release_config = fs::read(release_path)
         .map_err(|_| "El Jintia administrado no contiene el contrato MCP distribuido. Actualiza Jintia desde Configuración > Entorno.".to_string())?;
     parse_managed_mcp_contract(&package_json, &release_config, desktop_version)
 }

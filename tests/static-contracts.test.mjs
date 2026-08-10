@@ -98,6 +98,14 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(smoke, /browser/);
   assert.match(smoke, /installed/);
   assert.match(smoke, /hermetic/);
+  assert.match(smoke, /installedMcp\.name/);
+  assert.match(smoke, /installedMcp\.version/);
+  assert.match(smoke, /finally/);
+  assert.match(smoke, /rmSync\(jintiaPrefix/);
+  assert.match(smoke, /rmSync\(mcpPrefix/);
+  assert.match(smoke, /const first = browser/);
+  assert.match(smoke, /const second = browser/);
+  assert.match(smoke, /firstStatus/);
   assert.match(release, /managed_mcp_contract/);
   assert.match(release, /portable_skill_npm_package_dir/);
   assert.match(release, /release["'].*release-config\.json|release-config\.json/);
@@ -109,6 +117,7 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.doesNotMatch(runtimes, /pointer\(\s*"\/packages\/node_modules\/@charlie\.act7\/gemini-notebook-mcp/s);
   assert.match(runtimes, /package-lock\.json/);
   assert.match(runtimes, /package-lock-only/);
+  assert.match(runtimes, /managed_mcp_contract_from/);
   assert.match(runtimes, /contract\.npm_integrity/);
   assert.match(runtimes, /npm.*ci|\["ci"/);
   assert.match(mcp, /--version/);
