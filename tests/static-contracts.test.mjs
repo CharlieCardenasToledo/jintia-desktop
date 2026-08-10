@@ -64,11 +64,12 @@ test('resources conserva solo metadata MCP y no artifacts de Skill', async () =>
 });
 
 test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
-  const [paths, mcp, runtimes, smoke] = await Promise.all([
+  const [paths, mcp, runtimes, smoke, release] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
     readFile(new URL('scripts/smoke-notebooklm-browser.mjs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/release.rs', root), 'utf8'),
   ]);
   assert.match(paths, /portable_node_exe/);
   assert.match(paths, /portable_npm_cli/);
@@ -91,27 +92,31 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(runtimes, /install/);
   assert.match(runtimes, /status/);
   assert.match(runtimes, /rollback|backup/);
-  assert.match(smoke, /skill\.lock\.json/);
+  assert.match(smoke, /@charlie\.act7\/jintia@latest/);
+  assert.match(smoke, /release-config\.json/);
+  assert.match(smoke, /package-lock\.json/);
   assert.match(smoke, /browser/);
   assert.match(smoke, /installed/);
   assert.match(smoke, /hermetic/);
-  assert.match(mcp, /NOTEBOOKLM_MCP_NODE_REQUIREMENT/);
-  assert.match(mcp, /NOTEBOOKLM_MCP_NPM_INTEGRITY/);
+  assert.match(release, /managed_mcp_contract/);
+  assert.match(release, /portable_skill_npm_package_dir/);
+  assert.match(release, /release["'].*release-config\.json|release-config\.json/);
+  assert.match(mcp, /managed_mcp_contract/);
   assert.match(runtimes, /install_notebooklm_mcp/);
   assert.match(runtimes, /notebooklm_lock_entry/);
-  assert.match(runtimes, /NOTEBOOKLM_MCP_PACKAGE_NAME/);
+  assert.match(runtimes, /contract\.package/);
   assert.match(runtimes, /get\("packages"\)/);
   assert.doesNotMatch(runtimes, /pointer\(\s*"\/packages\/node_modules\/@charlie\.act7\/gemini-notebook-mcp/s);
   assert.match(runtimes, /package-lock\.json/);
   assert.match(runtimes, /package-lock-only/);
-  assert.match(runtimes, /npmIntegrity|NPM_INTEGRITY/);
+  assert.match(runtimes, /contract\.npm_integrity/);
   assert.match(runtimes, /npm.*ci|\["ci"/);
   assert.match(mcp, /--version/);
   assert.match(mcp, /Version::parse/);
   assert.match(mcp, /VersionReq::parse/);
   assert.match(mcp, /matches/);
   assert.match(mcp, /is_file/);
-  assert.match(mcp, /NOTEBOOKLM_MCP_PACKAGE/);
+  assert.match(mcp, /managed\.bin|resolve_notebooklm_mcp_bin_for/);
   assert.doesNotMatch(mcp, /ManagedNpx|managed_npx|portable_npx_cli|npx-cli\.js|Command::new\("node"\)|Command::new\("npx"\)|Command::new\("npx\.cmd"\)|toml_edit::value\("npx"\)/);
 
   for (const [name, marker] of [

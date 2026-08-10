@@ -708,8 +708,8 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
 
 // ==================== NPM PACKAGES ====================
 
-fn notebooklm_lock_entry<'a>(lock: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
-    let key = format!("node_modules/{}", crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME);
+fn notebooklm_lock_entry<'a>(lock: &'a serde_json::Value, package_name: &str) -> Option<&'a serde_json::Value> {
+    let key = format!("node_modules/{package_name}");
     lock.get("packages")?.get(&key)
 }
 
@@ -722,18 +722,18 @@ pub struct NotebookLmBrowserStatus {
     executable_path: Option<PathBuf>,
 }
 
-pub fn resolve_notebooklm_mcp_bin(package_dir: &std::path::Path) -> Result<PathBuf, String> {
+pub fn resolve_notebooklm_mcp_bin_for(package_dir: &std::path::Path, contract: &crate::release::ManagedMcpContract) -> Result<PathBuf, String> {
     let package_path = package_dir.join("package.json");
     let package: serde_json::Value = serde_json::from_slice(
         &fs::read(&package_path).map_err(|e| format!("No se pudo leer package.json del MCP: {e}"))?,
     ).map_err(|e| format!("package.json del MCP inválido: {e}"))?;
-    if package.get("name").and_then(|v| v.as_str()) != Some(crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME)
-        || package.get("version").and_then(|v| v.as_str()) != Some(crate::mcp::NOTEBOOKLM_MCP_VERSION)
+    if package.get("name").and_then(|v| v.as_str()) != Some(contract.package.as_str())
+        || package.get("version").and_then(|v| v.as_str()) != Some(contract.version.as_str())
     {
         return Err("package.json del MCP no coincide con el contrato aprobado.".to_string());
     }
     let bin = package.get("bin").and_then(|value| value.as_str().map(str::to_owned).or_else(|| {
-        value.get(crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME.rsplit('/').next().unwrap_or_default())
+        value.get(contract.package.rsplit('/').next().unwrap_or_default())
             .and_then(|v| v.as_str()).map(str::to_owned)
     })).ok_or("El MCP no expone su bin público administrado.")?;
     if bin.trim().is_empty() || std::path::Path::new(&bin).is_absolute() || bin.split(['/', '\\']).any(|part| part == "..") {
@@ -746,6 +746,11 @@ pub fn resolve_notebooklm_mcp_bin(package_dir: &std::path::Path) -> Result<PathB
         return Err("El bin público del MCP escapa de su paquete o no es un archivo.".to_string());
     }
     Ok(resolved)
+}
+
+pub fn resolve_notebooklm_mcp_bin(package_dir: &std::path::Path) -> Result<PathBuf, String> {
+    let contract = crate::release::managed_mcp_contract()?;
+    resolve_notebooklm_mcp_bin_for(package_dir, &contract)
 }
 
 fn validate_browser_status(status: &NotebookLmBrowserStatus, managed_root: &std::path::Path) -> Result<(), String> {
@@ -773,29 +778,35 @@ fn run_notebooklm_browser_command(node: &std::path::Path, bin: &std::path::Path,
     serde_json::from_slice(&output.stdout).map_err(|e| format!("Respuesta JSON inválida de MCP browser {action}: {e}"))
 }
 
-fn validate_notebooklm_browser(node: &std::path::Path, package_dir: &std::path::Path, managed_root: &std::path::Path, action: &str) -> Result<(), String> {
-    let bin = resolve_notebooklm_mcp_bin(package_dir)?;
+fn validate_notebooklm_browser(node: &std::path::Path, package_dir: &std::path::Path, managed_root: &std::path::Path, action: &str, contract: &crate::release::ManagedMcpContract) -> Result<(), String> {
+    let bin = resolve_notebooklm_mcp_bin_for(package_dir, contract)?;
     let status = run_notebooklm_browser_command(node, &bin, action)?;
     validate_browser_status(&status, managed_root)
 }
 
 pub fn portable_notebooklm_mcp_installed() -> bool {
+    let Ok(contract) = crate::release::managed_mcp_contract() else { return false; };
+    portable_notebooklm_mcp_installed_for(&contract)
+}
+
+pub fn portable_notebooklm_mcp_installed_for(contract: &crate::release::ManagedMcpContract) -> bool {
     let package = paths::portable_notebooklm_mcp_package_dir().join("package.json");
     let lock = paths::portable_notebooklm_mcp_lock();
     let Ok(package) = fs::read_to_string(package) else { return false; };
     let Ok(package) = serde_json::from_str::<serde_json::Value>(&package) else { return false; };
     let Ok(lock) = fs::read_to_string(lock) else { return false; };
     let Ok(lock) = serde_json::from_str::<serde_json::Value>(&lock) else { return false; };
-    package.get("name").and_then(|v| v.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME)
-        && package.get("version").and_then(|v| v.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_VERSION)
-        && notebooklm_lock_entry(&lock)
+    package.get("name").and_then(|v| v.as_str()) == Some(contract.package.as_str())
+        && package.get("version").and_then(|v| v.as_str()) == Some(contract.version.as_str())
+        && notebooklm_lock_entry(&lock, &contract.package)
             .and_then(|entry| entry.get("integrity"))
-            .and_then(|value| value.as_str()) == Some(crate::mcp::NOTEBOOKLM_MCP_NPM_INTEGRITY)
-        && resolve_notebooklm_mcp_bin(&paths::portable_notebooklm_mcp_package_dir()).is_ok()
-        && validate_notebooklm_browser(&paths::portable_node_exe(), &paths::portable_notebooklm_mcp_package_dir(), &paths::portable_notebooklm_mcp_prefix().join("node_modules"), "status").is_ok()
+            .and_then(|value| value.as_str()) == Some(contract.npm_integrity.as_str())
+        && resolve_notebooklm_mcp_bin_for(&paths::portable_notebooklm_mcp_package_dir(), contract).is_ok()
+        && validate_notebooklm_browser(&paths::portable_node_exe(), &paths::portable_notebooklm_mcp_package_dir(), &paths::portable_notebooklm_mcp_prefix().join("node_modules"), "status", contract).is_ok()
 }
 
 pub fn install_notebooklm_mcp() -> Result<(), String> {
+    let contract = crate::release::managed_mcp_contract()?;
     let node = paths::portable_node_exe();
     let npm = paths::portable_npm_cli();
     if !node.is_file() || !npm.is_file() {
@@ -805,7 +816,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let stage = root.join(format!(".notebooklm-mcp-stage-{}", paths::timestamp()));
     fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
-    let package = serde_json::json!({"private": true, "dependencies": {crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME: crate::mcp::NOTEBOOKLM_MCP_VERSION}});
+    let package = serde_json::json!({"private": true, "dependencies": {contract.package.clone(): contract.version.clone()}});
     let result = (|| -> Result<(), String> {
         fs::write(stage.join("package.json"), serde_json::to_vec_pretty(&package).unwrap()).map_err(|e| e.to_string())?;
         let run = |args: &[&str]| -> Result<(), String> {
@@ -815,18 +826,18 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
         };
         run(&["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"])?;
         let lock: serde_json::Value = serde_json::from_slice(&fs::read(stage.join("package-lock.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        let entry = notebooklm_lock_entry(&lock).ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
-        if entry.get("version").and_then(|v| v.as_str()) != Some(crate::mcp::NOTEBOOKLM_MCP_VERSION) || entry.get("integrity").and_then(|v| v.as_str()) != Some(crate::mcp::NOTEBOOKLM_MCP_NPM_INTEGRITY) { return Err("El integrity de NotebookLM MCP no coincide con el contrato aprobado.".to_string()); }
+        let entry = notebooklm_lock_entry(&lock, &contract.package).ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
+        if entry.get("version").and_then(|v| v.as_str()) != Some(contract.version.as_str()) || entry.get("integrity").and_then(|v| v.as_str()) != Some(contract.npm_integrity.as_str()) { return Err("El integrity de NotebookLM MCP no coincide con el contrato administrado de Jintia.".to_string()); }
         run(&["ci", "--ignore-scripts", "--no-audit", "--no-fund"])?;
         let package_dir = stage.join("node_modules").join("@charlie.act7").join("gemini-notebook-mcp");
-        validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "install")?;
-        validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "status")?;
+        validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "install", &contract)?;
+        validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "status", &contract)?;
         let active = paths::portable_notebooklm_mcp_prefix();
         let backup = root.join(format!(".notebooklm-mcp-backup-{}", paths::timestamp()));
         if active.exists() { fs::rename(&active, &backup).map_err(|e| e.to_string())?; }
         if let Err(error) = fs::rename(&stage, &active) { if backup.exists() { let _ = fs::rename(&backup, &active); } return Err(error.to_string()); }
         let active_package = active.join("node_modules").join("@charlie.act7").join("gemini-notebook-mcp");
-        if let Err(error) = validate_notebooklm_browser(&node, &active_package, &active.join("node_modules"), "status") {
+        if let Err(error) = validate_notebooklm_browser(&node, &active_package, &active.join("node_modules"), "status", &contract) {
             let _ = fs::remove_dir_all(&active);
             if backup.exists() { let _ = fs::rename(&backup, &active); }
             return Err(error);
@@ -840,7 +851,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{notebooklm_lock_entry, resolve_notebooklm_mcp_bin};
+    use super::{notebooklm_lock_entry, resolve_notebooklm_mcp_bin_for};
     use std::fs;
 
     #[test]
@@ -854,7 +865,7 @@ mod tests {
                 }
             }
         });
-        let entry = notebooklm_lock_entry(&lock).expect("debe resolver la clave scoped completa");
+        let entry = notebooklm_lock_entry(&lock, "@charlie.act7/gemini-notebook-mcp").expect("debe resolver la clave scoped completa");
         assert_eq!(entry.get("version").and_then(|value| value.as_str()), Some("2.3.3"));
         assert_eq!(entry.get("integrity").and_then(|value| value.as_str()), Some("sha512-test"));
     }
@@ -862,28 +873,29 @@ mod tests {
     #[test]
     fn notebooklm_lock_entry_returns_none_when_package_is_missing() {
         let lock = serde_json::json!({ "packages": {} });
-        assert!(notebooklm_lock_entry(&lock).is_none());
+        assert!(notebooklm_lock_entry(&lock, "@charlie.act7/gemini-notebook-mcp").is_none());
     }
 
     #[test]
     fn resolve_notebooklm_mcp_bin_accepts_string_and_scoped_bin_object() {
+        let contract = crate::release::ManagedMcpContract { package: "@charlie.act7/gemini-notebook-mcp".into(), version: "2.3.5".into(), node_requirement: ">=22.13.0".into(), npm_integrity: "sha512-test".into(), jintia_version: "11.6.8".into() };
         let root = std::env::temp_dir().join(format!("jintia-mcp-bin-test-{}", crate::paths::timestamp()));
         let package = root.join("node_modules/@charlie.act7/gemini-notebook-mcp");
         let cli = ["dist", "cli.js"].join("/");
         fs::create_dir_all(package.join("dist")).unwrap();
         fs::write(package.join(&cli), "#!/usr/bin/env node\n").unwrap();
         fs::write(package.join("package.json"), serde_json::json!({
-            "name": crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME,
-            "version": crate::mcp::NOTEBOOKLM_MCP_VERSION,
+            "name": contract.package,
+            "version": contract.version,
             "bin": { "gemini-notebook-mcp": cli }
         }).to_string()).unwrap();
-        assert_eq!(resolve_notebooklm_mcp_bin(&package).unwrap(), fs::canonicalize(package.join(&cli)).unwrap());
+        assert_eq!(resolve_notebooklm_mcp_bin_for(&package, &contract).unwrap(), fs::canonicalize(package.join(&cli)).unwrap());
         fs::write(package.join("package.json"), serde_json::json!({
-            "name": crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME,
-            "version": crate::mcp::NOTEBOOKLM_MCP_VERSION,
+            "name": contract.package,
+            "version": contract.version,
             "bin": cli
         }).to_string()).unwrap();
-        assert!(resolve_notebooklm_mcp_bin(&package).is_ok());
+        assert!(resolve_notebooklm_mcp_bin_for(&package, &contract).is_ok());
         fs::remove_dir_all(root).ok();
     }
 
@@ -893,11 +905,12 @@ mod tests {
         let package = root.join("package");
         fs::create_dir_all(&package).unwrap();
         fs::write(package.join("package.json"), serde_json::json!({
-            "name": crate::mcp::NOTEBOOKLM_MCP_PACKAGE_NAME,
-            "version": crate::mcp::NOTEBOOKLM_MCP_VERSION,
+            "name": "@charlie.act7/gemini-notebook-mcp",
+            "version": "2.3.5",
             "bin": { "other": "../escape.js" }
         }).to_string()).unwrap();
-        assert!(resolve_notebooklm_mcp_bin(&package).is_err());
+        let contract = crate::release::ManagedMcpContract { package: "@charlie.act7/gemini-notebook-mcp".into(), version: "2.3.5".into(), node_requirement: ">=22.13.0".into(), npm_integrity: "sha512-test".into(), jintia_version: "11.6.8".into() };
+        assert!(resolve_notebooklm_mcp_bin_for(&package, &contract).is_err());
         fs::remove_dir_all(root).ok();
     }
 }

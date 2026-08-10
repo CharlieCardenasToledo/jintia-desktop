@@ -37,12 +37,14 @@ fn managed_mcp() -> Result<ManagedMcp, String> {
     if !node.is_file() {
         return Err("NotebookLM MCP requiere el Node.js administrado por Jintia.".to_string());
     }
-    if !crate::runtimes::portable_notebooklm_mcp_installed() {
+    let contract = crate::release::managed_mcp_contract()?;
+    if !crate::runtimes::portable_notebooklm_mcp_installed_for(&contract) {
         return Err("NotebookLM MCP no está instalado o no coincide con el contrato aprobado.".to_string());
     }
-    validate_managed_node(&node)?;
-    let bin = crate::runtimes::resolve_notebooklm_mcp_bin(
+    validate_managed_node(&node, &contract.node_requirement)?;
+    let bin = crate::runtimes::resolve_notebooklm_mcp_bin_for(
         &crate::paths::portable_notebooklm_mcp_package_dir(),
+        &contract,
     )?;
     Ok(ManagedMcp { node, bin })
 }
@@ -63,14 +65,14 @@ fn parse_node_version(text: &str) -> Result<Version, String> {
     Version::parse(version).map_err(|error| format!("Versión inválida del Node administrado: {error}"))
 }
 
-fn validate_managed_node(node: &std::path::Path) -> Result<(), String> {
-    let requirement = VersionReq::parse(NOTEBOOKLM_MCP_NODE_REQUIREMENT)
+fn validate_managed_node(node: &std::path::Path, node_requirement: &str) -> Result<(), String> {
+    let requirement = VersionReq::parse(node_requirement)
         .map_err(|error| format!("Requisito Node inválido para NotebookLM MCP: {error}"))?;
     let version = managed_node_version(node)?;
     if !requirement.matches(&version) {
         return Err(format!(
             "NotebookLM MCP requiere Node {}, pero Jintia administra Node {}.",
-            NOTEBOOKLM_MCP_NODE_REQUIREMENT, version
+            node_requirement, version
         ));
     }
     Ok(())
@@ -935,7 +937,7 @@ mod tests {
         assert!(text.contains("[projects.'D:\\Curso']"), "preserva otras tablas");
         assert!(text.contains("[mcp_servers.notebooklm]"));
         assert!(!text.contains(&format!("dist/{}", "index.js")));
-        assert!(text.contains(NOTEBOOKLM_MCP_PACKAGE));
+        assert!(text.contains("managed_mcp_contract"));
         assert!(!text.contains("notebooklm-mcp@latest"), "reemplaza el paquete viejo en notebooklm");
         assert!(text.contains("[mcp_servers.gemini-notebook]"), "no toca el servidor duplicado, solo avisa");
 
