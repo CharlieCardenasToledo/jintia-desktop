@@ -312,7 +312,7 @@ test('la instalación Claude delega en Jintia y payload conserva sólo consumido
     assert.match(payload, new RegExp(symbol));
   }
   const helperStart = toolchain.indexOf('pub fn install_global_claude_skill()');
-  const helperEnd = toolchain.indexOf('\n}\n\n/// Gestiona harnesses', helperStart) + 2;
+  const helperEnd = toolchain.indexOf('/// Gestiona harnesses', helperStart);
   const helper = toolchain.slice(helperStart, helperEnd);
   assert.ok(helperStart >= 0 && helperEnd > helperStart);
   assert.match(helper, /resolve_skill/);
