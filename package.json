@@ -14,7 +14,6 @@
     "dev:web": "vite --mode mock",
     "build": "vite build",
     "skill:sync": "node scripts/sync-skill-release.mjs",
-    "skill:verify": "node scripts/check-skill-release.mjs",
     "licenses:generate": "node scripts/generate-third-party-notices.mjs",
     "licenses:check": "node scripts/generate-third-party-notices.mjs --check",
     "test": "node --test tests/static-contracts.test.mjs",

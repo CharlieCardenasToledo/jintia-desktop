@@ -28,7 +28,6 @@ jobs:
           cache-dependency-path: package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
-      - run: npm run skill:verify
       - run: npm test
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: npm run tauri:build

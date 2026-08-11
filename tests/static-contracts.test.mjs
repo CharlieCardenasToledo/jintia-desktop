@@ -257,53 +257,49 @@ test('el smoke de CI ejecuta el engine publicado en npm', async () => {
   assert.match(smoke, /--json/);
   assert.doesNotMatch(smoke, /target\/debug\/build|OUT_DIR|out\/jintia-skill|if \[ -f|if test|\|\| true|npx|continue-on-error/);
 
-  assert.match(workflow, /npm run skill:verify/);
+  assert.doesNotMatch(workflow, /npm run skill:verify|check-skill-release/);
   assert.match(workflow, /npm test/);
   assert.match(workflow, /npm run build/);
   assert.match(workflow, /cargo test --manifest-path src-tauri\/Cargo\.toml/);
   assert.match(workflow, /node-version: 22\.13\.0/);
 });
 
-test('skill:verify conserva el contrato MCP embedded legacy', async () => {
-  const checker = await readFile(new URL('scripts/check-skill-release.mjs', root), 'utf8');
-  assert.match(checker, /skill\.lock\.json/);
-  assert.match(checker, /schemaVersion/);
-  assert.match(checker, /manifest/);
-  assert.match(checker, /sha256/);
-  assert.match(checker, /createHash/);
-  assert.match(checker, /repository/);
-  assert.match(checker, /source/);
-  assert.match(checker, /mcp/);
-  assert.match(checker, /package/);
-  assert.match(checker, /version/);
-  assert.match(checker, /requiredString\(lock\.mcp, "node"\)/);
-  assert.match(checker, /requiredString\(lock\.mcp, "npmIntegrity"\)/);
-  assert.match(checker, /sha512-/);
-  assert.match(checker, /JSON\.stringify/);
-  assert.match(checker, /src-tauri\/resources/);
-  assert.match(checker, /Contrato MCP legacy embebido/);
-  assert.doesNotMatch(checker, /Contrato MCP de Desktop verificado/);
-  assert.doesNotMatch(checker, /lock\.tag|lock\.skillVersion|manifest\.skillVersion|\.artifacts|openaiPlugin|compatibility|entry\.bytes|\bstat\s*\(/);
-
-  const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
-  assert.match(workflow, /npm run skill:verify/);
+test('el gate release legacy fue retirado de package y workflows', async () => {
+  const [pkgText, ci, windows, macos, scripts] = await Promise.all([
+    readFile(new URL('package.json', root), 'utf8'),
+    readFile(new URL('.github/workflows/ci.yml', root), 'utf8'),
+    readFile(new URL('.github/workflows/release-windows.yml', root), 'utf8'),
+    readFile(new URL('.github/workflows/release-macos.yml', root), 'utf8'),
+    readdir(new URL('scripts/', root)),
+  ]);
+  const pkg = JSON.parse(pkgText);
+  assert.equal(pkg.scripts['skill:verify'], undefined);
+  assert.equal(pkg.scripts['skill:sync'], 'node scripts/sync-skill-release.mjs');
+  for (const workflow of [ci, windows, macos]) {
+    assert.doesNotMatch(workflow, /skill:verify|check-skill-release/);
+  }
+  assert.ok(!scripts.includes('check-skill-release.mjs'));
+  assert.ok(scripts.includes('sync-skill-release.mjs'));
 });
 
-test('skill:sync usa el repositorio canónico de Jintia', async () => {
-  const [sync, check, lockText, manifestText] = await Promise.all([
+test('skill:sync conserva el consumidor legacy separado', async () => {
+  const [sync, lockText, manifestText, scripts] = await Promise.all([
     readFile(new URL('scripts/sync-skill-release.mjs', root), 'utf8'),
-    readFile(new URL('scripts/check-skill-release.mjs', root), 'utf8'),
     readFile(new URL('skill.lock.json', root), 'utf8'),
     readFile(new URL('src-tauri/resources/jintia-release-manifest.json', root), 'utf8'),
+    readdir(new URL('scripts/', root)),
   ]);
   const lock = JSON.parse(lockText);
   assert.match(sync, /CANONICAL_REPOSITORY/);
   assert.match(sync, /https:\/\/github\.com\/\$\{CANONICAL_REPOSITORY\}\/releases\/download/);
   assert.doesNotMatch(sync, /https:\/\/github\.com\/\$\{current\.repository\}/);
-  assert.match(check, /CANONICAL_REPOSITORY/);
-  assert.match(check, /repository !== CANONICAL_REPOSITORY/);
+  assert.match(sync, /skill\.lock\.json/);
+  assert.match(sync, /jintia-release-manifest\.json/);
+  assert.match(sync, /manifest\.mcp/);
+  assert.match(sync, /writeFile/);
+  assert.ok(scripts.includes('sync-skill-release.mjs'));
   const legacyRepository = ['instructional', '-designer-skill'].join('');
-  assert.doesNotMatch(`${lockText}\n${manifestText}\n${sync}\n${check}`, new RegExp(legacyRepository));
+  assert.doesNotMatch(`${lockText}\n${manifestText}\n${sync}`, new RegExp(legacyRepository));
 
   assert.match(sync, /skill\.lock\.json/);
   assert.match(sync, /--tag=/);
