@@ -299,8 +299,7 @@ export async function renderSettings() {
             <label class="mt-3 block text-xs font-semibold text-app-muted">Proyecto a inspeccionar
               <input id="harness-project-path" class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-app-text" placeholder="Dejar vacío para el proyecto actual" autocomplete="off">
             </label>
-            <div class="mt-3 grid gap-2 md:grid-cols-[1fr_150px_auto]">
-              <input id="harness-providers" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-app-text" value="claude,codex,cursor" aria-label="Proveedores separados por coma">
+            <div class="mt-3 grid gap-2 md:grid-cols-[150px_auto]">
               <select id="harness-scope" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-app-text" aria-label="Alcance"><option value="project">Proyecto</option><option value="global">Global</option></select>
               <div class="flex gap-2"><button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-harness-operation="install">Instalar</button><button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-harness-operation="update">Actualizar</button><button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-harness-operation="repair">Reparar</button></div>
             </div>
@@ -890,15 +889,20 @@ async function detectAgentHarnesses(event) {
     list.innerHTML = `<div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">Buscando entornos…</div>`;
     try {
       const result = await detectHarnesses(projectPath);
-      const providers = result.providers || [];
+      const providers = Array.isArray(result?.providers) ? result.providers : [];
       list.innerHTML = providers.map(provider => {
         const ok = provider.status === "installed";
         const detected = provider.status !== "not-detected";
         const label = ok ? "Instalada" : detected ? "Detectado" : "No detectado";
         const classes = ok ? "border-green-200 bg-green-50 text-green-700" : detected ? "border-teal-200 bg-teal-50 text-teal-700" : "border-slate-200 bg-slate-50 text-slate-700";
-        return `<div class="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 ${classes}"><span class="font-semibold">${escapeHtml(provider.name)}</span><span class="ml-auto text-[11px] font-bold uppercase tracking-wide">${label}</span><span class="basis-full text-[11px] opacity-80">${escapeHtml(provider.foundPath || "No se encontró la carpeta de configuración")}</span></div>`;
+        const id = typeof provider.id === "string" ? provider.id : "";
+        const name = typeof provider.name === "string" ? provider.name : id || "Entorno sin nombre";
+        const scope = typeof provider.scope === "string" ? provider.scope : "";
+        const foundPath = typeof provider.foundPath === "string" && provider.foundPath ? provider.foundPath : "No se encontró la carpeta de configuración";
+        return `<label class="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 ${classes}"><input type="checkbox" data-harness-provider value="${escapeHtml(id)}" ${id ? "" : "disabled"}><span class="font-semibold">${escapeHtml(name)}</span><span class="text-[11px] opacity-80">${escapeHtml(scope)}</span><span class="ml-auto text-[11px] font-bold uppercase tracking-wide">${label}</span><span class="basis-full text-[11px] opacity-80">${escapeHtml(foundPath)}</span></label>`;
       }).join("") || `<div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">No se encontraron entornos.</div>`;
     } catch (error) {
+      list.innerHTML = "";
       list.innerHTML = `<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">No se pudo detectar: ${escapeHtml(String(error))}</div>`;
     }
   });
@@ -907,8 +911,16 @@ async function detectAgentHarnesses(event) {
 async function manageAgentHarness(operation, event) {
   const button = event?.currentTarget || event;
   const projectPath = document.getElementById("harness-project-path")?.value.trim() || state.courses.find(course => course.project_path)?.project_path || ".";
-  const providers = (document.getElementById("harness-providers")?.value || "claude,codex,cursor").split(",").map(value => value.trim()).filter(Boolean);
+  const providers = [...new Set(
+    [...document.querySelectorAll("[data-harness-provider]:checked")]
+      .map(input => input.value)
+      .filter(Boolean)
+  )];
   const scope = document.getElementById("harness-scope")?.value || "project";
+  if (providers.length === 0) {
+    toast("Selecciona al menos un entorno antes de continuar.", "error", 5000);
+    return;
+  }
   await runSettingsOperation(button, `harness-${operation}`, `${operation}…`, async () => {
     const result = await manageHarnesses(operation, projectPath, providers, scope, true);
     toast(result.message || `${operation} completado.`, result.success ? "success" : "error", 8000);

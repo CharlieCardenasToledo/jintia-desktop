@@ -232,7 +232,7 @@ const handlers = {
   get_default_course_root: () => actionResult(true, "Carpeta de proyectos Jintia disponible (mock).", { path: "C:\\Users\\Demo\\Documents\\Jintia" }),
   get_course_state: () => ({ success: true, exists: false, message: "El proyecto aún no tiene estado Jintia (mock)." }),
   check_week_guide_exists: ({ week }) => Number(week) === 1,
-  detect_harnesses: () => ({ schemaVersion: "1.0.0", projectRoot: "C:\\Users\\Demo\\Documents\\Jintia", providers: [{ id: "claude", name: "Claude Code", scope: "global", status: "detected", installed: false, hasSkills: false, supportsHooks: true }] }),
+  detect_harnesses: () => ({ schemaVersion: "1.0.0", projectRoot: "C:\\Users\\Demo\\Documents\\Jintia", providers: [{ id: "claude", name: "Claude Code", scope: "global", status: "detected", installed: false, hasSkills: false, supportsHooks: true }, { id: "opencode", name: "OpenCode", scope: "global", status: "not-detected", installed: false, hasSkills: false, supportsHooks: false }] }),
   manage_harnesses: ({ operation, providers = [], scope = "project", confirm = false } = {}) => ({ success: confirm, operation, message: confirm ? `Operación ${operation} aplicada a ${providers.join(", ")} (${scope}).` : "Confirma explícitamente la operación.", results: [] }),
   manage_harnesses: ({ operation, providers = [], scope = "project", confirm = false } = {}) => ({ success: confirm, operation, message: confirm ? `Operación ${operation} aplicada a ${providers.join(", ")} (${scope}).` : "Confirma explícitamente la operación.", results: [] }),
   create_course_structure: ({ rootPath, courseCode, courseName }) => {

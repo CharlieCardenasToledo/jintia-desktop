@@ -1317,6 +1317,18 @@ test('Desktop comparte la detección de harnesses con la CLI', async () => {
   assert.match(settings, /btn-detect-harnesses/);
   assert.match(settings, /detectAgentHarnesses/);
   assert.match(settings, /data-harness-operation/);
+  assert.doesNotMatch(settings, /claude,codex,cursor|id=["']harness-providers["']/);
+  assert.match(settings, /result\.providers/);
+  assert.match(settings, /data-harness-provider/);
+  assert.match(settings, /provider\.id/);
+  assert.match(settings, /provider\.name/);
+  assert.match(settings, /:checked/);
+  assert.match(settings, /manageHarnesses/);
+  assert.match(settings, /new Set/);
+  assert.doesNotMatch(settings, /SUPPORTED_HARNESSES|const PROVIDERS/);
+  assert.doesNotMatch(settings, /ollama|lmstudio|lm-studio|llama\.cpp/i);
+  assert.match(mock, /id: "claude"/);
+  assert.match(mock, /id: "opencode"/);
 });
 
 test('las asignaturas usan Documentos por defecto y permiten cambiar la ubicación', async () => {
