@@ -62,7 +62,7 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(paths, /portable_node_exe/);
   assert.match(paths, /portable_npm_cli/);
   assert.match(paths, /portable_notebooklm_mcp_prefix/);
-  assert.match(paths, /portable_notebooklm_mcp_package_dir/);
+  assert.doesNotMatch(paths, /pub fn portable_notebooklm_mcp_package_dir\(\)/);
   assert.match(paths, /portable_notebooklm_mcp_lock/);
   const npxStart = paths.indexOf('pub fn portable_npm_cli()');
   const npxEnd = paths.indexOf('\npub fn', npxStart + 1);
@@ -77,7 +77,10 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(mcp, /server_matches_managed_mcp/);
   assert.doesNotMatch(mcp, /NOTEBOOKLM_MCP_/);
   assert.match(mcp, /portable_node_exe/);
-  assert.match(runtimes, /resolve_notebooklm_mcp_bin/);
+  assert.match(runtimes, /resolve_notebooklm_mcp_bin_for/);
+  assert.match(runtimes, /portable_notebooklm_mcp_package_dir_for/);
+  assert.doesNotMatch(runtimes, /pub fn resolve_notebooklm_mcp_bin\(/);
+  assert.doesNotMatch(runtimes, /pub fn portable_notebooklm_mcp_installed\(\)/);
   assert.match(runtimes, /browser/);
   assert.match(runtimes, /install/);
   assert.match(runtimes, /status/);

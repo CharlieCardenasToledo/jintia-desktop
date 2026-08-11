@@ -387,13 +387,6 @@ pub fn portable_notebooklm_mcp_prefix() -> PathBuf {
     portable_runtimes_dir().join("notebooklm-mcp")
 }
 
-pub fn portable_notebooklm_mcp_package_dir() -> PathBuf {
-    portable_notebooklm_mcp_prefix()
-        .join("node_modules")
-        .join("@charlie.act7")
-        .join("gemini-notebook-mcp")
-}
-
 pub fn portable_notebooklm_mcp_lock() -> PathBuf {
     portable_notebooklm_mcp_prefix().join("package-lock.json")
 }

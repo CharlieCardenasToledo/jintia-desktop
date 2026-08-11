@@ -771,11 +771,6 @@ pub fn resolve_notebooklm_mcp_bin_for(package_dir: &std::path::Path, contract: &
     Ok(resolved)
 }
 
-pub fn resolve_notebooklm_mcp_bin(package_dir: &std::path::Path) -> Result<PathBuf, String> {
-    let contract = crate::release::managed_mcp_contract()?;
-    resolve_notebooklm_mcp_bin_for(package_dir, &contract)
-}
-
 fn validate_browser_status(status: &NotebookLmBrowserStatus, managed_root: &std::path::Path) -> Result<(), String> {
     if status.browser != "chromium" || !status.installed || !status.hermetic {
         return Err("El MCP no confirmó un Chromium hermético instalado.".to_string());
@@ -805,11 +800,6 @@ fn validate_notebooklm_browser(node: &std::path::Path, package_dir: &std::path::
     let bin = resolve_notebooklm_mcp_bin_for(package_dir, contract)?;
     let status = run_notebooklm_browser_command(node, &bin, action)?;
     validate_browser_status(&status, managed_root)
-}
-
-pub fn portable_notebooklm_mcp_installed() -> bool {
-    let Ok(contract) = crate::release::managed_mcp_contract() else { return false; };
-    portable_notebooklm_mcp_installed_for(&contract)
 }
 
 pub fn portable_notebooklm_mcp_installed_for(contract: &crate::release::ManagedMcpContract) -> bool {

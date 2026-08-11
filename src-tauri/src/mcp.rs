@@ -931,9 +931,10 @@ mod tests {
         )
         .unwrap();
 
-        if !crate::paths::portable_node_exe().is_file()
-            || !crate::runtimes::portable_notebooklm_mcp_installed()
-        {
+        let managed_mcp_installed = crate::release::managed_mcp_contract()
+            .ok()
+            .is_some_and(|contract| crate::runtimes::portable_notebooklm_mcp_installed_for(&contract));
+        if !crate::paths::portable_node_exe().is_file() || !managed_mcp_installed {
             let result = configure_codex_mcp();
             assert!(!result.success);
             assert!(result.message.contains("Node.js administrado"));
