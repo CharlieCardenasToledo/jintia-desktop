@@ -64,7 +64,7 @@ log(`contrato distribuido: MCP ${mcp.package}@${mcp.version}`);
 log(`creando prefijo MCP: ${mcpPrefix}`);
 mkdirSync(mcpPrefix, { recursive: true });
 writeFileSync(join(mcpPrefix, 'package.json'), JSON.stringify({ private: true, dependencies: { [mcp.package]: mcp.version } }));
-npmRun(mcpPrefix, ['install', '--package-lock-only', '--omit=dev']);
+npmRun(mcpPrefix, ['install', '--package-lock-only']);
 const lock = readJson(join(mcpPrefix, 'package-lock.json'));
 const entry = lock.packages?.[`node_modules/${mcp.package}`];
 if (entry?.version !== mcp.version || entry?.integrity !== mcp.npmIntegrity) throw new Error('El lock MCP no coincide con el contrato instalado.');
