@@ -171,7 +171,7 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
     dependencies.push(DependencyStatus {
         name: "NotebookLM MCP".to_string(),
         installed: crate::runtimes::portable_notebooklm_mcp_installed(),
-        version: if crate::runtimes::portable_notebooklm_mcp_installed() { Some(crate::mcp::NOTEBOOKLM_MCP_VERSION.to_string()) } else { None },
+        version: if crate::runtimes::portable_notebooklm_mcp_installed() { crate::release::managed_mcp_contract().ok().map(|contract| contract.version) } else { None },
         required: true,
         installable: true,
         note: "Servidor MCP administrado para consultar fuentes de NotebookLM.".to_string(),

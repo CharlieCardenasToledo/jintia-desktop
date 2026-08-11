@@ -120,6 +120,12 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(runtimes, /managed_mcp_contract_from/);
   assert.match(runtimes, /contract\.npm_integrity/);
   assert.match(runtimes, /npm.*ci|\["ci"/);
+  assert.match(runtimes, /--omit=dev/);
+  assert.doesNotMatch(mcp, /NOTEBOOKLM_MCP_/);
+  assert.match(smoke, /ci', '--omit=dev/);
+  assert.ok(smoke.indexOf('package-lock-only') < smoke.indexOf('integrity del lock'));
+  assert.ok(smoke.indexOf('integrity del lock') < smoke.indexOf("['ci', '--omit=dev']"));
+  assert.ok(smoke.indexOf("['ci', '--omit=dev']") < smoke.indexOf('installedMcp.name'));
   assert.match(mcp, /--version/);
   assert.match(mcp, /Version::parse/);
   assert.match(mcp, /VersionReq::parse/);
@@ -224,7 +230,7 @@ test('el smoke de CI ejecuta el engine publicado en npm', async () => {
   assert.match(workflow, /node-version: 22\.13\.0/);
 });
 
-test('skill:verify valida solo el contrato MCP consumido por Desktop', async () => {
+test('skill:verify conserva el contrato MCP embedded legacy', async () => {
   const checker = await readFile(new URL('scripts/check-skill-release.mjs', root), 'utf8');
   assert.match(checker, /skill\.lock\.json/);
   assert.match(checker, /schemaVersion/);

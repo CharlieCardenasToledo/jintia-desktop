@@ -20,14 +20,13 @@ fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
 }
 
 fn valid_sri(value: &str) -> bool {
-    value.strip_prefix("sha512-").is_some_and(|encoded| {
-        !encoded.is_empty()
-            && !encoded.contains(char::is_whitespace)
-            && encoded.len() % 4 == 0
-            && encoded.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
-            && encoded.trim_end_matches('=').len() == encoded.len() - encoded.chars().rev().take_while(|c| *c == '=').count()
-            && encoded.chars().rev().take_while(|c| *c == '=').count() <= 2
-    })
+    let Some(encoded) = value.strip_prefix("sha512-") else { return false; };
+    if encoded.is_empty() || !encoded.is_ascii() || encoded.len() % 4 != 0 { return false; }
+    let padding = encoded.as_bytes().iter().rev().take_while(|byte| **byte == b'=').count();
+    if padding > 2 || padding == encoded.len() { return false; }
+    let body_len = encoded.len() - padding;
+    encoded.as_bytes()[..body_len].iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'+' || *byte == b'/')
+        && encoded.as_bytes()[body_len..].iter().all(|byte| *byte == b'=')
 }
 
 fn parse_stable_version(value: &str, label: &str) -> Result<Version, String> {

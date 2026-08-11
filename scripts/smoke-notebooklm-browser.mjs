@@ -44,6 +44,7 @@ function browser(bin, action, managedRoot) {
   return executable;
 }
 
+let primaryError = null;
 try {
 log(`prefijo Jintia: ${jintiaPrefix}`);
 mkdirSync(jintiaPrefix, { recursive: true });
@@ -68,7 +69,7 @@ const lock = readJson(join(mcpPrefix, 'package-lock.json'));
 const entry = lock.packages?.[`node_modules/${mcp.package}`];
 if (entry?.version !== mcp.version || entry?.integrity !== mcp.npmIntegrity) throw new Error('El lock MCP no coincide con el contrato instalado.');
 log(`integrity del lock coincide con el contrato distribuido`);
-npmRun(mcpPrefix, ['ci']);
+npmRun(mcpPrefix, ['ci', '--omit=dev']);
 const mcpRoot = join(mcpPrefix, 'node_modules', ...mcp.package.split('/'));
 const installedMcp = readJson(join(mcpRoot, 'package.json'));
 if (installedMcp.name !== mcp.package || installedMcp.version !== mcp.version) throw new Error('El package MCP instalado no coincide con el contrato.');
@@ -80,7 +81,15 @@ const second = browser(bin, 'install', join(mcpPrefix, 'node_modules'));
 const secondStatus = browser(bin, 'status', join(mcpPrefix, 'node_modules'));
 if (![firstStatus, second, secondStatus].every((path) => path === first)) throw new Error('Chromium no fue idempotente.');
 console.log(`Jintia ${jintia.version} -> NotebookLM MCP ${mcp.version} browser contract OK`);
+} catch (error) {
+  primaryError = error;
+  throw error;
 } finally {
-  rmSync(jintiaPrefix, { recursive: true, force: true });
-  rmSync(mcpPrefix, { recursive: true, force: true });
+  for (const prefix of [jintiaPrefix, mcpPrefix]) {
+    try { rmSync(prefix, { recursive: true, force: true }); }
+    catch (cleanupError) {
+      if (!primaryError) throw cleanupError;
+      console.error(`[notebooklm-smoke] cleanup warning: ${cleanupError.message}`);
+    }
+  }
 }

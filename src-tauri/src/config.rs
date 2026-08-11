@@ -369,7 +369,7 @@ fn server_configured(path: Result<std::path::PathBuf, String>) -> bool {
         .is_some_and(|args| {
             args.iter().any(|arg| {
                 let value = arg.as_str();
-                value == Some(crate::mcp::NOTEBOOKLM_MCP_PACKAGE)
+                value == Some(crate::release::managed_mcp_contract().map(|contract| contract.package).unwrap_or_default().as_str())
                     || value == Some("gemini-notebook-mcp@latest")
                     || value == Some("@charlie.act7/gemini-notebook-mcp@latest")
             })

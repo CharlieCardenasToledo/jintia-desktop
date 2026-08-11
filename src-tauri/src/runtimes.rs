@@ -828,7 +828,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
         let lock: serde_json::Value = serde_json::from_slice(&fs::read(stage.join("package-lock.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         let entry = notebooklm_lock_entry(&lock, &contract.package).ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
         if entry.get("version").and_then(|v| v.as_str()) != Some(contract.version.as_str()) || entry.get("integrity").and_then(|v| v.as_str()) != Some(contract.npm_integrity.as_str()) { return Err("El integrity de NotebookLM MCP no coincide con el contrato administrado de Jintia.".to_string()); }
-        run(&["ci", "--ignore-scripts", "--no-audit", "--no-fund"])?;
+        run(&["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"])?;
         let package_dir = stage.join("node_modules").join("@charlie.act7").join("gemini-notebook-mcp");
         validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "install", &contract)?;
         validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "status", &contract)?;

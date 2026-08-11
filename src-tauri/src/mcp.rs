@@ -1,11 +1,4 @@
 use crate::models::{ActionResult, NotebookLmAuthStatus, NotebookLmEntry};
-pub use crate::release::{
-    NOTEBOOKLM_MCP_NODE_REQUIREMENT,
-    NOTEBOOKLM_MCP_NPM_INTEGRITY,
-    NOTEBOOKLM_MCP_PACKAGE,
-    NOTEBOOKLM_MCP_PACKAGE_NAME,
-    NOTEBOOKLM_MCP_VERSION,
-};
 use crate::paths::{
     atomic_write, backup_file, claude_code_config_path, claude_desktop_config_path, path_text,
 };
