@@ -300,26 +300,34 @@ test('Desktop no conserva estado release legacy de Jintia', async () => {
   assert.match(about, /APP_META\.skillName/);
 });
 
-test('install_local_skill requiere el runtime npm administrado', async () => {
-  const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
-  const start = payload.indexOf('pub fn install_local_skill()');
-  const end = payload.indexOf('\nfn add_bytes(', start);
-  const installFn = payload.slice(start, end);
-  const sourceIndex = installFn.indexOf('portable_skill_src');
-  const stageIndex = installFn.indexOf('.jintia-skill.stage-');
-
-  assert.ok(start >= 0 && end > start);
-  assert.match(installFn, /portable_skill_src/);
-  assert.match(installFn, /copy_dir_all/);
-  assert.match(installFn, /installed_portable_matches/);
-  assert.doesNotMatch(installFn, /materialize_payload/);
-  assert.doesNotMatch(installFn, /installed_payload_matches/);
-  assert.ok(sourceIndex >= 0 && sourceIndex < stageIndex);
-  assert.match(installFn.slice(sourceIndex, stageIndex), /None\s*=>[\s\S]*return ActionResult::error/);
-  assert.doesNotMatch(installFn, /legacy_skill_dir|migrating_legacy|instructional-designer-skill/);
-  assert.match(installFn, /\.jintia-skill\.stage-/);
-  assert.match(installFn, /jintia-skill\.backup-/);
-  assert.match(installFn, /fs::rename/);
+test('la instalación Claude delega en Jintia y payload conserva sólo consumidores compartidos', async () => {
+  const [payload, toolchain, lib] = await Promise.all([
+    readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+  ]);
+  assert.doesNotMatch(payload, /pub fn install_local_skill|fn portable_skill_src|fn installed_portable_matches/);
+  assert.doesNotMatch(payload, /\.jintia-skill\.stage-|jintia-skill\.backup-/);
+  for (const symbol of ['read_skill_package_version', 'install_openai_plugin', 'export_skill_zip', 'export_openai_plugin_zip', 'installed_skill_version', 'sync_user_config_to_install']) {
+    assert.match(payload, new RegExp(symbol));
+  }
+  const helperStart = toolchain.indexOf('pub fn install_global_claude_skill()');
+  const helperEnd = toolchain.indexOf('\n}\n\n/// Gestiona harnesses', helperStart) + 2;
+  const helper = toolchain.slice(helperStart, helperEnd);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  assert.match(helper, /resolve_skill/);
+  assert.match(helper, /run_jintia/);
+  assert.match(helper, /--help/);
+  assert.match(helper, /--adopt-existing/);
+  assert.match(toolchain, /--providers=claude/);
+  assert.match(toolchain, /--scope=global/);
+  assert.match(toolchain, /--yes/);
+  assert.match(toolchain, /--json/);
+  assert.match(toolchain, /results/);
+  assert.match(toolchain, /target/);
+  assert.match(helper, /with_path/);
+  assert.doesNotMatch(helper, /Command::new|--source|\.claude|skill_dir|\bnpx\b|\bnpm\b/);
+  assert.match(lib, /spawn_blocking\(toolchain::install_global_claude_skill\)/);
 });
 
 test('el plugin ChatGPT Codex se instala desde el paquete npm administrado', async () => {
@@ -1145,7 +1153,8 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
     readFile(new URL("src/pages/settings.js", root), "utf8"),
   ]);
   assert.match(payload, /pub fn skill_is_current/);
-  assert.match(payload, /installed_portable_matches/);
+  assert.match(payload, /portable_skill_source_dir/);
+  assert.match(payload, /read_skill_package_version/);
   assert.match(models, /skill_current/);
   assert.match(onboarding, /Paquete listo para importar en Claude/);
   assert.match(settings, /Skill desactualizada/);
@@ -1178,8 +1187,8 @@ test('payload.rs no incorpora una Skill embebida', async () => {
   assert.doesNotMatch(payload, /SKILL_MD|SKILL_PACKAGE_JSON|materialize_payload|write_embedded_dir|embedded_dir_matches|installed_payload_matches/);
   assert.doesNotMatch(cargo, /include_dir/);
   assert.match(payload, /portable_openai_plugin_sources/);
-  assert.match(payload, /portable_skill_src/);
-  assert.match(payload, /installed_portable_matches/);
+  assert.match(payload, /portable_skill_source_dir/);
+  assert.match(payload, /read_skill_package_version/);
   assert.match(payload, /portable_skill_export_source/);
   assert.match(payload, /copy_dir_all/);
   assert.match(payload, /add_fs_dir_to_zip\(&mut zip, &skill_src/);
@@ -2768,13 +2777,6 @@ test('payload usa portable_skill_source_dir para localizar la skill portátil', 
     'utf8'
   );
 
-  // portable_skill_src usa portable_skill_source_dir
-  const srcStart = payload.indexOf('fn portable_skill_src()');
-  const srcEnd = payload.indexOf('\nfn installed_portable_matches', srcStart);
-  const srcFn = payload.slice(srcStart, srcEnd);
-  assert.match(srcFn, /portable_skill_source_dir/);
-  assert.doesNotMatch(srcFn, /\.join\("jintia"\)[\s\S]{0,30}?\.join\("skill"\)/);
-
   // portable_skill_version usa portable_skill_source_dir
   const verStart = payload.indexOf('pub fn portable_skill_version()');
   const verEnd = payload.indexOf('\npub fn skill_is_current', verStart);
@@ -2883,17 +2885,10 @@ test('el estado de la Skill requiere el runtime npm administrado', async () => {
   // Helper centralizado existe y lee package.json
   assert.match(payload, /fn read_skill_package_version/);
   const helperStart = payload.indexOf('fn read_skill_package_version');
-  const helperEnd = payload.indexOf('\nfn installed_portable_matches', helperStart);
+  const helperEnd = payload.indexOf('\npub fn installed_skill_version', helperStart);
   const helper = payload.slice(helperStart, helperEnd);
   assert.match(helper, /package\.json/);
   assert.match(helper, /version/);
-
-  // installed_portable_matches usa el helper y no duplica el closure
-  const matchStart = payload.indexOf('fn installed_portable_matches');
-  const matchEnd = payload.indexOf('\npub fn install_local_skill', matchStart);
-  const matchFn = payload.slice(matchStart, matchEnd);
-  assert.match(matchFn, /read_skill_package_version/);
-  assert.doesNotMatch(matchFn, /let read_version\s*=/);
 
   // installed_skill_version prioriza package.json; VERSION es solo fallback
   const verStart = payload.indexOf('pub fn installed_skill_version()');
@@ -2913,12 +2908,9 @@ test('el estado de la Skill requiere el runtime npm administrado', async () => {
   const curFn = payload.slice(curStart, curEnd);
   assert.match(curFn, /installed_skill_dir/);
   assert.match(curFn, /SKILL\.md/);
-  assert.match(curFn, /installed_portable_matches/);
+  assert.match(curFn, /portable_skill_source_dir/);
+  assert.match(curFn, /read_skill_package_version/);
   assert.doesNotMatch(curFn, /installed_payload_matches|SKILL_VERSION|SKILL_PACKAGE_JSON/);
-
-  // Si el runtime npm falta, installed_portable_matches devuelve false.
-  assert.match(matchFn, /portable_skill_src/);
-  assert.match(matchFn, /let Some\(src\) = portable_skill_src\(\) else \{[\s\S]*return false/);
 
   const setupStart = config.indexOf('pub fn setup_status()');
   const setupEnd = config.indexOf('\n}', setupStart) + 2;

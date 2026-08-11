@@ -166,7 +166,9 @@ async fn get_skill_path() -> String {
 
 #[tauri::command]
 async fn install_skill() -> ActionResult {
-    payload::install_local_skill()
+    tauri::async_runtime::spawn_blocking(toolchain::install_global_claude_skill)
+        .await
+        .unwrap_or_else(|error| ActionResult::error(format!("No se pudo instalar Jintia Skill: {error}")))
 }
 
 #[tauri::command]

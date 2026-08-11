@@ -2,7 +2,7 @@ use crate::models::ActionResult;
 use crate::paths::{
     app_config_dir, atomic_write, atomic_write_if_changed, canonical_directory,
     installed_skill_dir, openai_marketplace_path, openai_plugin_dir, path_text,
-    skill_dir, timestamp,
+    timestamp,
 };
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -230,11 +230,6 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn portable_skill_src() -> Option<PathBuf> {
-    let src = crate::paths::portable_skill_source_dir();
-    src.join("bin").join("jintia.js").is_file().then_some(src)
-}
-
 fn read_skill_package_version(dir: &Path) -> Option<String> {
     fs::read_to_string(dir.join("package.json"))
         .ok()
@@ -247,85 +242,6 @@ fn read_skill_package_version(dir: &Path) -> Option<String> {
                 .filter(|v| !v.is_empty())
                 .map(str::to_string)
         })
-}
-
-fn installed_portable_matches(target: &Path) -> bool {
-    let Some(src) = portable_skill_src() else {
-        return false;
-    };
-    let src_ver = read_skill_package_version(&src);
-    src_ver.is_some() && src_ver == read_skill_package_version(target)
-}
-
-pub fn install_local_skill() -> ActionResult {
-    let _operation = match PAYLOAD_OPERATION.lock() {
-        Ok(operation) => operation,
-        Err(_) => return ActionResult::error("El estado interno de instalación está bloqueado."),
-    };
-    let portable_src = match portable_skill_src() {
-        Some(path) => path,
-        None => {
-            return ActionResult::error(
-                "Jintia administrado no está instalado. Instálalo primero desde Configuración > Entorno.",
-            );
-        }
-    };
-    let target = match skill_dir() {
-        Ok(path) => path,
-        Err(error) => return ActionResult::error(error),
-    };
-    let parent = match target.parent() {
-        Some(path) => path.to_path_buf(),
-        None => return ActionResult::error("Ruta de instalación inválida."),
-    };
-    if let Err(error) = fs::create_dir_all(&parent) {
-        return ActionResult::error(format!("No se pudo crear {}: {error}", parent.display()));
-    }
-    if target.exists() && installed_portable_matches(&target) {
-        return ActionResult::ok(format!(
-            "La skill ya estaba instalada y actualizada; no se creó otra copia ni respaldo.\n{}",
-            path_text(&target)
-        ))
-        .with_path(path_text(&target));
-    }
-
-    let stage = parent.join(format!(".jintia-skill.stage-{}", timestamp()));
-    if let Err(error) = copy_dir_all(&portable_src, &stage) {
-        let _ = fs::remove_dir_all(&stage);
-        return ActionResult::error(error);
-    }
-    let backup = parent.join(format!("jintia-skill.backup-{}", timestamp()));
-    if target.exists() {
-        if let Err(error) = fs::rename(&target, &backup) {
-            let _ = fs::remove_dir_all(&stage);
-            return ActionResult::error(format!(
-                "No se pudo respaldar la instalación actual en {}: {error}",
-                backup.display()
-            ));
-        }
-    }
-
-    match fs::rename(&stage, &target) {
-        Ok(_) => {
-            let result = ActionResult::ok(format!(
-                "Jintia Skill se instaló para Claude Code en:\n{}",
-                path_text(&target)
-            ))
-            .with_path(path_text(&target));
-            if backup.exists() {
-                result.with_backup(path_text(&backup))
-            } else {
-                result
-            }
-        }
-        Err(error) => {
-            if backup.exists() {
-                let _ = fs::rename(&backup, &target);
-            }
-            let _ = fs::remove_dir_all(&stage);
-            ActionResult::error(format!("No se pudo activar la nueva instalación: {error}"))
-        }
-    }
 }
 
 fn add_bytes(zip: &mut zip::ZipWriter<fs::File>, path: &str, bytes: &[u8]) -> Result<(), String> {
@@ -628,7 +544,10 @@ pub fn skill_is_current() -> bool {
     if !path.join("SKILL.md").is_file() {
         return false;
     }
-    installed_portable_matches(&path)
+    let portable = crate::paths::portable_skill_source_dir();
+    portable.join("bin").join("jintia.js").is_file()
+        && read_skill_package_version(&portable)
+            .is_some_and(|version| Some(version) == read_skill_package_version(&path))
 }
 
 pub fn openai_plugin_is_installed() -> bool {
