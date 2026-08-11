@@ -309,10 +309,13 @@ async fn check_week_guide_exists(project_path: String, week: u32) -> bool {
 }
 
 #[tauri::command]
-async fn detect_harnesses(project_path: String, explicit_providers: Option<Vec<String>>) -> serde_json::Value {
+async fn detect_harnesses(
+    project_path: String,
+    explicit_providers: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || harnesses::detect(project_path, explicit_providers))
         .await
-        .unwrap_or_else(|error| serde_json::json!({ "success": false, "message": format!("No se pudieron detectar los harnesses: {error}") }))
+        .map_err(|error| format!("No se pudieron detectar los harnesses: {error}"))?
 }
 
 #[tauri::command]

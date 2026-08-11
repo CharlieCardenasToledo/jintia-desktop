@@ -1,5 +1,5 @@
 use crate::engine;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::path::Path;
 
 /// Detecta proveedores IA instalados en el sistema vía la Skill CLI.
@@ -12,7 +12,37 @@ use std::path::Path;
 /// let result = detect("/path/to/project".to_string(), None);
 /// // Devuelve JSON con lista de proveedores detectados
 /// ```
-pub fn detect(project_path: String, explicit: Option<Vec<String>>) -> Value {
+fn detection_payload(report: &Value) -> Result<Value, String> {
+    if report.get("status").and_then(Value::as_str) != Some("success") {
+        return Err("Jintia detect devolvió un estado distinto de success.".to_string());
+    }
+
+    let data = report
+        .get("data")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Jintia detect no devolvió un objeto data.".to_string())?;
+
+    if data
+        .get("schemaVersion")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err("Jintia detect devolvió data sin schemaVersion válido.".to_string());
+    }
+    if data.get("projectRoot").and_then(Value::as_str).is_none() {
+        return Err("Jintia detect devolvió data sin projectRoot válido.".to_string());
+    }
+    if !data
+        .get("providers")
+        .is_some_and(Value::is_array)
+    {
+        return Err("Jintia detect devolvió data sin providers válido.".to_string());
+    }
+
+    Ok(Value::Object(data.clone()))
+}
+
+pub fn detect(project_path: String, explicit: Option<Vec<String>>) -> Result<Value, String> {
     let mut args: Vec<String> = vec!["detect".to_string(), project_path.clone(), "--json".to_string()];
 
     if let Some(ref providers) = explicit {
@@ -23,100 +53,11 @@ pub fn detect(project_path: String, explicit: Option<Vec<String>>) -> Value {
 
     let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let Some(skill_path) = crate::runtimes::resolve_skill() else {
-        return fallback_detect(&project_path, explicit);
+        return Err("Jintia administrado no está disponible. Instálalo o actualízalo desde Configuración > Entorno.".to_string());
     };
 
-    match engine::run_jintia(Path::new(&skill_path), &args_refs) {
-        Ok(result) => {
-            if result.success {
-                serde_json::from_str(&result.stdout)
-                    .unwrap_or_else(|_| fallback_detect(&project_path, explicit))
-            } else {
-                fallback_detect(&project_path, explicit)
-            }
-        }
-        Err(_) => fallback_detect(&project_path, explicit),
-    }
-}
-
-/// Fallback: detección local cuando la Skill no está disponible o falla.
-/// Devuelve una estructura mínima que el frontend pueda entender.
-fn fallback_detect(project_path: &str, explicit: Option<Vec<String>>) -> Value {
-    let project = std::path::PathBuf::from(project_path.trim());
-
-    // Proveedores conocidos con directorios por defecto
-    let default_providers = vec![
-        ("claude", "Claude Code", ".claude", true),
-        ("codex", "Codex CLI", ".agents", true),
-        ("cursor", "Cursor", ".cursor", true),
-        ("gemini", "Gemini CLI", ".gemini", false),
-        ("copilot", "GitHub Copilot", ".github", true),
-        ("grok", "Grok Build", ".grok", false),
-        ("kiro", "Kiro", ".kiro", false),
-        ("opencode", "OpenCode", ".opencode", false),
-        ("pi", "Project Indigo", ".pi", false),
-        ("qoder", "Qoder", ".qoder", false),
-        ("trae", "Trae", ".trae", false),
-        ("rovodev", "Rovo Dev", ".rovodev", false),
-        ("vibe", "Mistral Vibe", ".vibe", false),
-    ];
-
-    let mut detections = Vec::new();
-
-    for (id, name, dir, supports_hooks) in default_providers {
-        let provider_path = project.join(dir);
-        if explicit.is_none() && provider_path.is_dir() {
-            detections.push(json!({
-                "id": id,
-                "name": name,
-                "scope": "project",
-                "foundPath": provider_path.to_string_lossy().to_string(),
-                "installed": false,
-                "status": "detected",
-                "supportsHooks": supports_hooks,
-            }));
-        } else if let Some(ref providers) = explicit {
-            if providers.contains(&id.to_string()) {
-                detections.push(json!({
-                    "id": id,
-                    "name": name,
-                    "scope": "project",
-                    "foundPath": if provider_path.is_dir() { Some(provider_path.to_string_lossy().to_string()) } else { None },
-                    "installed": false,
-                    "status": if provider_path.is_dir() { "detected" } else { "not-detected" },
-                    "supportsHooks": supports_hooks,
-                }));
-            }
-        }
-    }
-
-    // Si no se detectó nada, al menos ofrecer Claude y Codex
-    if detections.is_empty() {
-        detections.push(json!({
-            "id": "claude",
-            "name": "Claude Code",
-            "scope": "project",
-            "foundPath": Value::Null,
-            "installed": false,
-            "status": "not-detected",
-            "supportsHooks": true,
-        }));
-        detections.push(json!({
-            "id": "codex",
-            "name": "Codex CLI",
-            "scope": "project",
-            "foundPath": Value::Null,
-            "installed": false,
-            "status": "not-detected",
-            "supportsHooks": true,
-        }));
-    }
-
-    json!({
-        "schemaVersion": "1.0.0",
-        "projectRoot": project.to_string_lossy().to_string(),
-        "providers": detections,
-    })
+    let report = engine::run_jintia_json::<Value>(Path::new(&skill_path), &args_refs)?;
+    detection_payload(&report)
 }
 
 #[cfg(test)]
@@ -124,17 +65,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fallback_returns_valid_json() {
-        let result = fallback_detect("/tmp/test", None);
-        assert!(result["schemaVersion"].is_string());
-        assert!(result["providers"].is_array());
+    fn detection_payload_returns_data_unchanged() {
+        let report = serde_json::json!({
+            "status": "success",
+            "data": {
+                "schemaVersion": "1.1.0",
+                "projectRoot": "/tmp/course",
+                "source": "matrix",
+                "providers": [{"id": "claude", "name": "Claude Code", "status": "installed"}]
+            }
+        });
+        let data = detection_payload(&report).unwrap();
+        assert_eq!(data, report["data"]);
     }
 
     #[test]
-    fn fallback_includes_default_providers() {
-        let result = fallback_detect("/tmp/test", None);
-        let providers = result["providers"].as_array().unwrap();
-        // Si no hay directorios, debe al menos devolver claude y codex
-        assert!(providers.len() >= 2);
+    fn detection_payload_rejects_invalid_reports() {
+        let valid_data = serde_json::json!({
+            "schemaVersion": "1.1.0",
+            "projectRoot": "/tmp/course",
+            "providers": []
+        });
+        let cases = [
+            serde_json::json!({"status": "success"}),
+            serde_json::json!({"status": "success", "data": null}),
+            serde_json::json!({"status": "success", "data": {"schemaVersion": "1.1.0", "projectRoot": "/tmp"}}),
+            serde_json::json!({"status": "success", "data": {"schemaVersion": "1.1.0", "projectRoot": "/tmp", "providers": {}}}),
+            serde_json::json!({"status": "success", "data": {"schemaVersion": "", "projectRoot": "/tmp", "providers": []}}),
+            serde_json::json!({"status": "success", "data": {"schemaVersion": "1.1.0", "providers": []}}),
+            serde_json::json!({"status": "failed", "data": valid_data}),
+        ];
+        for report in cases {
+            assert!(detection_payload(&report).is_err(), "accepted invalid report: {report}");
+        }
     }
 }

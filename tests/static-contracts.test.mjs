@@ -1311,7 +1311,7 @@ test('Desktop comparte la detección de harnesses con la CLI', async () => {
   assert.match(api, /manage_harnesses/);
   assert.match(lib, /detect_harnesses/);
   assert.match(lib, /manage_harnesses/);
-  assert.match(backend, /supports_hooks/);
+  assert.match(backend, /detection_payload/);
   assert.match(mock, /detect_harnesses/);
   assert.match(mock, /manage_harnesses/);
   assert.match(settings, /btn-detect-harnesses/);
@@ -2705,12 +2705,14 @@ test('Engine Adapter exige el archivo jintia.js resuelto por el runtime', async 
 });
 
 test('la detección de harnesses usa el runtime Jintia administrado', async () => {
-  const [harnesses, toolchain] = await Promise.all([
+  const [harnesses, toolchain, lib, settings] = await Promise.all([
     readFile(new URL('src-tauri/src/harnesses.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+    readFile(new URL('src/pages/settings.js', root), 'utf8'),
   ]);
   const detectStart = harnesses.indexOf('pub fn detect(');
-  const detectEnd = harnesses.indexOf('\nfn fallback_detect(', detectStart);
+  const detectEnd = harnesses.indexOf('\n#[cfg(test)]', detectStart);
   const detect = harnesses.slice(detectStart, detectEnd);
   const manageStart = toolchain.indexOf('pub fn manage_harness(');
   const manageEnd = toolchain.indexOf('\n}', toolchain.indexOf('match engine::run_jintia', manageStart));
@@ -2718,14 +2720,21 @@ test('la detección de harnesses usa el runtime Jintia administrado', async () =
 
   assert.ok(detectStart >= 0 && detectEnd > detectStart);
   assert.match(detect, /runtimes::resolve_skill/);
-  assert.match(detect, /engine::run_jintia/);
-  assert.match(detect, /fallback_detect/);
+  assert.match(detect, /engine::run_jintia_json/);
+  assert.match(harnesses, /get\("data"\)/);
+  assert.match(harnesses, /get\("providers"\)/);
+  assert.match(harnesses, /fn detection_payload/);
   assert.match(detect, /detect/);
   assert.match(detect, /--json/);
   assert.match(detect, /--providers=/);
+  assert.doesNotMatch(harnesses, /fallback_detect|default_providers|Command::new/);
+  assert.doesNotMatch(harnesses, /"\.claude"|"\.agents"|"\.cursor"|"\.gemini"|"\.grok"|"\.kiro"|"\.opencode"|"\.pi"|"\.qoder"|"\.trae"|"\.rovodev"|"\.vibe"/);
   assert.doesNotMatch(detect, /payload::installed_skill_path|installed_skill_path|skill_dir|legacy_skill_dir/);
   assert.doesNotMatch(harnesses, /use crate::payload;/);
   assert.match(manage, /runtimes::resolve_skill/);
+  assert.match(lib, /async fn detect_harnesses[\s\S]*Result<serde_json::Value, String>/);
+  assert.match(lib, /detect_harnesses[\s\S]*spawn_blocking[\s\S]*harnesses::detect/);
+  assert.match(settings, /result\.providers/);
 });
 
 test('las plantillas provienen del runtime Jintia administrado', async () => {
