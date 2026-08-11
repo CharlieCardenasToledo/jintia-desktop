@@ -268,78 +268,17 @@ test('Desktop no conserva estado release legacy de Jintia', async () => {
   }
   const release = await readFile(new URL('src-tauri/src/release.rs', root), 'utf8');
   const smoke = await readFile(new URL('scripts/smoke-notebooklm-browser.mjs', root), 'utf8');
+  const appMeta = await readFile(new URL('src/appMeta.js', root), 'utf8');
+  const about = await readFile(new URL('src/pages/about.js', root), 'utf8');
   assert.match(release, /managed_mcp_contract/);
   assert.match(release, /release-config\.json/);
   assert.match(smoke, /@charlie\.act7\/jintia@latest/);
   assert.match(smoke, /release-config\.json/);
+  assert.match(appMeta, /skillName:\s*"Jintia Skill"/);
+  assert.doesNotMatch(appMeta, /skillVersion|skillLock|skill\.lock\.json|administrada/);
+  assert.doesNotMatch(about, /APP_META\.skillVersion|v\$\{APP_META\.skill/);
+  assert.match(about, /APP_META\.skillName/);
 });
-
-/* Legacy sync contract removed in Plan 49.
-test('skill:sync conserva el consumidor legacy separado', async () => {
-  const [sync, lockText, manifestText, scripts] = await Promise.all([
-    readFile(new URL('scripts/sync-skill-release.mjs', root), 'utf8'),
-    readFile(new URL('skill.lock.json', root), 'utf8'),
-    readFile(new URL('src-tauri/resources/jintia-release-manifest.json', root), 'utf8'),
-    readdir(new URL('scripts/', root)),
-  ]);
-  const lock = JSON.parse(lockText);
-  assert.match(sync, /CANONICAL_REPOSITORY/);
-  assert.match(sync, /https:\/\/github\.com\/\$\{CANONICAL_REPOSITORY\}\/releases\/download/);
-  assert.doesNotMatch(sync, /https:\/\/github\.com\/\$\{current\.repository\}/);
-  assert.match(sync, /skill\.lock\.json/);
-  assert.match(sync, /jintia-release-manifest\.json/);
-  assert.match(sync, /manifest\.mcp/);
-  assert.match(sync, /writeFile/);
-  assert.ok(scripts.includes('sync-skill-release.mjs'));
-  const legacyRepository = ['instructional', '-designer-skill'].join('');
-  assert.doesNotMatch(`${lockText}\n${manifestText}\n${sync}`, new RegExp(legacyRepository));
-
-  assert.match(sync, /skill\.lock\.json/);
-  assert.match(sync, /--tag=/);
-  assert.match(sync, /current\.tag/);
-  assert.match(sync, /releases\/download/);
-  assert.match(sync, /jintia-release-manifest\.json/);
-  assert.match(sync, /manifest\.skillVersion/);
-  assert.match(sync, /manifest\.source/);
-  assert.match(sync, /repository/);
-  assert.match(sync, /manifest\.mcp/);
-  assert.match(sync, /manifest\.mcp\.node/);
-  assert.match(sync, /trim/);
-  assert.match(sync, /manifest\.mcp\.npmIntegrity/);
-  assert.match(sync, /sha512-/);
-  assert.ok(
-    sync.indexOf('manifest.mcp.node') < sync.indexOf('replace(manifestFile, manifestBytes)'),
-    'mcp.node debe validarse antes de reemplazar el manifest local'
-  );
-  assert.match(sync, /createHash/);
-  assert.match(sync, /sha256/);
-  assert.match(sync, /replace\(manifestFile, manifestBytes\)/);
-  assert.match(sync, /writeFile/);
-  assert.match(sync, /import\s*\{[^}]*\bunlink\b[^}]*\}\s*from\s*"node:fs\/promises"/s);
-  const normalizedSync = sync.replace(/\r\n?/g, '\n');
-  const replaceStart = normalizedSync.indexOf('async function replace(');
-  const replaceEnd = normalizedSync.indexOf('\n}\n', replaceStart);
-  assert.ok(replaceStart >= 0, 'replace() debe existir en skill:sync');
-  assert.ok(replaceEnd > replaceStart, 'replace() debe poder aislarse independientemente de CRLF/LF');
-  const replaceFn = normalizedSync.slice(replaceStart, replaceEnd + 2);
-  assert.match(replaceFn, /writeFile/);
-  assert.match(replaceFn, /unlink/);
-  assert.match(replaceFn, /rename/);
-  assert.ok(replaceFn.indexOf('writeFile') < replaceFn.indexOf('unlink'));
-  assert.ok(replaceFn.indexOf('unlink') < replaceFn.indexOf('rename'));
-  assert.doesNotMatch(sync, /manifest\.artifacts|current\.artifacts|openaiPlugin|download\(entry\.file\)|entry\.bytes|Object\.values\(artifacts\)|const artifacts/);
-
-  assert.equal(lock.schemaVersion, 1);
-  assert.equal(lock.repository, 'CharlieCardenasToledo/jintia');
-  assert.match(lock.tag, /^v\d+\.\d+\.\d+$/);
-  assert.match(lock.manifest.sha256, /^[a-f0-9]{64}$/);
-  assert.equal(lock.mcp.package, '@charlie.act7/gemini-notebook-mcp');
-  assert.match(lock.mcp.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(lock.skillVersion, undefined);
-  assert.equal(lock.minimumDesktopVersion, undefined);
-  assert.equal(lock.artifacts, undefined);
-});
-*/
 
 test('install_local_skill requiere el runtime npm administrado', async () => {
   const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');

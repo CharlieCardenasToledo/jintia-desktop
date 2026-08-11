@@ -51,7 +51,7 @@ export async function renderAbout() {
           </p>
           <div class="mt-5 flex flex-wrap gap-2 text-xs font-semibold text-slate-700">
             <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">Desktop <span data-about-app-version>…</span></span>
-            <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">Skill v${APP_META.skillVersion}</span>
+            <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">${APP_META.skillName}</span>
             <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">${APP_META.license}</span>
           </div>
           <p class="mt-5 text-sm text-slate-700">Creado y mantenido por <strong>${APP_META.creator}</strong>.</p>
@@ -97,7 +97,7 @@ export async function renderAbout() {
           <div><dt class="font-semibold text-slate-500">Autor y mantenedor</dt><dd class="mt-1 font-bold text-slate-900">${APP_META.creator}</dd></div>
           <div><dt class="font-semibold text-slate-500">Licencia del proyecto</dt><dd class="mt-1 font-bold text-slate-900">${APP_META.license}</dd></div>
           <div><dt class="font-semibold text-slate-500">Aplicación</dt><dd class="mt-1 text-slate-800" data-about-runtime>${APP_META.desktopName}</dd></div>
-          <div><dt class="font-semibold text-slate-500">Motor académico</dt><dd class="mt-1 text-slate-800">${APP_META.skillName} v${APP_META.skillVersion}</dd></div>
+          <div><dt class="font-semibold text-slate-500">Motor académico</dt><dd class="mt-1 text-slate-800">${APP_META.skillName}</dd></div>
         </dl>
         <p class="mt-5 text-xs leading-5 text-slate-500">${APP_META.copyright}. Los nombres y marcas de terceros pertenecen a sus respectivos titulares.</p>
       </section>

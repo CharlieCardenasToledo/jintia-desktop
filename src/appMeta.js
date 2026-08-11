@@ -8,9 +8,6 @@ export const APP_META = Object.freeze({
   brandName: "Jintia",
   desktopName: "Jintia Desktop",
   skillName: "Jintia Skill",
-  // La versión efectiva de la skill pertenece al paquete Jintia administrado
-  // y se descubre en runtime; no se replica en Desktop.
-  skillVersion: "administrada",
   creator: "Charlie Cárdenas Toledo",
   creatorUrl: "https://github.com/CharlieCardenasToledo",
   tagline: "Diseña el camino del aprendizaje.",
