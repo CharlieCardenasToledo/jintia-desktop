@@ -58,4 +58,4 @@ if (JSON.stringify(manifest.mcp) !== JSON.stringify(lock.mcp)) {
   fail("el contrato MCP no coincide con el manifest");
 }
 
-console.log(`Contrato MCP de Desktop verificado: ${mcpPackage}@${mcpVersion}.`);
+console.log(`Contrato MCP legacy embebido verificado: ${mcpPackage}@${mcpVersion}.`);

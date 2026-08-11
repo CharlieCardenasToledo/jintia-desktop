@@ -365,15 +365,7 @@ fn server_configured(path: Result<std::path::PathBuf, String>) -> bool {
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .and_then(|value| value.get("mcpServers")?.get("notebooklm").cloned())
-        .and_then(|server| server.get("args")?.as_array().cloned())
-        .is_some_and(|args| {
-            args.iter().any(|arg| {
-                let value = arg.as_str();
-                value == Some(crate::release::managed_mcp_contract().map(|contract| contract.package).unwrap_or_default().as_str())
-                    || value == Some("gemini-notebook-mcp@latest")
-                    || value == Some("@charlie.act7/gemini-notebook-mcp@latest")
-            })
-        })
+        .is_some_and(|server| crate::mcp::server_matches_managed_mcp(&server))
 }
 
 pub fn setup_status() -> SetupStatus {

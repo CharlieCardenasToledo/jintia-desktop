@@ -713,6 +713,29 @@ fn notebooklm_lock_entry<'a>(lock: &'a serde_json::Value, package_name: &str) ->
     lock.get("packages")?.get(&key)
 }
 
+fn notebooklm_package_dir(prefix: &std::path::Path, package: &str) -> PathBuf {
+    prefix.join("node_modules").join(package)
+}
+
+pub(crate) fn portable_notebooklm_mcp_package_dir_for(package: &str) -> PathBuf {
+    notebooklm_package_dir(&paths::portable_notebooklm_mcp_prefix(), package)
+}
+
+fn notebooklm_package_matches_contract(
+    package: &serde_json::Value,
+    lock: &serde_json::Value,
+    contract: &crate::release::ManagedMcpContract,
+) -> bool {
+    package.get("name").and_then(|v| v.as_str()) == Some(contract.package.as_str())
+        && package.get("version").and_then(|v| v.as_str()) == Some(contract.version.as_str())
+        && notebooklm_lock_entry(lock, &contract.package)
+            .and_then(|entry| entry.get("version"))
+            .and_then(|v| v.as_str()) == Some(contract.version.as_str())
+        && notebooklm_lock_entry(lock, &contract.package)
+            .and_then(|entry| entry.get("integrity"))
+            .and_then(|v| v.as_str()) == Some(contract.npm_integrity.as_str())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotebookLmBrowserStatus {
@@ -790,19 +813,16 @@ pub fn portable_notebooklm_mcp_installed() -> bool {
 }
 
 pub fn portable_notebooklm_mcp_installed_for(contract: &crate::release::ManagedMcpContract) -> bool {
-    let package = paths::portable_notebooklm_mcp_package_dir().join("package.json");
+    let package_dir = portable_notebooklm_mcp_package_dir_for(&contract.package);
+    let package = package_dir.join("package.json");
     let lock = paths::portable_notebooklm_mcp_lock();
     let Ok(package) = fs::read_to_string(package) else { return false; };
     let Ok(package) = serde_json::from_str::<serde_json::Value>(&package) else { return false; };
     let Ok(lock) = fs::read_to_string(lock) else { return false; };
     let Ok(lock) = serde_json::from_str::<serde_json::Value>(&lock) else { return false; };
-    package.get("name").and_then(|v| v.as_str()) == Some(contract.package.as_str())
-        && package.get("version").and_then(|v| v.as_str()) == Some(contract.version.as_str())
-        && notebooklm_lock_entry(&lock, &contract.package)
-            .and_then(|entry| entry.get("integrity"))
-            .and_then(|value| value.as_str()) == Some(contract.npm_integrity.as_str())
-        && resolve_notebooklm_mcp_bin_for(&paths::portable_notebooklm_mcp_package_dir(), contract).is_ok()
-        && validate_notebooklm_browser(&paths::portable_node_exe(), &paths::portable_notebooklm_mcp_package_dir(), &paths::portable_notebooklm_mcp_prefix().join("node_modules"), "status", contract).is_ok()
+    notebooklm_package_matches_contract(&package, &lock, contract)
+        && resolve_notebooklm_mcp_bin_for(&package_dir, contract).is_ok()
+        && validate_notebooklm_browser(&paths::portable_node_exe(), &package_dir, &paths::portable_notebooklm_mcp_prefix().join("node_modules"), "status", contract).is_ok()
 }
 
 pub fn install_notebooklm_mcp() -> Result<(), String> {
@@ -829,14 +849,14 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
         let entry = notebooklm_lock_entry(&lock, &contract.package).ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
         if entry.get("version").and_then(|v| v.as_str()) != Some(contract.version.as_str()) || entry.get("integrity").and_then(|v| v.as_str()) != Some(contract.npm_integrity.as_str()) { return Err("El integrity de NotebookLM MCP no coincide con el contrato administrado de Jintia.".to_string()); }
         run(&["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"])?;
-        let package_dir = stage.join("node_modules").join("@charlie.act7").join("gemini-notebook-mcp");
+        let package_dir = notebooklm_package_dir(&stage, &contract.package);
         validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "install", &contract)?;
         validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "status", &contract)?;
         let active = paths::portable_notebooklm_mcp_prefix();
         let backup = root.join(format!(".notebooklm-mcp-backup-{}", paths::timestamp()));
         if active.exists() { fs::rename(&active, &backup).map_err(|e| e.to_string())?; }
         if let Err(error) = fs::rename(&stage, &active) { if backup.exists() { let _ = fs::rename(&backup, &active); } return Err(error.to_string()); }
-        let active_package = active.join("node_modules").join("@charlie.act7").join("gemini-notebook-mcp");
+        let active_package = notebooklm_package_dir(&active, &contract.package);
         if let Err(error) = validate_notebooklm_browser(&node, &active_package, &active.join("node_modules"), "status", &contract) {
             let _ = fs::remove_dir_all(&active);
             if backup.exists() { let _ = fs::rename(&backup, &active); }
@@ -851,8 +871,27 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{notebooklm_lock_entry, resolve_notebooklm_mcp_bin_for};
+    use super::{notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
     use std::fs;
+
+    fn contract() -> crate::release::ManagedMcpContract {
+        crate::release::ManagedMcpContract { package: "@scope/pkg".into(), version: "2.3.10".into(), node_requirement: ">=22.13.0".into(), npm_integrity: "sha512-AAAA".into(), jintia_version: "11.6.10".into() }
+    }
+
+    #[test]
+    fn package_and_lock_match_contract_exactly() {
+        let c = contract();
+        let package = serde_json::json!({"name":"@scope/pkg","version":"2.3.10"});
+        let lock = serde_json::json!({"packages":{"node_modules/@scope/pkg":{"version":"2.3.10","integrity":"sha512-AAAA"}}});
+        assert!(notebooklm_package_matches_contract(&package, &lock, &c));
+        for (package, lock) in [
+            (serde_json::json!({"name":"other","version":"2.3.10"}), lock.clone()),
+            (serde_json::json!({"name":"@scope/pkg","version":"2.3.9"}), lock.clone()),
+            (package.clone(), serde_json::json!({"packages":{}})),
+            (package.clone(), serde_json::json!({"packages":{"node_modules/@scope/pkg":{"version":"2.3.9","integrity":"sha512-AAAA"}}})),
+            (package.clone(), serde_json::json!({"packages":{"node_modules/@scope/pkg":{"version":"2.3.10","integrity":"sha512-BBBB"}}})),
+        ] { assert!(!notebooklm_package_matches_contract(&package, &lock, &c)); }
+    }
 
     #[test]
     fn notebooklm_lock_entry_resolves_scoped_package() {

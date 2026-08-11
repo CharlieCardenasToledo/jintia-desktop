@@ -100,16 +100,24 @@ pub fn managed_mcp_contract() -> Result<ManagedMcpContract, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const VALID_MCP_VERSION: &str = "2.3.10";
+    const VALID_SRI: &str = "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
     fn fixture() -> (Vec<u8>, Vec<u8>) {
-        (br#"{"name":"@charlie.act7/jintia","version":"11.6.8"}"#.to_vec(), br#"{"$schemaVersion":"1.0.0","repository":"CharlieCardenasToledo/jintia","minimumDesktopVersion":"1.1.0","mcp":{"package":"@charlie.act7/gemini-notebook-mcp","version":"2.3.5","node":">=22.13.0","npmIntegrity":"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="}}"#.to_vec())
+        (format!(r#"{{"name":"@charlie.act7/jintia","version":"11.6.10"}}"#).into_bytes(), format!(r#"{{"$schemaVersion":"1.0.0","repository":"CharlieCardenasToledo/jintia","minimumDesktopVersion":"1.1.0","mcp":{{"package":"@charlie.act7/gemini-notebook-mcp","version":"{VALID_MCP_VERSION}","node":">=22.13.0","npmIntegrity":"{VALID_SRI}"}}}}"#).into_bytes())
     }
-    #[test] fn accepts_valid_contract() { let (p, r) = fixture(); assert!(parse_managed_mcp_contract(&p, &r, "1.1.1").is_ok()); }
-    #[test] fn rejects_invalid_contract_fields() {
-        for (needle, replacement) in [("@charlie.act7/jintia", "other"), ("1.1.0", "99.0.0"), ("sha512-", "sha1-")] {
-            let (p, mut r) = fixture();
-            if needle == "@charlie.act7/jintia" { let mut p2 = p; let s = String::from_utf8(p2).unwrap().replace(needle, replacement); assert!(parse_managed_mcp_contract(s.as_bytes(), &r, "1.1.1").is_err()); }
-            else { r = String::from_utf8(r).unwrap().replace(needle, replacement).into_bytes(); assert!(parse_managed_mcp_contract(&p, &r, "1.1.1").is_err()); }
-        }
+    fn parse_with(mut package: Value, mut release: Value) -> Result<ManagedMcpContract, String> {
+        let (p, r) = fixture();
+        let base_package: Value = serde_json::from_slice(&p).unwrap();
+        let base_release: Value = serde_json::from_slice(&r).unwrap();
+        if package.is_null() { package = base_package; }
+        if release.is_null() { release = base_release; }
+        parse_managed_mcp_contract(serde_json::to_string(&package).unwrap().as_bytes(), serde_json::to_string(&release).unwrap().as_bytes(), "1.1.1")
     }
+    #[test] fn accepts_valid_contract_and_reads_jintia_version_from_package() { let (p, r) = fixture(); let c = parse_managed_mcp_contract(&p, &r, "1.1.1").unwrap(); assert_eq!(c.jintia_version, "11.6.10"); }
+    #[test] fn rejects_missing_or_invalid_package_json() { assert!(parse_managed_mcp_contract(b"", &fixture().1, "1.1.1").is_err()); assert!(parse_managed_mcp_contract(br#"{}"#, &fixture().1, "1.1.1").is_err()); assert!(parse_managed_mcp_contract(br#"{"name":"other","version":"1.0.0"}"#, &fixture().1, "1.1.1").is_err()); assert!(parse_managed_mcp_contract(br#"{"name":"@charlie.act7/jintia","version":"bad"}"#, &fixture().1, "1.1.1").is_err()); }
+    #[test] fn rejects_release_schema_repository_minimum_and_json_errors() { let p = fixture().0; for r in [b"{".as_slice(), br#"{}"#, br#"{"$schemaVersion":"2.0.0","repository":"CharlieCardenasToledo/jintia","minimumDesktopVersion":"1.1.0"}"#, br#"{"$schemaVersion":"1.0.0","repository":"other","minimumDesktopVersion":"1.1.0"}"#, br#"{"$schemaVersion":"1.0.0","repository":"CharlieCardenasToledo/jintia","minimumDesktopVersion":"bad"}"#] { assert!(parse_managed_mcp_contract(&p, r, "1.1.1").is_err()); } let mut r: Value = serde_json::from_slice(&fixture().1).unwrap(); r["minimumDesktopVersion"] = Value::String("99.0.0".into()); assert!(parse_with(Value::Null, r).is_err()); }
+    #[test] fn rejects_floating_prerelease_and_invalid_mcp_versions() { for version in ["latest", "^2.3.10", "~2.3.10", "*", "2.3", "v2.3.10", "2.3.10-beta.1"] { let mut r: Value = serde_json::from_slice(&fixture().1).unwrap(); r["mcp"]["version"] = Value::String(version.into()); assert!(parse_with(Value::Null, r).is_err()); } }
+    #[test] fn rejects_invalid_node_requirements_and_sri() { for node in ["latest", "node", "not-a-range", "https://example.com"] { let mut r: Value = serde_json::from_slice(&fixture().1).unwrap(); r["mcp"]["node"] = Value::String(node.into()); assert!(parse_with(Value::Null, r).is_err()); } for sri in ["sha512-AA=AAAA", "sha512-=AAAAAA", "sha512-AAAA===", "sha512-AAAA AAAA", "sha512-", "sha1-AAAA", "sha256-AAAA"] { let mut r: Value = serde_json::from_slice(&fixture().1).unwrap(); r["mcp"]["npmIntegrity"] = Value::String(sri.into()); assert!(parse_with(Value::Null, r).is_err()); } }
+    #[test] fn accepts_terminal_sri_padding() { assert!(valid_sri("sha512-AAAA")); assert!(valid_sri(VALID_SRI)); }
     #[test] fn rejects_missing_release_config() { let dir = std::env::temp_dir().join(format!("jintia-contract-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())); fs::create_dir_all(&dir).unwrap(); fs::write(dir.join("package.json"), fixture().0).unwrap(); assert!(managed_mcp_contract_from(&dir, "1.1.1").is_err()); let _ = fs::remove_dir_all(dir); }
 }

@@ -168,10 +168,19 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
     // El compilador LaTeX es opcional. La skill puede renderizar a través de
     // Vivliostyle en lugar de LaTeX. Detección local únicamente para capacidades
     // avanzadas (plantillas LaTeX personalizadas, si existen en el futuro).
+    let mcp_contract = crate::release::managed_mcp_contract().ok();
+    let mcp_installed = mcp_contract
+        .as_ref()
+        .is_some_and(crate::runtimes::portable_notebooklm_mcp_installed_for);
+    let mcp_version = if mcp_installed {
+        mcp_contract.as_ref().map(|contract| contract.version.clone())
+    } else {
+        None
+    };
     dependencies.push(DependencyStatus {
         name: "NotebookLM MCP".to_string(),
-        installed: crate::runtimes::portable_notebooklm_mcp_installed(),
-        version: if crate::runtimes::portable_notebooklm_mcp_installed() { crate::release::managed_mcp_contract().ok().map(|contract| contract.version) } else { None },
+        installed: mcp_installed,
+        version: mcp_version,
         required: true,
         installable: true,
         note: "Servidor MCP administrado para consultar fuentes de NotebookLM.".to_string(),

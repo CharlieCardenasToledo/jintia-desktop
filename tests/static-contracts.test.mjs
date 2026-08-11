@@ -86,6 +86,8 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(npxFn, /npm-cli\.js/);
 
   assert.match(mcp, /fn managed_mcp/);
+  assert.match(mcp, /server_matches_managed_mcp/);
+  assert.doesNotMatch(mcp, /NOTEBOOKLM_MCP_/);
   assert.match(mcp, /portable_node_exe/);
   assert.match(runtimes, /resolve_notebooklm_mcp_bin/);
   assert.match(runtimes, /browser/);
@@ -113,6 +115,8 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(runtimes, /install_notebooklm_mcp/);
   assert.match(runtimes, /notebooklm_lock_entry/);
   assert.match(runtimes, /contract\.package/);
+  assert.match(runtimes, /notebooklm_package_dir/);
+  assert.match(runtimes, /notebooklm_package_matches_contract/);
   assert.match(runtimes, /get\("packages"\)/);
   assert.doesNotMatch(runtimes, /pointer\(\s*"\/packages\/node_modules\/@charlie\.act7\/gemini-notebook-mcp/s);
   assert.match(runtimes, /package-lock\.json/);
@@ -121,7 +125,6 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(runtimes, /contract\.npm_integrity/);
   assert.match(runtimes, /npm.*ci|\["ci"/);
   assert.match(runtimes, /--omit=dev/);
-  assert.doesNotMatch(mcp, /NOTEBOOKLM_MCP_/);
   assert.match(smoke, /ci', '--omit=dev/);
   assert.ok(smoke.indexOf('package-lock-only') < smoke.indexOf('integrity del lock'));
   assert.ok(smoke.indexOf('integrity del lock') < smoke.indexOf("['ci', '--omit=dev']"));
@@ -187,6 +190,32 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   }
 });
 
+test('la configuración y el curso consumen el contrato MCP dinámico', async () => {
+  const [config, course, mcp, runtimes, lockText, build] = await Promise.all([
+    readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('skill.lock.json', root), 'utf8'),
+    readFile(new URL('src-tauri/build.rs', root), 'utf8'),
+  ]);
+  assert.match(config, /server_matches_managed_mcp/);
+  assert.doesNotMatch(config, /NOTEBOOKLM_MCP_|managed_mcp_contract|npx|@latest/);
+  assert.match(course, /managed_mcp_contract/);
+  assert.match(course, /portable_notebooklm_mcp_installed_for/);
+  assert.doesNotMatch(course, /NOTEBOOKLM_MCP_/);
+  assert.doesNotMatch(course, /portable_notebooklm_mcp_installed\(\)[\s\S]*portable_notebooklm_mcp_installed\(\)/);
+  assert.doesNotMatch(mcp, /NOTEBOOKLM_MCP_/);
+  assert.doesNotMatch(runtimes, /NOTEBOOKLM_MCP_/);
+  const installStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
+  const installEnd = runtimes.indexOf('\n#[cfg(test)]', installStart);
+  const install = runtimes.slice(installStart, installEnd < 0 ? runtimes.length : installEnd);
+  assert.match(install, /contract\.package/);
+  assert.doesNotMatch(install, /\.join\("@charlie\.act7"\)\.join\("gemini-notebook-mcp"\)/);
+  assert.match(build, /skill\.lock\.json/);
+  assert.match(lockText, /"mcp"/);
+});
+
 test('el build Rust no consume artifacts Skill legacy', async () => {
   const [build, cargo] = await Promise.all([
     readFile(new URL('src-tauri/build.rs', root), 'utf8'),
@@ -247,7 +276,8 @@ test('skill:verify conserva el contrato MCP embedded legacy', async () => {
   assert.match(checker, /sha512-/);
   assert.match(checker, /JSON\.stringify/);
   assert.match(checker, /src-tauri\/resources/);
-  assert.match(checker, /Contrato MCP de Desktop/);
+  assert.match(checker, /Contrato MCP legacy embebido/);
+  assert.doesNotMatch(checker, /Contrato MCP de Desktop verificado/);
   assert.doesNotMatch(checker, /lock\.tag|lock\.skillVersion|manifest\.skillVersion|\.artifacts|openaiPlugin|compatibility|entry\.bytes|\bstat\s*\(/);
 
   const workflow = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');

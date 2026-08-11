@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{mpsc, Mutex};
 use std::thread;
@@ -35,11 +35,21 @@ fn managed_mcp() -> Result<ManagedMcp, String> {
         return Err("NotebookLM MCP no está instalado o no coincide con el contrato aprobado.".to_string());
     }
     validate_managed_node(&node, &contract.node_requirement)?;
-    let bin = crate::runtimes::resolve_notebooklm_mcp_bin_for(
-        &crate::paths::portable_notebooklm_mcp_package_dir(),
-        &contract,
-    )?;
+    let package_dir = crate::runtimes::portable_notebooklm_mcp_package_dir_for(&contract.package);
+    let bin = crate::runtimes::resolve_notebooklm_mcp_bin_for(&package_dir, &contract)?;
     Ok(ManagedMcp { node, bin })
+}
+
+fn server_matches_paths(server: &Value, node: &Path, bin: &Path) -> bool {
+    server.get("command").and_then(Value::as_str) == node.to_str()
+        && server.get("args").and_then(Value::as_array).is_some_and(|args| {
+            args.len() == 1 && args[0].as_str() == bin.to_str()
+        })
+}
+
+pub(crate) fn server_matches_managed_mcp(server: &Value) -> bool {
+    let Ok(managed) = managed_mcp() else { return false; };
+    server_matches_paths(server, &managed.node, &managed.bin)
 }
 
 fn managed_node_version(node: &std::path::Path) -> Result<Version, String> {
@@ -811,6 +821,25 @@ pub fn list_account_notebooks() -> Result<Vec<NotebookLmEntry>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_server_matcher_requires_exact_node_and_bin() {
+        let node = Path::new("/managed/node");
+        let bin = Path::new("/managed/node_modules/@scope/pkg/bin.js");
+        let valid = serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"]});
+        assert!(server_matches_paths(&valid, node, bin));
+        for server in [
+            serde_json::json!({"command": "/other/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"]}),
+            serde_json::json!({"command": "/managed/node", "args": ["/other/bin"]}),
+            serde_json::json!({"command": "/managed/node", "args": []}),
+            serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js", "--extra"]}),
+            serde_json::json!({"command": "npx", "args": ["@scope/pkg@latest"]}),
+            serde_json::json!({"command": "/managed/node", "args": ["@scope/pkg"]}),
+            serde_json::json!({"args": ["/managed/node_modules/@scope/pkg/bin.js"]}),
+        ] {
+            assert!(!server_matches_paths(&server, node, bin));
+        }
+    }
 
     #[test]
     fn parses_nested_health_payload_from_mcp_text_content() {
