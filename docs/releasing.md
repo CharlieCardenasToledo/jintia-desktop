@@ -1,21 +1,17 @@
 # Publicar Jintia Desktop
 
 1. Actualiza `CHANGELOG.md` y las tres versiones de Desktop.
-2. Si corresponde, sincroniza una release oficial de la skill:
-
-   ```bash
-   npm run skill:sync -- --tag=vX.Y.Z
-   ```
-
-3. Ejecuta:
+2. Ejecuta:
 
    ```bash
    npm ci
-   npm run skill:verify
    npm test
    npm run build
    cargo test --manifest-path src-tauri/Cargo.toml
    ```
+
+3. CI valida el engine Jintia publicado y el contrato NotebookLM MCP
+   administrado mediante sus smokes correspondientes.
 
 4. Crea y publica un tag con la versión de Desktop:
 

@@ -1,25 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
 
 test('Jintia es la identidad canónica en la aplicación y los instaladores', async () => {
-  const [main, onboarding, html, tauriText, appPackageText, brandText, lockText, paths, payload] = await Promise.all([
+  const [main, onboarding, html, tauriText, appPackageText, brandText, paths, payload] = await Promise.all([
     readFile(new URL('src/main.js', root), 'utf8'),
     readFile(new URL('src/onboarding.js', root), 'utf8'),
     readFile(new URL('index.html', root), 'utf8'),
     readFile(new URL('src-tauri/tauri.conf.json', root), 'utf8'),
     readFile(new URL('package.json', root), 'utf8'),
     readFile(new URL('src/brand.json', root), 'utf8'),
-    readFile(new URL('skill.lock.json', root), 'utf8'),
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
   ]);
   const tauri = JSON.parse(tauriText);
   const appPackage = JSON.parse(appPackageText);
   const brand = JSON.parse(brandText);
-  const lock = JSON.parse(lockText);
 
   assert.match(main, />Jintia</);
   assert.match(main, /Diseña el camino del aprendizaje/);
@@ -30,7 +28,6 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.equal(tauri.identifier, 'com.charliecardenas.jintia');
   assert.equal(appPackage.name, 'jintia-desktop');
   assert.equal(brand.brandName, 'Jintia');
-  assert.match(lock.tag, /^v\d+\.\d+\.\d+$/);
   assert.match(paths, /\.join\("jintia-skill"\)/);
   assert.match(paths, /legacy_skill_dir/);
   assert.match(payload, /jintia-skill-\{managed_version\}\.zip/);
@@ -38,29 +35,20 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
 });
 
 test('la identidad canónica y la ruta legacy permanecen separadas', async () => {
-  const [paths, payload, lockText] = await Promise.all([
+  const [paths, payload] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
-    readFile(new URL('skill.lock.json', root), 'utf8'),
   ]);
-  const lock = JSON.parse(lockText);
-
-  assert.equal(lock.repository, 'CharlieCardenasToledo/jintia');
   assert.match(paths, /pub fn skill_dir[\s\S]*\.join\("jintia-skill"\)/);
   assert.match(paths, /pub fn legacy_skill_dir[\s\S]*\.join\("instructional-designer-skill"\)/);
   assert.match(payload, /instructional-designer-skill\.backup-/);
 });
 
-test('resources conserva solo metadata MCP y no artifacts de Skill', async () => {
-  const [resources, attributes] = await Promise.all([
-    readdir(new URL('src-tauri/resources/', root)),
-    readFile(new URL('.gitattributes', root), 'utf8'),
-  ]);
-  assert.ok(resources.includes('jintia-release-manifest.json'));
-  assert.deepEqual(resources.filter(name => name.endsWith('.zip')), []);
-  assert.doesNotMatch(attributes, /src-tauri\/resources\/\*\.zip\s+binary/);
-  assert.match(attributes, /jintia-release-manifest\.json text eol=lf/);
-  assert.match(attributes, /skill\.lock\.json text eol=lf/);
+test('Desktop no conserva el manifest release legacy', async () => {
+  await assert.rejects(
+    access(new URL('src-tauri/resources/jintia-release-manifest.json', root)),
+    error => error?.code === 'ENOENT'
+  );
 });
 
 test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
@@ -162,22 +150,13 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
 });
 
 test('la arquitectura separa la app de escritorio y el paquete instalable de la skill', async () => {
-  const [payload, config, build, lockText, windowsWorkflow, macosWorkflow] = await Promise.all([
+  const [payload, config, build, windowsWorkflow, macosWorkflow] = await Promise.all([
     readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
     readFile(new URL('src-tauri/build.rs', root), 'utf8'),
-    readFile(new URL('skill.lock.json', root), 'utf8'),
     readFile(new URL('.github/workflows/release-windows.yml', root), 'utf8'),
     readFile(new URL('.github/workflows/release-macos.yml', root), 'utf8'),
   ]);
-  const lock = JSON.parse(lockText);
-
-  assert.equal(lock.repository, 'CharlieCardenasToledo/jintia');
-  assert.equal(lock.artifacts, undefined);
-  assert.equal(lock.skillVersion, undefined);
-  assert.equal(lock.minimumDesktopVersion, undefined);
-  assert.equal(lock.mcp.package, '@charlie.act7/gemini-notebook-mcp');
-  assert.match(lock.mcp.version, /^\d+\.\d+\.\d+$/);
   assert.doesNotMatch(payload, /\$OUT_DIR\/jintia-skill/);
   assert.match(config, /portable_skill_source_dir/);
   assert.match(config, /themes/);
@@ -190,12 +169,11 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
 });
 
 test('la configuración y el curso consumen el contrato MCP dinámico', async () => {
-  const [config, course, mcp, runtimes, lockText, build] = await Promise.all([
+  const [config, course, mcp, runtimes, build] = await Promise.all([
     readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
-    readFile(new URL('skill.lock.json', root), 'utf8'),
     readFile(new URL('src-tauri/build.rs', root), 'utf8'),
   ]);
   assert.match(config, /server_matches_managed_mcp/);
@@ -211,7 +189,6 @@ test('la configuración y el curso consumen el contrato MCP dinámico', async ()
   const install = runtimes.slice(installStart, installEnd < 0 ? runtimes.length : installEnd);
   assert.match(install, /contract\.package/);
   assert.doesNotMatch(install, /\.join\("@charlie\.act7"\)\.join\("gemini-notebook-mcp"\)/);
-  assert.match(lockText, /"mcp"/);
 });
 
 test('el build Rust está desacoplado del contrato release legacy', async () => {
@@ -264,7 +241,7 @@ test('el smoke de CI ejecuta el engine publicado en npm', async () => {
   assert.match(workflow, /node-version: 22\.13\.0/);
 });
 
-test('el gate release legacy fue retirado de package y workflows', async () => {
+test('Desktop no conserva estado release legacy de Jintia', async () => {
   const [pkgText, ci, windows, macos, scripts] = await Promise.all([
     readFile(new URL('package.json', root), 'utf8'),
     readFile(new URL('.github/workflows/ci.yml', root), 'utf8'),
@@ -274,14 +251,30 @@ test('el gate release legacy fue retirado de package y workflows', async () => {
   ]);
   const pkg = JSON.parse(pkgText);
   assert.equal(pkg.scripts['skill:verify'], undefined);
-  assert.equal(pkg.scripts['skill:sync'], 'node scripts/sync-skill-release.mjs');
+  assert.equal(pkg.scripts['skill:sync'], undefined);
   for (const workflow of [ci, windows, macos]) {
     assert.doesNotMatch(workflow, /skill:verify|check-skill-release/);
   }
   assert.ok(!scripts.includes('check-skill-release.mjs'));
-  assert.ok(scripts.includes('sync-skill-release.mjs'));
+  assert.ok(!scripts.includes('sync-skill-release.mjs'));
+  for (const relativePath of [
+    'scripts/check-skill-release.mjs',
+    'scripts/sync-skill-release.mjs',
+    'skill.lock.json',
+    'src-tauri/resources/jintia-release-manifest.json',
+    '.gitattributes',
+  ]) {
+    await assert.rejects(access(new URL(relativePath, root)), error => error?.code === 'ENOENT');
+  }
+  const release = await readFile(new URL('src-tauri/src/release.rs', root), 'utf8');
+  const smoke = await readFile(new URL('scripts/smoke-notebooklm-browser.mjs', root), 'utf8');
+  assert.match(release, /managed_mcp_contract/);
+  assert.match(release, /release-config\.json/);
+  assert.match(smoke, /@charlie\.act7\/jintia@latest/);
+  assert.match(smoke, /release-config\.json/);
 });
 
+/* Legacy sync contract removed in Plan 49.
 test('skill:sync conserva el consumidor legacy separado', async () => {
   const [sync, lockText, manifestText, scripts] = await Promise.all([
     readFile(new URL('scripts/sync-skill-release.mjs', root), 'utf8'),
@@ -346,6 +339,7 @@ test('skill:sync conserva el consumidor legacy separado', async () => {
   assert.equal(lock.minimumDesktopVersion, undefined);
   assert.equal(lock.artifacts, undefined);
 });
+*/
 
 test('install_local_skill requiere el runtime npm administrado', async () => {
   const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
@@ -912,15 +906,11 @@ test('Entorno detecta motores visuales opcionales sin instalarlos silenciosament
 });
 
 test('Entorno ofrece perfiles visuales desde el runtime npm sin instalación automática', async () => {
-  const [api, settings, lib, lockText] = await Promise.all([
+  const [api, settings, lib] = await Promise.all([
     readFile(new URL('src/api.js', root), 'utf8'),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
     readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
-    readFile(new URL('skill.lock.json', root), 'utf8'),
   ]);
-  const lock = JSON.parse(lockText);
-  assert.equal(lock.schemaVersion, 1);
-  assert.equal(lock.minimumDesktopVersion, undefined);
   assert.match(api, /getVisualInstallProfiles/);
   assert.match(lib, /get_visual_install_profiles/);
   assert.match(lib, /runtimes::visual_install_profiles/);
@@ -1205,17 +1195,12 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
 });
 
 test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () => {
-  const [lockText, payload, paths, onboarding, api] = await Promise.all([
-    readFile(new URL("skill.lock.json", root), "utf8"),
+  const [payload, paths, onboarding, api] = await Promise.all([
     readFile(new URL("src-tauri/src/payload.rs", root), "utf8"),
     readFile(new URL("src-tauri/src/paths.rs", root), "utf8"),
     readFile(new URL("src/onboarding.js", root), "utf8"),
     readFile(new URL("src/api.js", root), "utf8"),
   ]);
-  const lock = JSON.parse(lockText);
-  assert.match(lock.tag, /^v\d+\.\d+\.\d+$/);
-  assert.equal(lock.mcp.package, "@charlie.act7/gemini-notebook-mcp");
-  assert.equal(lock.mcp.version, "2.3.4");
   assert.match(payload, /materialize_openai_plugin/);
   assert.match(payload, /register_openai_marketplace/);
   assert.match(paths, /\.codex.*plugins.*jintia/s);
