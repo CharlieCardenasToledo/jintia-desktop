@@ -1,5 +1,3 @@
-include!(concat!(env!("OUT_DIR"), "/skill_release.rs"));
-
 use semver::{Version, VersionReq};
 use serde_json::Value;
 use std::fs;

@@ -181,9 +181,8 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
   assert.doesNotMatch(payload, /\$OUT_DIR\/jintia-skill/);
   assert.match(config, /portable_skill_source_dir/);
   assert.match(config, /themes/);
-  assert.match(build, /skill\.lock\.json/);
-  assert.match(build, /fn verify/);
-  assert.doesNotMatch(build, /ZipArchive|fn extract\(|enclosed_name|io::copy|\/artifacts|skill_file|plugin_file|SKILL_VERSION|\/skillVersion|jintia-skill|openaiPlugin/);
+  assert.match(build, /tauri_build::build/);
+  assert.doesNotMatch(build, /skill\.lock\.json|jintia-release-manifest|NOTEBOOKLM_MCP_|skill_release\.rs/);
 
   for (const source of [payload, config, build, windowsWorkflow, macosWorkflow]) {
     assert.doesNotMatch(source, /\.\.\/\.\.\/\.\.\/skill|app\/desktop/);
@@ -212,24 +211,30 @@ test('la configuración y el curso consumen el contrato MCP dinámico', async ()
   const install = runtimes.slice(installStart, installEnd < 0 ? runtimes.length : installEnd);
   assert.match(install, /contract\.package/);
   assert.doesNotMatch(install, /\.join\("@charlie\.act7"\)\.join\("gemini-notebook-mcp"\)/);
-  assert.match(build, /skill\.lock\.json/);
   assert.match(lockText, /"mcp"/);
 });
 
-test('el build Rust no consume artifacts Skill legacy', async () => {
+test('el build Rust está desacoplado del contrato release legacy', async () => {
   const [build, cargo] = await Promise.all([
     readFile(new URL('src-tauri/build.rs', root), 'utf8'),
     readFile(new URL('src-tauri/Cargo.toml', root), 'utf8'),
   ]);
   const buildDeps = cargo.slice(cargo.indexOf('[build-dependencies]'), cargo.indexOf('[dependencies]'));
   const runtimeDeps = cargo.slice(cargo.indexOf('[dependencies]'));
-  assert.match(build, /skill\.lock\.json|manifest_file/);
-  assert.match(build, /\/manifest\/file|\/manifest\/sha256/);
-  assert.match(build, /\/mcp\/package|\/mcp\/version|source\/repository/);
-  assert.match(build, /\/mcp\/node|VersionReq|NOTEBOOKLM_MCP_NODE_REQUIREMENT|NOTEBOOKLM_MCP_PACKAGE|skill_release\.rs|fn verify|sha256/);
-  assert.doesNotMatch(build, /ZipArchive|fn extract\(|enclosed_name|io::copy|\/artifacts\/skill|\/artifacts\/openaiPlugin|skill_file|plugin_file|out_dir\.join\("jintia-skill"\)|out_dir\.join\("jintia"\)|SKILL_VERSION|\/skillVersion/);
-  assert.doesNotMatch(buildDeps, /zip\s*=/);
-  assert.match(runtimeDeps, /zip\s*=|zip\s*=/);
+  assert.match(build, /tauri_build::build/);
+  assert.doesNotMatch(build, /skill\.lock\.json|jintia-release-manifest|NOTEBOOKLM_MCP_|skill_release\.rs|\/mcp\/|npmIntegrity|VersionReq|OUT_DIR|CARGO_MANIFEST_DIR|sha256/);
+  assert.match(buildDeps, /tauri-build/);
+  assert.doesNotMatch(buildDeps, /serde_json\s*=|sha2\s*=|semver\s*=|zip\s*=/);
+  assert.match(runtimeDeps, /serde_json\s*=/);
+  assert.match(runtimeDeps, /sha2\s*=/);
+  assert.match(runtimeDeps, /semver\s*=/);
+});
+
+test('release.rs conserva sólo el contrato Jintia dinámico', async () => {
+  const release = await readFile(new URL('src-tauri/src/release.rs', root), 'utf8');
+  assert.match(release, /managed_mcp_contract/);
+  assert.match(release, /release-config\.json/);
+  assert.doesNotMatch(release, /skill_release\.rs|NOTEBOOKLM_MCP_|OUT_DIR/);
 });
 
 test('el smoke de CI ejecuta el engine publicado en npm', async () => {
