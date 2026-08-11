@@ -97,23 +97,8 @@ pub fn openai_marketplace_path() -> Result<PathBuf, String> {
         .join("marketplace.json"))
 }
 
-pub fn legacy_skill_dir() -> Result<PathBuf, String> {
-    Ok(home_dir()?
-        .join(".claude")
-        .join("skills")
-        .join("instructional-designer-skill"))
-}
-
 pub fn installed_skill_dir() -> Result<PathBuf, String> {
-    let canonical = skill_dir()?;
-    if canonical.join("SKILL.md").is_file() {
-        return Ok(canonical);
-    }
-    let legacy = legacy_skill_dir()?;
-    if legacy.join("SKILL.md").is_file() {
-        return Ok(legacy);
-    }
-    Ok(canonical)
+    skill_dir()
 }
 
 pub fn claude_desktop_config_path() -> Result<PathBuf, String> {

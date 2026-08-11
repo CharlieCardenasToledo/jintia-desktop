@@ -29,19 +29,23 @@ test('Jintia es la identidad canónica en la aplicación y los instaladores', as
   assert.equal(appPackage.name, 'jintia-desktop');
   assert.equal(brand.brandName, 'Jintia');
   assert.match(paths, /\.join\("jintia-skill"\)/);
-  assert.match(paths, /legacy_skill_dir/);
+  assert.doesNotMatch(paths, /legacy_skill_dir|instructional-designer-skill/);
   assert.match(payload, /jintia-skill-\{managed_version\}\.zip/);
-  assert.match(payload, /instructional-designer-skill\.backup-/);
+  assert.doesNotMatch(payload, /legacy_skill_dir|instructional-designer-skill/);
 });
 
-test('la identidad canónica y la ruta legacy permanecen separadas', async () => {
+test('la instalación de Jintia Skill usa únicamente la ruta canónica', async () => {
   const [paths, payload] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
   ]);
   assert.match(paths, /pub fn skill_dir[\s\S]*\.join\("jintia-skill"\)/);
-  assert.match(paths, /pub fn legacy_skill_dir[\s\S]*\.join\("instructional-designer-skill"\)/);
-  assert.match(payload, /instructional-designer-skill\.backup-/);
+  const installedStart = paths.indexOf('pub fn installed_skill_dir()');
+  const installedEnd = paths.indexOf('\npub fn ', installedStart + 1);
+  const installedFn = paths.slice(installedStart, installedEnd < 0 ? paths.length : installedEnd);
+  assert.match(installedFn, /skill_dir\(\)/);
+  assert.doesNotMatch(installedFn, /SKILL\.md|legacy|instructional-designer/);
+  assert.doesNotMatch(`${paths}\n${payload}`, /instructional-designer-skill/);
 });
 
 test('Desktop no conserva el manifest release legacy', async () => {
@@ -312,9 +316,7 @@ test('install_local_skill requiere el runtime npm administrado', async () => {
   assert.doesNotMatch(installFn, /installed_payload_matches/);
   assert.ok(sourceIndex >= 0 && sourceIndex < stageIndex);
   assert.match(installFn.slice(sourceIndex, stageIndex), /None\s*=>[\s\S]*return ActionResult::error/);
-  assert.match(installFn, /legacy_skill_dir/);
-  assert.match(installFn, /migrating_legacy/);
-  assert.match(installFn, /instructional-designer-skill\.backup-/);
+  assert.doesNotMatch(installFn, /legacy_skill_dir|migrating_legacy|instructional-designer-skill/);
   assert.match(installFn, /\.jintia-skill\.stage-/);
   assert.match(installFn, /jintia-skill\.backup-/);
   assert.match(installFn, /fs::rename/);

@@ -1,7 +1,7 @@
 use crate::models::ActionResult;
 use crate::paths::{
     app_config_dir, atomic_write, atomic_write_if_changed, canonical_directory,
-    installed_skill_dir, legacy_skill_dir, openai_marketplace_path, openai_plugin_dir, path_text,
+    installed_skill_dir, openai_marketplace_path, openai_plugin_dir, path_text,
     skill_dir, timestamp,
 };
 use std::fs;
@@ -289,8 +289,6 @@ pub fn install_local_skill() -> ActionResult {
         .with_path(path_text(&target));
     }
 
-    let legacy = legacy_skill_dir().ok().filter(|path| path.exists());
-    let migrating_legacy = !target.exists() && legacy.is_some();
     let stage = parent.join(format!(".jintia-skill.stage-{}", timestamp()));
     if let Err(error) = copy_dir_all(&portable_src, &stage) {
         let _ = fs::remove_dir_all(&stage);
@@ -309,36 +307,13 @@ pub fn install_local_skill() -> ActionResult {
 
     match fs::rename(&stage, &target) {
         Ok(_) => {
-            let legacy_backup = if migrating_legacy {
-                legacy.as_ref().and_then(|previous| {
-                    let archived = parent.join(format!(
-                        "instructional-designer-skill.backup-{}",
-                        timestamp()
-                    ));
-                    fs::rename(previous, &archived).ok().map(|_| archived)
-                })
-            } else {
-                None
-            };
-            let result = ActionResult::ok(if let Some(archived) = legacy_backup.as_ref() {
-                format!(
-                    "Jintia Skill se instaló en:\n{}\n\nLa instalación anterior quedó archivada en:\n{}",
-                    path_text(&target),
-                    path_text(archived)
-                )
-            } else if migrating_legacy {
-                format!(
-                    "Jintia Skill se instaló en:\n{}\n\nNo se pudo archivar la carpeta anterior; puedes retirarla manualmente después de verificar Jintia.",
-                    path_text(&target)
-                )
-            } else {
-                format!("Jintia Skill se instaló para Claude Code en:\n{}", path_text(&target))
-            })
+            let result = ActionResult::ok(format!(
+                "Jintia Skill se instaló para Claude Code en:\n{}",
+                path_text(&target)
+            ))
             .with_path(path_text(&target));
             if backup.exists() {
                 result.with_backup(path_text(&backup))
-            } else if let Some(archived) = legacy_backup {
-                result.with_backup(path_text(&archived))
             } else {
                 result
             }
