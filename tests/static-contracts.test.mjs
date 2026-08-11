@@ -59,6 +59,11 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
     readFile(new URL('scripts/smoke-notebooklm-browser.mjs', root), 'utf8'),
     readFile(new URL('src-tauri/src/release.rs', root), 'utf8'),
   ]);
+  const testModuleMarker = '\n#[cfg(test)]';
+  const testModuleStart = mcp.indexOf(testModuleMarker);
+  assert.ok(testModuleStart >= 0, 'mcp.rs debe conservar un módulo #[cfg(test)] aislable');
+  const mcpProduction = mcp.slice(0, testModuleStart);
+  const mcpTests = mcp.slice(testModuleStart);
   assert.match(paths, /portable_node_exe/);
   assert.match(paths, /portable_npm_cli/);
   assert.match(paths, /portable_notebooklm_mcp_prefix/);
@@ -73,10 +78,18 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   assert.match(npxFn, /bin/);
   assert.match(npxFn, /npm-cli\.js/);
 
-  assert.match(mcp, /fn managed_mcp/);
-  assert.match(mcp, /server_matches_managed_mcp/);
+  assert.match(mcpProduction, /fn managed_mcp/);
+  assert.match(mcpProduction, /managed_mcp_contract/);
+  assert.match(mcpProduction, /portable_notebooklm_mcp_installed_for/);
+  assert.match(mcpProduction, /portable_notebooklm_mcp_package_dir_for\(&contract\.package\)/);
+  assert.match(mcpProduction, /resolve_notebooklm_mcp_bin_for\(&package_dir,\s*&contract\)/);
+  assert.match(mcpProduction, /server_matches_managed_mcp/);
+  assert.match(mcpTests, /managed_mcp_contract/);
+  assert.match(mcpTests, /portable_notebooklm_mcp_installed_for/);
+  assert.doesNotMatch(mcpTests, /portable_notebooklm_mcp_installed\(\)/);
+  assert.doesNotMatch(mcp, /portable_notebooklm_mcp_installed\(\)/);
   assert.doesNotMatch(mcp, /NOTEBOOKLM_MCP_/);
-  assert.match(mcp, /portable_node_exe/);
+  assert.match(mcpProduction, /portable_node_exe/);
   assert.match(runtimes, /resolve_notebooklm_mcp_bin_for/);
   assert.match(runtimes, /portable_notebooklm_mcp_package_dir_for/);
   assert.doesNotMatch(runtimes, /pub fn resolve_notebooklm_mcp_bin\(/);
