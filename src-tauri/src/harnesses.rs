@@ -92,7 +92,9 @@ mod tests {
             serde_json::json!({"status": "success", "data": {"schemaVersion": "1.1.0", "projectRoot": "/tmp"}}),
             serde_json::json!({"status": "success", "data": {"schemaVersion": "1.1.0", "projectRoot": "/tmp", "providers": {}}}),
             serde_json::json!({"status": "success", "data": {"schemaVersion": "", "projectRoot": "/tmp", "providers": []}}),
+            serde_json::json!({"status": "success", "data": {"projectRoot": "/tmp/course", "providers": []}}),
             serde_json::json!({"status": "success", "data": {"schemaVersion": "1.1.0", "providers": []}}),
+            serde_json::json!({"status": "success", "data": {"schemaVersion": "1.1.0", "projectRoot": 123, "providers": []}}),
             serde_json::json!({"status": "failed", "data": valid_data}),
         ];
         for report in cases {
