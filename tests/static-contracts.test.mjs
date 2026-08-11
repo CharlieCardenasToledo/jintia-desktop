@@ -2683,6 +2683,27 @@ test('resolve_skill usa exclusivamente Jintia portable administrado', async () =
   assert.match(runtimes, /pub fn global_skill_available/);
 });
 
+test('Engine Adapter exige el archivo jintia.js resuelto por el runtime', async () => {
+  const [engine, runtimes] = await Promise.all([
+    readFile(new URL('src-tauri/src/engine.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+  ]);
+
+  assert.match(engine, /managed_entrypoint/);
+  assert.match(engine, /is_file\(\)/);
+  assert.match(engine, /resolve_node/);
+  assert.match(engine, /portable_node_exe/);
+  assert.match(engine, /Command::new\(&node_bin\)/);
+  assert.doesNotMatch(engine, /compatibilidad legacy/);
+  assert.doesNotMatch(engine, /skill_path\.join\("bin"\)\.join\("jintia\.js"\)/);
+
+  const resolverStart = runtimes.indexOf('pub fn resolve_skill()');
+  const resolverEnd = runtimes.indexOf('\npub fn global_skill_available', resolverStart);
+  const resolver = runtimes.slice(resolverStart, resolverEnd);
+  assert.match(resolver, /portable_skill_bin/);
+  assert.match(resolver, /is_file\(\)/);
+});
+
 test('la detección de harnesses usa el runtime Jintia administrado', async () => {
   const [harnesses, toolchain] = await Promise.all([
     readFile(new URL('src-tauri/src/harnesses.rs', root), 'utf8'),

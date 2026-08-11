@@ -1,5 +1,5 @@
 use serde::de::DeserializeOwned;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Resultado de ejecutar un comando Jintia.
@@ -15,30 +15,29 @@ pub struct EngineResult {
 ///
 /// # Ejemplo
 /// ```ignore
-/// let result = run_jintia(Path::new("/path/to/skill"), &["doctor", "--json"])?;
+/// let result = run_jintia(Path::new("/path/to/jintia.js"), &["doctor", "--json"])?;
 /// println!("{}", result.stdout);
 /// ```
-pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, String> {
-    // skill_path puede ser:
-    //   - La ruta directa a jintia.js (instalación portable via resolve_skill())
-    //   - Un directorio que contiene bin/jintia.js (compatibilidad legacy)
-    let entrypoint = if skill_path.is_file() {
-        skill_path.to_path_buf()
+fn managed_entrypoint(path: &Path) -> Result<PathBuf, String> {
+    if path.is_file() {
+        Ok(path.to_path_buf())
     } else {
-        skill_path.join("bin").join("jintia.js")
-    };
-    if !entrypoint.is_file() {
-        return Err(format!(
-            "La skill no está instalada en {}. Instálala antes de ejecutar la toolchain.",
-            skill_path.display()
-        ));
+        Err(format!(
+            "El ejecutable Jintia administrado no está disponible en {}.",
+            path.display()
+        ))
     }
+}
+
+pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, String> {
+    let entrypoint = managed_entrypoint(skill_path)?;
 
     let mut cmd_args = vec![entrypoint.to_string_lossy().into_owned()];
     cmd_args.extend(args.iter().map(|s| s.to_string()));
 
-    let node_bin = crate::runtimes::resolve_node()
-        .ok_or_else(|| "Node.js no disponible. Descárgalo desde Configuración > Entorno.".to_string())?;
+    let node_bin = crate::runtimes::resolve_node().ok_or_else(|| {
+        "Node.js no disponible. Descárgalo desde Configuración > Entorno.".to_string()
+    })?;
 
     // Asegurar que el directorio bin del Node portable esté en PATH
     // para que la Skill encuentre Vivliostyle y otros binarios npm globales.
@@ -56,7 +55,11 @@ pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, Stri
         base_path
     };
 
-    match Command::new(&node_bin).args(&cmd_args).env("PATH", patched_path).output() {
+    match Command::new(&node_bin)
+        .args(&cmd_args)
+        .env("PATH", patched_path)
+        .output()
+    {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -81,14 +84,11 @@ pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, Stri
 /// struct DoctorReport { success: bool, checks: Vec<String> }
 ///
 /// let report: DoctorReport = run_jintia_json(
-///     Path::new("/path/to/skill"),
+///     Path::new("/path/to/jintia.js"),
 ///     &["doctor", "--json"]
 /// )?;
 /// ```
-pub fn run_jintia_json<T: DeserializeOwned>(
-    skill_path: &Path,
-    args: &[&str],
-) -> Result<T, String> {
+pub fn run_jintia_json<T: DeserializeOwned>(skill_path: &Path, args: &[&str]) -> Result<T, String> {
     let result = run_jintia(skill_path, args)?;
 
     if !result.success {
@@ -109,6 +109,54 @@ pub fn run_jintia_json<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "jintia-engine-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn managed_entrypoint_accepts_exact_file() {
+        let root = temp_path("file");
+        fs::create_dir_all(&root).unwrap();
+        let entrypoint = root.join("jintia.js");
+        fs::write(&entrypoint, "#!/usr/bin/env node\n").unwrap();
+
+        let result = managed_entrypoint(&entrypoint);
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(result.unwrap(), entrypoint);
+    }
+
+    #[test]
+    fn managed_entrypoint_rejects_directory_even_with_bin_file() {
+        let root = temp_path("directory");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("jintia.js"), "#!/usr/bin/env node\n").unwrap();
+
+        let result = managed_entrypoint(&root);
+
+        let _ = fs::remove_dir_all(&root);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn managed_entrypoint_rejects_missing_path() {
+        let missing = temp_path("missing");
+
+        let result = managed_entrypoint(&missing);
+
+        assert!(result.is_err());
+    }
 
     #[test]
     fn engine_result_serde() {
