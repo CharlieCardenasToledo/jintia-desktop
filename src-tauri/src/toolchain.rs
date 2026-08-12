@@ -11,6 +11,9 @@ fn openai_plugin_install_args() -> [&'static str; 4] {
     ["plugin", "install", "--yes", "--json"]
 }
 
+const OPENAI_PLUGIN_CAPABILITY_ERROR: &str =
+    "El Jintia administrado instalado no admite la gestión del plugin OpenAI. Actualízalo desde Configuración > Entorno.";
+
 #[derive(Debug, Clone, Default)]
 pub struct OpenAiPluginStatus {
     pub installed: bool,
@@ -28,6 +31,30 @@ fn report_data<'a>(report: &'a Value, command: &str, operation: &str) -> Result<
     let data = report.get("data").ok_or("Jintia no devolvió data.")?;
     if data.get("operation").and_then(Value::as_str) != Some(operation) { return Err("La operación del reporte Jintia no coincide.".into()); }
     Ok(data)
+}
+
+fn plugin_report_error(stdout: &str, expected_command: &str) -> Option<String> {
+    let report: Value = serde_json::from_str(stdout).ok()?;
+    if report.get("tool").and_then(Value::as_str) != Some("jintia")
+        || report.get("command").and_then(Value::as_str) != Some(expected_command)
+        || report.get("status").and_then(Value::as_str) != Some("failed")
+        || report.get("exitCode").and_then(Value::as_i64).is_none_or(|code| code == 0)
+    {
+        return None;
+    }
+    report
+        .get("errors")?
+        .as_array()?
+        .iter()
+        .find_map(|error| error.get("message").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(str::to_owned)
+}
+
+fn plugin_command_failure_message(stdout: &str, expected_command: &str) -> String {
+    plugin_report_error(stdout, expected_command)
+        .unwrap_or_else(|| OPENAI_PLUGIN_CAPABILITY_ERROR.to_owned())
 }
 
 fn parse_openai_plugin_status(stdout: &str) -> Result<OpenAiPluginStatus, String> {
@@ -61,7 +88,9 @@ pub fn openai_plugin_status() -> Result<OpenAiPluginStatus, String> {
     let skill = crate::runtimes::resolve_skill().ok_or("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.")?;
     let args = openai_plugin_status_args();
     let result = engine::run_jintia(Path::new(&skill), &args).map_err(|e| e.to_string())?;
-    if !result.success { return Err("El Jintia administrado no pudo consultar el estado del plugin OpenAI.".into()); }
+    if !result.success {
+        return Err(plugin_command_failure_message(&result.stdout, "plugin status"));
+    }
     parse_openai_plugin_status(&result.stdout)
 }
 
@@ -69,7 +98,7 @@ pub fn install_openai_plugin() -> ActionResult {
     let skill = match crate::runtimes::resolve_skill() { Some(v) => v, None => return ActionResult::error("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.") };
     let args = openai_plugin_install_args();
     match engine::run_jintia(Path::new(&skill), &args) {
-        Ok(result) if !result.success => ActionResult::error(result.stderr),
+        Ok(result) if !result.success => ActionResult::error(plugin_command_failure_message(&result.stdout, "plugin install")),
         Ok(result) => match parse_openai_plugin_install(&result.stdout) { Ok((target, _, _)) => ActionResult::ok("Jintia gestionó el plugin OpenAI.").with_path(target), Err(e) => ActionResult::error(e) },
         Err(e) => ActionResult::error(e),
     }
@@ -224,7 +253,11 @@ pub fn manage_harness(
 
 #[cfg(test)]
 mod tests {
-    use super::{claude_install_args, installed_target, openai_plugin_install_args, openai_plugin_status_args, parse_openai_plugin_install, parse_openai_plugin_status};
+    use super::{
+        claude_install_args, installed_target, openai_plugin_install_args,
+        openai_plugin_status_args, parse_openai_plugin_install, parse_openai_plugin_status,
+        plugin_command_failure_message, plugin_report_error, OPENAI_PLUGIN_CAPABILITY_ERROR,
+    };
     use serde_json::json;
 
     #[test]
@@ -258,15 +291,22 @@ mod tests {
     fn openai_plugin_status_parser_is_fail_closed() {
         let valid = json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true,"status":"installed"}});
         assert!(parse_openai_plugin_status(&valid.to_string()).is_ok());
-        for report in [
-            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{}}),
+        let invalid_reports = [
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0}),
             json!({"tool":"other","command":"plugin status","status":"success","exitCode":0,"data":{}}),
             json!({"tool":"jintia","command":"wrong","status":"success","exitCode":0,"data":{}}),
             json!({"tool":"jintia","command":"plugin status","status":"failed","exitCode":1,"data":{}}),
-        ] { assert!(parse_openai_plugin_status(&report.to_string()).is_err()); }
-        let mut invalid = valid;
-        invalid["data"]["installed"] = json!("yes");
-        assert!(parse_openai_plugin_status(&invalid.to_string()).is_err());
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":1,"data":{}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"wrong"}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":1,"installed":true,"current":true,"marketplaceConfigured":true,"status":"installed"}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"","installed":true,"current":true,"marketplaceConfigured":true,"status":"installed"}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":"yes","current":true,"marketplaceConfigured":true,"status":"installed"}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":"yes","marketplaceConfigured":true,"status":"installed"}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":"yes","status":"installed"}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true,"status":"unknown"}}),
+        ];
+        for report in invalid_reports { assert!(parse_openai_plugin_status(&report.to_string()).is_err()); }
     }
 
     #[test]
@@ -275,10 +315,49 @@ mod tests {
             let report = json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":changed}});
             assert!(parse_openai_plugin_install(&report.to_string()).is_ok());
         }
-        for report in [
-            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"wrong"}}),
+        let invalid_reports = [
+            json!({"tool":"other","command":"plugin install","status":"success","exitCode":0,"data":{}}),
+            json!({"tool":"jintia","command":"wrong","status":"success","exitCode":0,"data":{}}),
             json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"data":{}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":1,"data":{}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"wrong"}}),
             json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":false,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":true}}),
-        ] { assert!(parse_openai_plugin_install(&report.to_string()).is_err()); }
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":"yes","current":true,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":false,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":"yes","marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":false,"target":"/plugin","version":"11.6.13","changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":"yes","target":"/plugin","version":"11.6.13","changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"","version":"11.6.13","changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":1,"version":"11.6.13","changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":"","changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":1,"changed":true}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":"yes"}}),
+        ];
+        for report in invalid_reports { assert!(parse_openai_plugin_install(&report.to_string()).is_err()); }
+    }
+
+    #[test]
+    fn openai_plugin_failed_reports_preserve_upstream_message() {
+        let install = json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"errors":[{"message":"fallo upstream"}]});
+        let status = json!({"tool":"jintia","command":"plugin status","status":"failed","exitCode":2,"errors":[{"message":"status upstream"}]});
+        assert_eq!(plugin_report_error(&install.to_string(), "plugin install").as_deref(), Some("fallo upstream"));
+        assert_eq!(plugin_report_error(&status.to_string(), "plugin status").as_deref(), Some("status upstream"));
+        assert_eq!(plugin_command_failure_message(&install.to_string(), "plugin install"), "fallo upstream");
+        assert_eq!(plugin_command_failure_message("", "plugin install"), OPENAI_PLUGIN_CAPABILITY_ERROR);
+        for invalid in [
+            "not json".to_owned(),
+            json!({"tool":"other","command":"plugin install","status":"failed","exitCode":1,"errors":[{"message":"x"}]}).to_string(),
+            json!({"tool":"jintia","command":"wrong","status":"failed","exitCode":1,"errors":[{"message":"x"}]}).to_string(),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"errors":[{"message":"x"}]}).to_string(),
+            json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":0,"errors":[{"message":"x"}]}).to_string(),
+            json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1}).to_string(),
+            json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"errors":[]}).to_string(),
+            json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"errors":[{}]}).to_string(),
+            json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"errors":[{"message":" "}]}).to_string(),
+        ] {
+            assert!(plugin_report_error(&invalid, "plugin install").is_none());
+            assert_eq!(plugin_command_failure_message(&invalid, "plugin install"), OPENAI_PLUGIN_CAPABILITY_ERROR);
+        }
     }
 }
