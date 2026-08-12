@@ -340,6 +340,8 @@ test('el plugin ChatGPT Codex delega instalación y estado a Jintia', async () =
   assert.doesNotMatch(payload, /materialize_openai_plugin_from_portable|openai_plugin_portable_matches|register_openai_marketplace|pub fn install_openai_plugin|pub fn openai_plugin_is_installed|pub fn openai_plugin_is_current|pub fn openai_plugin_path|\.jintia-plugin\.stage-|jintia\.backup-/);
   for (const marker of ['plugin', 'status', 'install', '--yes', '--json', 'resolve_skill', 'run_jintia', 'tool', 'command', 'exitCode', 'marketplaceConfigured', 'target', 'data', 'operation', 'installed', 'current', 'errors', 'message']) assert.match(toolchain, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(toolchain, /ActionResult::error\(result\.stderr\)/);
+  assert.match(toolchain, /plugin_report_error[\s\S]*status[^\n]*failed/);
+  assert.match(toolchain, /plugin_command_failure_message\(&result\.stdout,\s*"plugin install"\)/);
   assert.match(config, /toolchain::openai_plugin_status/);
   assert.doesNotMatch(config, /openai_plugin_is_installed\(|openai_plugin_is_current\(|openai_plugin_path\(\)/);
   assert.match(lib, /spawn_blocking\(toolchain::install_openai_plugin\)/);

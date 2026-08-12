@@ -46,8 +46,9 @@ fn plugin_report_error(stdout: &str, expected_command: &str) -> Option<String> {
         .get("errors")?
         .as_array()?
         .iter()
-        .find_map(|error| error.get("message").and_then(Value::as_str))
+        .filter_map(|error| error.get("message").and_then(Value::as_str))
         .map(str::trim)
+        .find(|message| !message.is_empty())
         .filter(|message| !message.is_empty())
         .map(str::to_owned)
 }
@@ -304,6 +305,7 @@ mod tests {
             json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":"yes","marketplaceConfigured":true,"status":"installed"}}),
             json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":"yes","status":"installed"}}),
             json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true}}),
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true,"status":42}}),
             json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true,"status":"unknown"}}),
         ];
         for report in invalid_reports { assert!(parse_openai_plugin_status(&report.to_string()).is_err()); }
@@ -344,6 +346,10 @@ mod tests {
         assert_eq!(plugin_report_error(&install.to_string(), "plugin install").as_deref(), Some("fallo upstream"));
         assert_eq!(plugin_report_error(&status.to_string(), "plugin status").as_deref(), Some("status upstream"));
         assert_eq!(plugin_command_failure_message(&install.to_string(), "plugin install"), "fallo upstream");
+        let later_install = json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"errors":[{"message":" "},{"message":"fallo real upstream"}]});
+        let later_status = json!({"tool":"jintia","command":"plugin status","status":"failed","exitCode":1,"errors":[{},{"message":42},{"message":""},{"message":"  "},{"message":"mensaje válido"}]});
+        assert_eq!(plugin_report_error(&later_install.to_string(), "plugin install").as_deref(), Some("fallo real upstream"));
+        assert_eq!(plugin_report_error(&later_status.to_string(), "plugin status").as_deref(), Some("mensaje válido"));
         assert_eq!(plugin_command_failure_message("", "plugin install"), OPENAI_PLUGIN_CAPABILITY_ERROR);
         for invalid in [
             "not json".to_owned(),
