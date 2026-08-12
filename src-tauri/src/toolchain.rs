@@ -21,6 +21,50 @@ pub struct OpenAiPluginStatus {
     pub target: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ClaudeSkillStatus {
+    pub installed: bool,
+    pub current: bool,
+    pub version: String,
+    pub available_version: String,
+    pub target: String,
+}
+
+fn claude_status_args() -> [&'static str; 4] {
+    ["status", "--providers=claude", "--scope=global", "--json"]
+}
+
+fn parse_claude_skill_status(stdout: &str) -> Result<ClaudeSkillStatus, String> {
+    let report: Value = serde_json::from_str(stdout).map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
+    if report.get("tool").and_then(Value::as_str) != Some("jintia")
+        || report.get("command").and_then(Value::as_str) != Some("status")
+        || report.get("status").and_then(Value::as_str) != Some("success")
+        || report.get("exitCode").and_then(Value::as_i64) != Some(0)
+    { return Err("Reporte de status Claude incompatible.".into()); }
+    let data = report.get("data").ok_or("data ausente en el status Claude.")?;
+    if data.get("operation").and_then(Value::as_str) != Some("status") { return Err("operation inválida en el status Claude.".into()); }
+    let providers = data.get("providers").and_then(Value::as_array).ok_or("providers inválido en el status Claude.")?;
+    let matches: Vec<&Value> = providers.iter().filter(|p| p.get("id").and_then(Value::as_str) == Some("claude") && p.get("scope").and_then(Value::as_str) == Some("global")).collect();
+    if matches.len() != 1 { return Err("Debe existir exactamente un provider Claude global.".into()); }
+    let provider = matches[0];
+    let target = provider.get("target").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("target inválido en el status Claude.")?;
+    let state = provider.get("state").ok_or("state ausente en el status Claude.")?;
+    let installed = state.get("installed").and_then(Value::as_bool).ok_or("installed inválido en el status Claude.")?;
+    let managed = state.get("managed").and_then(Value::as_bool).ok_or("managed inválido en el status Claude.")?;
+    let available = state.get("availableVersion").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("availableVersion inválido en el status Claude.")?;
+    let status = state.get("status").and_then(Value::as_str).ok_or("status inválido en el status Claude.")?;
+    if !["not-detected", "detected", "repair-needed", "incomplete", "outdated", "installed"].contains(&status) { return Err("status desconocido en el status Claude.".into()); }
+    let version = match state.get("version") { Some(Value::String(v)) if !v.is_empty() => v.clone(), Some(Value::Null) => String::new(), _ => return Err("version inválida en el status Claude.".into()) };
+    Ok(ClaudeSkillStatus { installed, current: installed && managed && status == "installed" && version == available, version, available_version: available.to_owned(), target: target.to_owned() })
+}
+
+pub fn claude_skill_status() -> Result<ClaudeSkillStatus, String> {
+    let skill = crate::runtimes::resolve_skill().ok_or("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.")?;
+    let result = engine::run_jintia(Path::new(&skill), &claude_status_args()).map_err(|e| e.to_string())?;
+    if !result.success { return Err(format!("Jintia status Claude falló: {}", result.stderr)); }
+    parse_claude_skill_status(&result.stdout)
+}
+
 fn report_data<'a>(report: &'a Value, command: &str, operation: &str) -> Result<&'a Value, String> {
     if report.get("tool").and_then(Value::as_str) != Some("jintia")
         || report.get("command").and_then(Value::as_str) != Some(command)
@@ -255,11 +299,16 @@ pub fn manage_harness(
 #[cfg(test)]
 mod tests {
     use super::{
-        claude_install_args, installed_target, openai_plugin_install_args,
+        claude_install_args, claude_status_args, installed_target, openai_plugin_install_args,
         openai_plugin_status_args, parse_openai_plugin_install, parse_openai_plugin_status,
         plugin_command_failure_message, plugin_report_error, OPENAI_PLUGIN_CAPABILITY_ERROR,
     };
     use serde_json::json;
+
+    #[test]
+    fn claude_status_uses_exact_cli_contract() {
+        assert_eq!(claude_status_args(), ["status", "--providers=claude", "--scope=global", "--json"]);
+    }
 
     #[test]
     fn claude_install_uses_exact_adoption_contract() {

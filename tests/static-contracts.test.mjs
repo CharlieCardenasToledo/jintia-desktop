@@ -301,16 +301,25 @@ test('Desktop no conserva estado release legacy de Jintia', async () => {
 });
 
 test('la instalación Claude delega en Jintia y payload conserva sólo consumidores compartidos', async () => {
-  const [payload, toolchain, lib] = await Promise.all([
+  const [payload, toolchain, config, lib] = await Promise.all([
     readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
   ]);
   assert.doesNotMatch(payload, /pub fn install_local_skill|fn portable_skill_src|fn installed_portable_matches/);
   assert.doesNotMatch(payload, /\.jintia-skill\.stage-|jintia-skill\.backup-/);
-  for (const symbol of ['read_skill_package_version', 'export_skill_zip', 'installed_skill_version', 'sync_user_config_to_install']) {
+  for (const symbol of ['read_skill_package_version', 'export_skill_zip', 'sync_user_config_to_install']) {
     assert.match(payload, new RegExp(symbol));
   }
+  for (const symbol of ['installed_skill_path', 'skill_is_installed', 'installed_skill_version', 'portable_skill_version', 'skill_is_current']) {
+    assert.doesNotMatch(payload, new RegExp(`pub fn ${symbol}`));
+  }
+  assert.match(toolchain, /pub fn claude_skill_status/);
+  assert.match(toolchain, /claude_status_args/);
+  assert.match(config, /toolchain::claude_skill_status/);
+  assert.match(lib, /spawn_blocking\(\|\|/);
+  assert.doesNotMatch(lib, /payload::installed_skill_path/);
   const helperStart = toolchain.indexOf('pub fn install_global_claude_skill()');
   const helperEnd = toolchain.indexOf('/// Gestiona harnesses', helperStart);
   const helper = toolchain.slice(helperStart, helperEnd);
@@ -1096,8 +1105,7 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
     readFile(new URL("src/onboarding.js", root), "utf8"),
     readFile(new URL("src/pages/settings.js", root), "utf8"),
   ]);
-  assert.match(payload, /pub fn skill_is_current/);
-  assert.match(payload, /portable_skill_source_dir/);
+  assert.doesNotMatch(payload, /pub fn skill_is_current|pub fn installed_skill_version/);
   assert.match(payload, /read_skill_package_version/);
   assert.match(models, /skill_current/);
   assert.match(onboarding, /Paquete listo para importar en Claude/);
@@ -1124,7 +1132,6 @@ test('payload.rs no incorpora una Skill embebida', async () => {
   assert.doesNotMatch(payload, /include_dir|include_bytes!|\$OUT_DIR\/jintia-skill/);
   assert.doesNotMatch(payload, /SKILL_MD|SKILL_PACKAGE_JSON|materialize_payload|write_embedded_dir|embedded_dir_matches|installed_payload_matches/);
   assert.doesNotMatch(cargo, /include_dir/);
-  assert.match(payload, /portable_skill_source_dir/);
   assert.match(payload, /read_skill_package_version/);
   assert.match(payload, /portable_skill_export_source/);
   assert.match(payload, /add_fs_dir_to_zip\(&mut zip, &skill_src/);
@@ -2749,18 +2756,21 @@ test('paths.rs resuelve Jintia exclusivamente desde el layout npm administrado',
   assert.doesNotMatch(binFn, /portable_runtimes_dir\(\)\.join\("jintia"\)/);
 });
 
-test('payload usa portable_skill_source_dir para localizar la skill portátil', async () => {
-  const payload = await readFile(
-    new URL('src-tauri/src/payload.rs', root),
-    'utf8'
-  );
-
-  // portable_skill_version usa portable_skill_source_dir
-  const verStart = payload.indexOf('pub fn portable_skill_version()');
-  const verEnd = payload.indexOf('\npub fn skill_is_current', verStart);
-  const verFn = payload.slice(verStart, verEnd);
-  assert.match(verFn, /portable_skill_source_dir/);
-  assert.doesNotMatch(verFn, /\.join\("jintia"\)[\s\S]{0,30}?\.join\("skill"\)/);
+test('el estado Claude se resuelve mediante el contrato status de Jintia', async () => {
+  const [toolchain, config, lib, payload] = await Promise.all([
+    readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
+  ]);
+  assert.match(toolchain, /status.*--providers=claude.*--scope=global.*--json/s);
+  assert.match(toolchain, /resolve_skill/);
+  assert.match(toolchain, /run_jintia/);
+  assert.match(config, /claude_skill_status/);
+  assert.match(lib, /get_skill_path[\s\S]*spawn_blocking/);
+  for (const symbol of ['installed_skill_path', 'skill_is_installed', 'installed_skill_version', 'portable_skill_version', 'skill_is_current']) {
+    assert.doesNotMatch(payload, new RegExp(`pub fn ${symbol}`));
+  }
 });
 
 test('la UI consume las fases actuales de instalación npm de Jintia', async () => {
@@ -2860,41 +2870,7 @@ test('el estado de la Skill requiere el runtime npm administrado', async () => {
     readFile(new URL('src-tauri/src/config.rs', root), 'utf8')
   ]);
 
-  // Helper centralizado existe y lee package.json
-  assert.match(payload, /fn read_skill_package_version/);
-  const helperStart = payload.indexOf('fn read_skill_package_version');
-  const helperEnd = payload.indexOf('\npub fn installed_skill_version', helperStart);
-  const helper = payload.slice(helperStart, helperEnd);
-  assert.match(helper, /package\.json/);
-  assert.match(helper, /version/);
-
-  // installed_skill_version prioriza package.json; VERSION es solo fallback
-  const verStart = payload.indexOf('pub fn installed_skill_version()');
-  const verEnd = payload.indexOf('\npub fn portable_skill_version', verStart);
-  const verFn = payload.slice(verStart, verEnd);
-  assert.match(verFn, /read_skill_package_version/);
-  assert.match(verFn, /VERSION/);
-  // read_skill_package_version debe aparecer antes de VERSION
-  assert.ok(
-    verFn.indexOf('read_skill_package_version') < verFn.indexOf('VERSION'),
-    'package.json debe tener prioridad sobre VERSION'
-  );
-
-  // skill_is_current solo acepta la autoridad npm administrada
-  const curStart = payload.indexOf('pub fn skill_is_current()');
-  const curEnd = payload.indexOf('\npub fn openai_plugin_is_installed', curStart);
-  const curFn = payload.slice(curStart, curEnd);
-  assert.match(curFn, /installed_skill_dir/);
-  assert.match(curFn, /SKILL\.md/);
-  assert.match(curFn, /portable_skill_source_dir/);
-  assert.match(curFn, /read_skill_package_version/);
-  assert.doesNotMatch(curFn, /installed_payload_matches|SKILL_VERSION|SKILL_PACKAGE_JSON/);
-
-  const setupStart = config.indexOf('pub fn setup_status()');
-  const setupEnd = config.indexOf('\n}', setupStart) + 2;
-  const setupFn = config.slice(setupStart, setupEnd);
-  assert.match(setupFn, /portable_skill_version/);
-  assert.match(setupFn, /unwrap_or_default/);
-  assert.doesNotMatch(setupFn, /SKILL_VERSION/);
+  assert.doesNotMatch(payload, /pub fn installed_skill_version|pub fn skill_is_current/);
+  assert.match(config, /claude_skill_status/);
   assert.doesNotMatch(config, /SKILL_VERSION/);
 });

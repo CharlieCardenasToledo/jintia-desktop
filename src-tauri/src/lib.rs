@@ -161,7 +161,13 @@ async fn reset_onboarding() -> models::OnboardingResult {
 
 #[tauri::command]
 async fn get_skill_path() -> String {
-    payload::installed_skill_path()
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::toolchain::claude_skill_status()
+            .map(|status| status.target)
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]

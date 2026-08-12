@@ -3,10 +3,7 @@ use crate::paths::{
     app_config_dir, atomic_write, atomic_write_if_changed, claude_code_config_path,
     claude_desktop_config_path, path_text, portable_skill_source_dir,
 };
-use crate::payload::{
-    config_file_path, installed_skill_path, installed_skill_version, portable_skill_version, skill_is_current,
-    skill_is_installed, sync_user_config_to_install,
-};
+use crate::payload::{config_file_path, sync_user_config_to_install};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
@@ -369,6 +366,7 @@ fn server_configured(path: Result<std::path::PathBuf, String>) -> bool {
 
 pub fn setup_status() -> SetupStatus {
     let openai = crate::toolchain::openai_plugin_status().unwrap_or_default();
+    let claude = crate::toolchain::claude_skill_status().unwrap_or_default();
     let desktop_config = claude_desktop_config_path();
     let desktop_path_text = desktop_config
         .as_ref()
@@ -379,10 +377,10 @@ pub fn setup_status() -> SetupStatus {
     let institution = institution_is_configured();
 
     SetupStatus {
-        skill_installed: skill_is_installed(),
-        skill_current: skill_is_current(),
-        skill_version: installed_skill_version(),
-        available_skill_version: portable_skill_version().unwrap_or_default(),
+        skill_installed: claude.installed,
+        skill_current: claude.current,
+        skill_version: claude.version,
+        available_skill_version: claude.available_version,
         openai_plugin_installed: openai.installed,
         openai_plugin_current: openai.current,
         openai_plugin_path: openai.target,
@@ -390,7 +388,7 @@ pub fn setup_status() -> SetupStatus {
         mcp_desktop_configured: desktop,
         mcp_claude_code_configured: code,
         institution_configured: institution,
-        skill_path: installed_skill_path(),
+        skill_path: claude.target,
         mcp_config_path: desktop_path_text,
     }
 }

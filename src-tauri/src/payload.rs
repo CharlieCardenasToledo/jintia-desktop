@@ -229,53 +229,6 @@ pub fn last_export_path() -> Option<String> {
     Path::new(&export).is_file().then_some(export)
 }
 
-pub fn installed_skill_path() -> String {
-    installed_skill_dir()
-        .map(|path| path_text(&path))
-        .unwrap_or_default()
-}
-
-pub fn skill_is_installed() -> bool {
-    installed_skill_dir()
-        .map(|path| path.join("SKILL.md").is_file())
-        .unwrap_or(false)
-}
-
-pub fn installed_skill_version() -> String {
-    let Ok(path) = installed_skill_dir() else {
-        return String::new();
-    };
-    read_skill_package_version(&path)
-        .or_else(|| {
-            fs::read_to_string(path.join("VERSION"))
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        })
-        .unwrap_or_default()
-}
-
-pub fn portable_skill_version() -> Option<String> {
-    let pkg_path = crate::paths::portable_skill_source_dir().join("package.json");
-    fs::read_to_string(&pkg_path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v["version"].as_str().map(|s| s.to_string()))
-}
-
-pub fn skill_is_current() -> bool {
-    let Ok(path) = installed_skill_dir() else {
-        return false;
-    };
-    if !path.join("SKILL.md").is_file() {
-        return false;
-    }
-    let portable = crate::paths::portable_skill_source_dir();
-    portable.join("bin").join("jintia.js").is_file()
-        && read_skill_package_version(&portable)
-            .is_some_and(|version| Some(version) == read_skill_package_version(&path))
-}
-
 pub fn sync_user_config_to_install(name: &str, bytes: &[u8]) -> Result<(), String> {
     let target = installed_skill_dir()?.join("config").join(name);
     if target.parent().is_some_and(Path::exists) {
