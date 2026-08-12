@@ -847,7 +847,8 @@ mod tests {
     fn zip_fixture(name: &str, entry: &str, bytes: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
-        let root = std::env::temp_dir().join(format!("jintia-node-zip-{}-{}", std::process::id(), crate::paths::timestamp()));
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("jintia-node-zip-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let archive_path = root.join(name);
         let file = fs::File::create(&archive_path).unwrap();
