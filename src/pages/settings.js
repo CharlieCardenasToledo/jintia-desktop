@@ -2,7 +2,7 @@ import {
   applyInstitutionConfig, checkDependencies, getVisualInstallProfiles, installDependency,
   downloadNodeRuntime, downloadPythonRuntime, downloadSkillRuntime,
   configureMcp, configureCodexMcp, getSetupStatus, checkNotebookLMAuth, runNotebookLMAuth,
-  installSkill, exportSkillZip, installOpenAIPlugin, exportOpenAIPluginZip,
+  installSkill, exportSkillZip, installOpenAIPlugin,
   pickDirectory,
   resetOnboarding, getSkillPath, extractSitePalette, runSkillTool, detectHarnesses, manageHarnesses
 } from "../api.js";
@@ -361,15 +361,6 @@ export async function renderSettings() {
             </div>
             <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3.5 py-3">
               <div>
-                <div class="text-[13px] font-semibold text-app-text">Exportar plugin universal</div>
-                <div class="mt-0.5 text-[11.5px] text-app-muted">Paquete para ChatGPT y Codex; la publicación web requiere revisión de OpenAI</div>
-              </div>
-              <button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" id="btn-export-openai-plugin">
-                ${ic("archive", 14)} Exportar
-              </button>
-            </div>
-            <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3.5 py-3">
-              <div>
                 <div class="text-[13px] font-semibold text-app-text">Exportar configuración</div>
                 <div class="mt-0.5 text-[11.5px] text-app-muted">Para instalar manualmente en la app de Claude</div>
               </div>
@@ -530,19 +521,6 @@ export async function renderSettings() {
         if (result.success) loadSetupStatus();
       } catch (error) {
         toast(`No se pudo instalar para ChatGPT/Codex: ${error}`, "error", 7000);
-      }
-    });
-  });
-
-  el.querySelector("#btn-export-openai-plugin")?.addEventListener("click", async event => {
-    const dir = await pickDirectory("Selecciona dónde guardar el plugin universal");
-    if (!dir) return;
-    await runSettingsOperation(event.currentTarget, "export-openai-plugin", "Exportando…", async () => {
-      try {
-        const result = await exportOpenAIPluginZip(dir);
-        toast(result.message, result.success ? "success" : "error", 8000);
-      } catch (error) {
-        toast(`No se pudo exportar el plugin: ${error}`, "error", 7000);
       }
     });
   });

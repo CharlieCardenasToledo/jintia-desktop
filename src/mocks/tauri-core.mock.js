@@ -170,10 +170,6 @@ const handlers = {
       path: "/mock/home/.codex/plugins/jintia"
     });
   },
-  export_openai_plugin_zip: ({ destinationDir }) => {
-    const path = `${destinationDir || "/mock/exports"}/jintia-openai-plugin-${APP_META.skillVersion}.zip`;
-    return actionResult(true, "Plugin universal exportado (mock).", { path });
-  },
   configure_mcp: ({ target }) => {
     if (target === "claude-code") {
       state.setup.mcp_claude_code_configured = true;

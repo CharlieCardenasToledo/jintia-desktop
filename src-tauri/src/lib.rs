@@ -182,11 +182,6 @@ async fn install_openai_plugin() -> ActionResult {
 }
 
 #[tauri::command]
-async fn export_openai_plugin_zip(destination_dir: String) -> ActionResult {
-    payload::export_openai_plugin_zip(destination_dir)
-}
-
-#[tauri::command]
 async fn configure_mcp(target: String) -> ActionResult {
     mcp::configure_mcp(target)
 }
@@ -516,7 +511,6 @@ pub fn run() {
             install_skill,
             export_skill_zip,
             install_openai_plugin,
-            export_openai_plugin_zip,
             configure_mcp,
             configure_codex_mcp,
             apply_institution_config,

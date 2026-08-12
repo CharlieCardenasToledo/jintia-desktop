@@ -25,33 +25,6 @@ fn user_config(name: &str, installed: Option<&Path>) -> Option<Vec<u8>> {
         .or_else(|| installed.and_then(|root| read_valid_json(&root.join("config").join(name))))
 }
 
-fn portable_openai_plugin_sources() -> Option<(PathBuf, PathBuf, String)> {
-    let package_root = crate::paths::portable_skill_npm_package_dir();
-    let wrapper_src = package_root.join("openai-plugin");
-    let skill_src = package_root.join("skill");
-    let plugin_manifest = wrapper_src.join(".codex-plugin").join("plugin.json");
-    let required = [
-        package_root.join("package.json"),
-        skill_src.join("package.json"),
-        skill_src.join("SKILL.md"),
-        skill_src.join("bin").join("jintia.js"),
-        plugin_manifest.clone(),
-        wrapper_src.join(".mcp.json"),
-        wrapper_src.join("README.md"),
-    ];
-    if required.iter().any(|path| !path.is_file()) {
-        return None;
-    }
-    let package_version = read_skill_package_version(&package_root)?;
-    let skill_version = read_skill_package_version(&skill_src)?;
-    let plugin_version = fs::read_to_string(plugin_manifest)
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|value| value.get("version")?.as_str().map(str::to_string))?;
-    (package_version == skill_version && skill_version == plugin_version)
-        .then_some((wrapper_src, skill_src, skill_version))
-}
-
 fn read_skill_package_version(dir: &Path) -> Option<String> {
     fs::read_to_string(dir.join("package.json"))
         .ok()
@@ -231,75 +204,6 @@ pub fn export_skill_zip(destination_dir: String) -> ActionResult {
             ))
             .with_path(path_text(&final_path))
         }
-        Err(error) => {
-            let _ = fs::remove_file(&temp_path);
-            ActionResult::error(error)
-        }
-    }
-}
-
-pub fn export_openai_plugin_zip(destination_dir: String) -> ActionResult {
-    let _operation = match PAYLOAD_OPERATION.lock() {
-        Ok(operation) => operation,
-        Err(_) => return ActionResult::error("El estado interno de exportación está bloqueado."),
-    };
-    let (wrapper_src, skill_src, managed_version) = match portable_openai_plugin_sources() {
-        Some(sources) => sources,
-        None => {
-            return ActionResult::error(
-                "El runtime Jintia administrado no incluye el plugin para ChatGPT/Codex. Actualiza Jintia desde Configuración > Entorno.",
-            );
-        }
-    };
-    let destination = match canonical_directory(&destination_dir) {
-        Ok(path) => path,
-        Err(error) => return ActionResult::error(error),
-    };
-    let final_path = destination.join(format!("jintia-openai-plugin-{managed_version}.zip"));
-    let temp_path = destination.join(format!(".jintia-openai-{}.tmp", timestamp()));
-    let file = match fs::File::create(&temp_path) {
-        Ok(file) => file,
-        Err(error) => return ActionResult::error(format!("No se pudo crear el ZIP: {error}")),
-    };
-    let installed = installed_skill_dir().ok();
-    let result = (|| -> Result<bool, String> {
-        let mut zip = zip::ZipWriter::new(file);
-        add_fs_dir_to_zip(&mut zip, &wrapper_src, "")?;
-        let prefix = "skills/jintia-skill";
-        add_fs_dir_to_zip(&mut zip, &skill_src, prefix)?;
-        for name in ["institution.json", "notebooks.json"] {
-            if let Some(bytes) = user_config(name, installed.as_deref()) {
-                add_bytes(&mut zip, &format!("{prefix}/config/{name}"), &bytes)?;
-            }
-        }
-        zip.finish()
-            .map_err(|error| format!("No se pudo finalizar el ZIP: {error}"))?;
-        if final_path.exists() && files_equal(&temp_path, &final_path) {
-            fs::remove_file(&temp_path)
-                .map_err(|error| format!("No se pudo retirar el ZIP temporal: {error}"))?;
-            return Ok(false);
-        }
-        if final_path.exists() {
-            fs::remove_file(&final_path)
-                .map_err(|error| format!("No se pudo reemplazar el ZIP: {error}"))?;
-        }
-        fs::rename(&temp_path, &final_path)
-            .map_err(|error| format!("No se pudo guardar el ZIP: {error}"))?;
-        Ok(true)
-    })();
-    match result {
-        Ok(changed) => ActionResult::ok(if changed {
-            format!(
-                "Plugin universal exportado para ChatGPT y Codex:\n{}",
-                path_text(&final_path)
-            )
-        } else {
-            format!(
-                "El plugin universal ya estaba actualizado:\n{}",
-                path_text(&final_path)
-            )
-        })
-        .with_path(path_text(&final_path)),
         Err(error) => {
             let _ = fs::remove_file(&temp_path);
             ActionResult::error(error)

@@ -308,7 +308,7 @@ test('la instalación Claude delega en Jintia y payload conserva sólo consumido
   ]);
   assert.doesNotMatch(payload, /pub fn install_local_skill|fn portable_skill_src|fn installed_portable_matches/);
   assert.doesNotMatch(payload, /\.jintia-skill\.stage-|jintia-skill\.backup-/);
-  for (const symbol of ['read_skill_package_version', 'export_skill_zip', 'export_openai_plugin_zip', 'installed_skill_version', 'sync_user_config_to_install']) {
+  for (const symbol of ['read_skill_package_version', 'export_skill_zip', 'installed_skill_version', 'sync_user_config_to_install']) {
     assert.match(payload, new RegExp(symbol));
   }
   const helperStart = toolchain.indexOf('pub fn install_global_claude_skill()');
@@ -348,35 +348,12 @@ test('el plugin ChatGPT Codex delega instalación y estado a Jintia', async () =
   assert.match(lib, /spawn_blocking\(config::setup_status\)/);
 });
 
-test('la exportación del plugin OpenAI usa Jintia npm administrado', async () => {
-  const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
-  const start = payload.indexOf('pub fn export_openai_plugin_zip(');
-  const end = payload.indexOf('\npub fn record_export(', start);
-  const exportFn = payload.slice(start, end);
-  const helperStart = payload.indexOf('fn add_fs_dir_to_zip(');
-  const helperEnd = payload.indexOf('\nfn portable_skill_export_source(', helperStart);
-  const helper = payload.slice(helperStart, helperEnd);
-
-  assert.match(exportFn, /portable_openai_plugin_sources/);
-  assert.match(exportFn, /wrapper_src/);
-  assert.match(exportFn, /skill_src/);
-  assert.match(exportFn, /managed_version/);
-  assert.match(exportFn, /skills/);
-  assert.match(exportFn, /jintia-skill/);
-  assert.match(exportFn, /user_config/);
-  assert.match(exportFn, /institution\.json/);
-  assert.match(exportFn, /notebooks\.json/);
-  assert.match(exportFn, /files_equal/);
-  assert.doesNotMatch(exportFn, /SKILL_VERSION|OPENAI_PLUGIN_MANIFEST|OPENAI_PLUGIN_MCP|OPENAI_PLUGIN_README|SKILL_MD|SKILL_PACKAGE_JSON|REQUIREMENTS|REFERENCES|SCRIPTS|RUNTIME|THEMES|CONFIG|AGENTS|COMMANDS|BIN|RULES|SCHEMAS|add_dir_to_zip/);
-  assert.match(exportFn, /jintia-openai-plugin-\{managed_version\}\.zip/);
-  assert.match(helper, /fs::read_dir/);
-  assert.match(helper, /file_type/);
-  assert.match(helper, /sort/);
-  assert.match(helper, /add_bytes/);
-  assert.match(helper, /is_dir/);
-  assert.match(helper, /is_file/);
-  assert.match(helper, /is_symlink/);
-  assert.doesNotMatch(payload, /OPENAI_PLUGIN_MANIFEST|OPENAI_PLUGIN_MCP|OPENAI_PLUGIN_README/);
+test('Desktop no reconstruye ni exporta el artefacto OpenAI', async () => {
+  const files = await Promise.all([
+    'src-tauri/src/payload.rs', 'src-tauri/src/lib.rs', 'src/api.js',
+    'src/pages/settings.js', 'src/mocks/tauri-core.mock.js',
+  ].map(file => readFile(new URL(file, root), 'utf8')));
+  assert.doesNotMatch(files.join('\n'), /portable_openai_plugin_sources|export_openai_plugin_zip|exportOpenAIPluginZip|btn-export-openai-plugin|jintia-openai-plugin-|\.jintia-openai-/);
 });
 
 test('la exportación manual de Skill usa Jintia npm administrado', async () => {
@@ -385,7 +362,7 @@ test('la exportación manual de Skill usa Jintia npm administrado', async () => 
   const sourceEnd = payload.indexOf('\nfn file_fingerprint(', sourceStart);
   const sourceFn = payload.slice(sourceStart, sourceEnd);
   const exportStart = payload.indexOf('pub fn export_skill_zip(');
-  const exportEnd = payload.indexOf('\npub fn export_openai_plugin_zip(', exportStart);
+  const exportEnd = payload.indexOf('\npub fn record_export(', exportStart);
   const exportFn = payload.slice(exportStart, exportEnd);
   const fingerprintStart = payload.indexOf('fn file_fingerprint(');
   const fingerprintEnd = payload.indexOf('\nfn files_equal(', fingerprintStart);
@@ -1141,19 +1118,12 @@ test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () 
   assert.match(api, /installOpenAIPlugin/);
 });
 
-test('el paquete OpenAI conserva su fuente npm administrada', async () => {
-  const payload = await readFile(new URL("src-tauri/src/payload.rs", root), "utf8");
-  assert.match(payload, /portable_openai_plugin_sources/);
-  assert.doesNotMatch(payload, /materialize_openai_plugin_from_portable/);
-});
-
 test('payload.rs no incorpora una Skill embebida', async () => {
   const payload = await readFile(new URL("src-tauri/src/payload.rs", root), "utf8");
   const cargo = await readFile(new URL("src-tauri/Cargo.toml", root), "utf8");
   assert.doesNotMatch(payload, /include_dir|include_bytes!|\$OUT_DIR\/jintia-skill/);
   assert.doesNotMatch(payload, /SKILL_MD|SKILL_PACKAGE_JSON|materialize_payload|write_embedded_dir|embedded_dir_matches|installed_payload_matches/);
   assert.doesNotMatch(cargo, /include_dir/);
-  assert.match(payload, /portable_openai_plugin_sources/);
   assert.match(payload, /portable_skill_source_dir/);
   assert.match(payload, /read_skill_package_version/);
   assert.match(payload, /portable_skill_export_source/);

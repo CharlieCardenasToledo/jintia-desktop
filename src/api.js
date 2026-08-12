@@ -102,10 +102,6 @@ export async function installOpenAIPlugin() {
   return invoke("install_openai_plugin");
 }
 
-export async function exportOpenAIPluginZip(destinationDir) {
-  return invoke("export_openai_plugin_zip", { destinationDir });
-}
-
 export async function configureMcp(target) {
   return invoke("configure_mcp", { target });
 }
