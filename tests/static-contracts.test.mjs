@@ -1064,8 +1064,16 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
 });
 test('Jintia se gestiona como plugin universal para ChatGPT y Codex', async () => {
   const [pluginToolchain, pluginOnboarding, pluginApi, pluginLib] = await Promise.all(['src-tauri/src/toolchain.rs','src/onboarding.js','src/api.js','src-tauri/src/lib.rs'].map(path => readFile(new URL(path, root), 'utf8')));
+  const statusStart = pluginToolchain.indexOf('fn openai_plugin_status_args()');
+  const installStart = pluginToolchain.indexOf('fn openai_plugin_install_args()');
+  const statusBlock = pluginToolchain.slice(statusStart, installStart);
+  const installBlock = pluginToolchain.slice(installStart, pluginToolchain.indexOf('const OPENAI_PLUGIN_CAPABILITY_ERROR', installStart));
+  assert.ok(statusStart >= 0 && installStart > statusStart);
+  assert.match(statusBlock, /\["plugin",\s*"status",\s*"--json"\]/);
+  assert.doesNotMatch(statusBlock, /--yes/);
+  assert.match(installBlock, /\["plugin",\s*"install",\s*"--yes",\s*"--json"\]/);
+  assert.doesNotMatch(installBlock, /\["plugin",\s*"status"/);
   assert.match(pluginToolchain, /install_openai_plugin/); assert.match(pluginToolchain, /openai_plugin_status/); assert.match(pluginToolchain, /resolve_skill/); assert.match(pluginToolchain, /run_jintia/);
-  assert.match(pluginToolchain, /plugin.*status.*--json/s); assert.match(pluginToolchain, /plugin.*install.*--yes.*--json/s);
   assert.match(pluginOnboarding, /openai/); assert.match(pluginApi, /installOpenAIPlugin/); assert.match(pluginLib, /install_openai_plugin/);
 });
 test('Desktop no contiene payload de Skill embebido', async () => {
@@ -2792,9 +2800,19 @@ test('los perfiles visuales provienen del runtime npm administrado', async () =>
 
 test('el estado de la Skill requiere el runtime npm administrado', async () => {
   const [runtimePaths, runtimeSources, runtimeToolchain] = await Promise.all(['src-tauri/src/paths.rs','src-tauri/src/runtimes.rs','src-tauri/src/toolchain.rs'].map(path => readFile(new URL(path, root), 'utf8')));
-  assert.match(runtimePaths, /@charlie\.act7\/jintia|jintia\.js/); assert.match(runtimeSources, /resolve_skill/); assert.match(runtimeToolchain, /resolve_skill[\s\S]*run_jintia/);
-  assert.doesNotMatch(`${runtimePaths}\n${runtimeSources}\n${runtimeToolchain}`, /Command::new\("(?:jintia|npx|npx\.cmd)"\)|legacy_skill_dir|instructional-designer-skill/);
-  const authority = `${runtimePaths}\n${runtimeToolchain}`;
+  const resolveStart = runtimeSources.indexOf('pub fn resolve_skill()');
+  const resolveEnd = runtimeSources.indexOf('\npub fn download_portable_skill', resolveStart);
+  const installStart = runtimeSources.indexOf('pub fn download_portable_skill');
+  const installEnd = runtimeSources.indexOf('\npub fn visual_install_profiles', installStart);
+  const resolveBlock = runtimeSources.slice(resolveStart, resolveEnd);
+  const installBlock = runtimeSources.slice(installStart, installEnd);
+  assert.ok(resolveStart >= 0 && resolveEnd > resolveStart && installStart >= 0 && installEnd > installStart);
+  assert.match(resolveBlock, /portable_skill_bin/); assert.match(resolveBlock, /is_file/);
+  assert.match(installBlock, /npm_exe[\s\S]*portable_node_exe[\s\S]*install[\s\S]*--global[\s\S]*--prefix/);
+  assert.match(installBlock, /@charlie\.act7\/jintia@latest/); assert.match(installBlock, /portable_skill_npm_package_dir_for/); assert.match(installBlock, /package\.json/); assert.match(installBlock, /@charlie\.act7\/jintia/);
+  assert.match(runtimePaths, /@charlie\.act7\/jintia|jintia\.js/); assert.match(runtimeToolchain, /resolve_skill/); assert.match(runtimeToolchain, /run_jintia/);
+  assert.doesNotMatch(`${resolveBlock}\n${installBlock}\n${runtimePaths}\n${runtimeToolchain}`, /Command::new\("(?:jintia|npx|npx\.cmd)"\)|legacy_skill_dir|instructional-designer-skill/);
+  const authority = `${resolveBlock}\n${installBlock}\n${runtimePaths}\n${runtimeToolchain}`;
   assert.doesNotMatch(authority, /jintia-skill-[^\s"']+\.(?:zip|tar\.gz)|github\.com\/[^\s"']+\/releases\/download|api\.github\.com[^\s"']+jintia|zipball|tarball|download_url/);
 });
 test('Plan 61A conserva el corte legacy y la extracción hermética de Node', async () => {
