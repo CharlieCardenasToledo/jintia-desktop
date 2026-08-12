@@ -1322,10 +1322,14 @@ pub fn global_skill_available() -> bool {
 }
 
 pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
-    let npm = npm_exe().ok_or_else(|| "Node portable no está instalado.".to_string())?;
     let node = paths::portable_node_exe();
     if !node.is_file() {
         return Err("El ejecutable Node portable no está disponible.".to_string());
+    }
+
+    let npm_cli = paths::portable_npm_cli();
+    if !npm_cli.is_file() {
+        return Err("El npm administrado por Jintia no está disponible.".to_string());
     }
 
     let runtimes_dir = paths::portable_runtimes_dir();
@@ -1338,23 +1342,12 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
         .unwrap_or(0);
     let stage = runtimes_dir.join(format!(".jintia-stage-{ts}"));
 
-    let portable_bin = paths::portable_node_bin_dir();
-    let base_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut path_entries = vec![portable_bin];
-    for entry in std::env::split_paths(&base_path) {
-        if !path_entries.contains(&entry) {
-            path_entries.push(entry);
-        }
-    }
-    let patched_path = std::env::join_paths(path_entries)
-        .map_err(|e| format!("No se pudo preparar PATH para npm: {e}"))?;
+    let managed_path = managed_node_runtime_path()?;
 
     emit_skill_progress(app, "installing", 5.0, "Instalando Jintia desde npm...");
 
-    let output = if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .arg("/C")
-            .arg(&npm)
+    let output = Command::new(&node)
+            .arg(&npm_cli)
             .arg("install")
             .arg("--global")
             .arg("--prefix")
@@ -1362,21 +1355,8 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
             .arg("@charlie.act7/jintia@latest")
             .arg("--no-audit")
             .arg("--no-fund")
-            .env("PATH", &patched_path)
+            .env("PATH", &managed_path)
             .output()
-    } else {
-        Command::new(&node)
-            .arg(&npm)
-            .arg("install")
-            .arg("--global")
-            .arg("--prefix")
-            .arg(&stage)
-            .arg("@charlie.act7/jintia@latest")
-            .arg("--no-audit")
-            .arg("--no-fund")
-            .env("PATH", &patched_path)
-            .output()
-    }
     .map_err(|e| {
         let _ = fs::remove_dir_all(&stage);
         format!("No se pudo ejecutar npm: {e}")
@@ -1446,7 +1426,7 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
         .arg("capabilities")
         .arg("profiles")
         .arg("--json")
-        .env("PATH", &patched_path)
+        .env("PATH", &managed_path)
         .output()
         .map_err(|e| {
             let _ = fs::remove_dir_all(&stage);

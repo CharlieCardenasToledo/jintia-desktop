@@ -2280,6 +2280,42 @@ test('Vivliostyle instala npm con el Node portable de Jintia', async () => {
   );
 });
 
+test('download_portable_skill instala y prueba Jintia con PATH administrado', async () => {
+  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const helperStart = runtimes.indexOf('fn managed_node_runtime_path()');
+  const helperEnd = runtimes.indexOf('pub fn install_vivliostyle', helperStart);
+  const installStart = runtimes.indexOf('pub fn download_portable_skill');
+  const installEnd = runtimes.indexOf('pub fn visual_install_profiles', installStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  assert.ok(installStart >= 0 && installEnd > installStart);
+  const helper = runtimes.slice(helperStart, helperEnd);
+  const installer = runtimes.slice(installStart, installEnd);
+
+  assert.match(helper, /portable_node_bin_dir\(\)/);
+  assert.match(helper, /join_paths/);
+  for (const required of [
+    'portable_node_exe()', 'portable_npm_cli()', 'managed_node_runtime_path()',
+    'Command::new(&node)', '.arg(&npm_cli)', 'install', '--global', '--prefix',
+    '@charlie.act7/jintia@latest', '--no-audit', '--no-fund',
+    '.env("PATH", &managed_path)', 'portable_skill_npm_package_dir_for',
+    'package.json', 'skill/bin/jintia.js', 'capabilities', 'profiles', '--json',
+    'managed_mcp_contract_from', 'portable_skill_prefix', '.jintia-backup-',
+  ]) {
+    assert.match(installer, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `falta ${required}`);
+  }
+  for (const forbidden of [
+    'npm_exe()', 'var_os("PATH")', 'split_paths', 'base_path', 'patched_path',
+    'Command::new("cmd")', '.arg("/C")', 'Command::new("node")',
+    'Command::new("npm")', 'Command::new("npm.cmd")', 'Command::new("npx")',
+    'Command::new("npx.cmd")',
+  ]) {
+    assert.doesNotMatch(installer, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `sobran ${forbidden}`);
+  }
+  assert.ok(installer.indexOf('install') < installer.indexOf('capabilities'));
+  assert.ok(installer.indexOf('capabilities') < installer.indexOf('managed_mcp_contract_from'));
+  assert.ok(installer.indexOf('managed_mcp_contract_from') < installer.indexOf('portable_skill_prefix'));
+});
+
 test('Node CLI disciplinares usan exclusivamente el runtime administrado', async () => {
   const [runtimes, course] =
     await Promise.all([
@@ -2526,7 +2562,7 @@ test('Jintia se instala mediante npm administrado, no mediante descarga manual d
   const fn_ = runtimes.slice(fnStart, fnEnd);
 
   // Usa npm administrado con prefijo de staging
-  assert.match(fn_, /npm_exe\(\)/);
+  assert.match(fn_, /portable_npm_cli\(\)/);
   assert.match(fn_, /--global/);
   assert.match(fn_, /--prefix/);
   assert.match(fn_, /@charlie\.act7\/jintia@latest/);
@@ -2805,7 +2841,7 @@ test('el estado de la Skill requiere el runtime npm administrado', async () => {
   const installBlock = runtimeSources.slice(installStart, installEnd);
   assert.ok(resolveStart >= 0 && resolveEnd > resolveStart && installStart >= 0 && installEnd > installStart);
   assert.match(resolveBlock, /portable_skill_bin/); assert.match(resolveBlock, /is_file/);
-  assert.match(installBlock, /npm_exe[\s\S]*portable_node_exe[\s\S]*install[\s\S]*--global[\s\S]*--prefix/);
+  assert.match(installBlock, /portable_node_exe[\s\S]*portable_npm_cli[\s\S]*managed_node_runtime_path[\s\S]*install[\s\S]*--global[\s\S]*--prefix/);
   assert.match(installBlock, /@charlie\.act7\/jintia@latest/); assert.match(installBlock, /portable_skill_npm_package_dir_for/); assert.match(installBlock, /package\.json/); assert.match(installBlock, /@charlie\.act7\/jintia/);
   assert.match(runtimePaths, /@charlie\.act7\/jintia|jintia\.js/); assert.match(runtimeToolchain, /resolve_skill/); assert.match(runtimeToolchain, /run_jintia/);
   assert.doesNotMatch(`${resolveBlock}\n${installBlock}\n${runtimePaths}\n${runtimeToolchain}`, /Command::new\("(?:jintia|npx|npx\.cmd)"\)|legacy_skill_dir|instructional-designer-skill/);
