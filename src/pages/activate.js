@@ -61,7 +61,7 @@ export async function renderActivate() {
     && auth.authenticated;
   document.getElementById("activate-status").innerHTML = requiredReady
     ? `<div class="mb-3.5 rounded-app border border-teal-600/25 bg-teal-600/[0.08] px-3.5 py-2.5 text-xs leading-relaxed text-app-text-2">${ic("check-circle-2", 14)} <strong class="text-teal-700">Base preparada.</strong> Reinicia el cliente donde configuraste MCP.</div>`
-    : `<div class="mt-2 text-xs leading-relaxed text-app-muted">${ic("info", 13)} Claude/Cowork usa el ZIP; Claude Code usa la instalación local. Elige solo los destinos que necesites.</div>`;
+    : `<div class="mt-2 text-xs leading-relaxed text-app-muted">${ic("info", 13)} Claude Code usa la instalación Jintia gestionada. Claude Desktop puede recibir la conexión MCP de forma independiente.</div>`;
   refreshIcons();
 }
 
@@ -161,7 +161,7 @@ window.runAllSteps = async function runAllSteps() {
     return;
   }
 
-  const sequence = ["institution", "zip", "skill", "mcp-desktop", "mcp-code", "auth"];
+  const sequence = ["institution", "skill", "mcp-desktop", "mcp-code", "auth"];
   for (const step of sequence) {
     const success = await runStep(step);
     if (!success) {

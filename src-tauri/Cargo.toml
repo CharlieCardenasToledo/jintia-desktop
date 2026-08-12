@@ -36,6 +36,9 @@ regex = "1"
 url = "2"
 toml_edit = "0.22"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
 [package.metadata.tauri]
 # sin configuración extra necesaria
 

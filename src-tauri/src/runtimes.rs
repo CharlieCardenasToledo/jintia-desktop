@@ -158,29 +158,29 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn extract_zip(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> Result<(), String> {
-    let output = Command::new("tar")
-        .arg("-xf")
-        .arg(zip_path)
-        .arg("-C")
-        .arg(dest_dir)
-        .output()
-        .map_err(|e| format!("Error ejecutando tar para extraer ZIP: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Error extrayendo ZIP: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    let entries = fs::read_dir(dest_dir)
-        .map_err(|e| format!("Error leyendo directorio extraído: {e}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Error leyendo entrada extraída: {e}"))?;
-    if let Some(entry) = entries.into_iter().find(|entry| entry.path().is_dir()) {
-        let src = entry.path();
-        let dst = dest_dir.join("node");
-        if src != dst {
-            fs::rename(&src, &dst).map_err(|e| format!("Error renombrando directorio: {e}"))?;
+    use zip::ZipArchive;
+    let file = fs::File::open(zip_path).map_err(|e| format!("Error abriendo ZIP: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("Error leyendo ZIP: {e}"))?;
+    let mut top_dir = None;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|e| format!("Error leyendo entrada ZIP: {e}"))?;
+        let enclosed = entry.enclosed_name().ok_or_else(|| format!("Ruta insegura en ZIP: {}", entry.name()))?;
+        let outpath = dest_dir.join(&enclosed);
+        if let Some(first) = enclosed.components().next() {
+            if top_dir.is_none() { top_dir = Some(first.as_os_str().to_owned()); }
         }
+        if entry.is_dir() {
+            fs::create_dir_all(&outpath).map_err(|e| format!("Error creando directorio: {e}"))?;
+        } else {
+            if let Some(parent) = outpath.parent() { fs::create_dir_all(parent).map_err(|e| format!("Error creando directorio padre: {e}"))?; }
+            let mut output = fs::File::create(&outpath).map_err(|e| format!("Error creando archivo: {e}"))?;
+            std::io::copy(&mut entry, &mut output).map_err(|e| format!("Error extrayendo archivo: {e}"))?;
+        }
+    }
+    if let Some(top) = top_dir {
+        let src = dest_dir.join(top);
+        let dst = dest_dir.join("node");
+        if src.exists() && src != dst { fs::rename(src, dst).map_err(|e| format!("Error renombrando directorio: {e}"))?; }
     }
     Ok(())
 }
@@ -839,7 +839,47 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
+    #[cfg(target_os = "windows")]
+    use super::extract_zip;
     use std::fs;
+
+    #[cfg(target_os = "windows")]
+    fn zip_fixture(name: &str, entry: &str, bytes: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let root = std::env::temp_dir().join(format!("jintia-node-zip-{}-{}", std::process::id(), crate::paths::timestamp()));
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join(name);
+        let file = fs::File::create(&archive_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file(entry, SimpleFileOptions::default()).unwrap();
+        zip.write_all(bytes).unwrap();
+        zip.finish().unwrap();
+        (archive_path, root.join("dest"))
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn extract_zip_keeps_node_under_managed_runtime() {
+        let (archive, dest) = zip_fixture("node.zip", "node-v22.13.0-win-x64/bin/node.exe", b"node");
+        fs::create_dir_all(&dest).unwrap();
+        extract_zip(&archive, &dest).unwrap();
+        assert_eq!(fs::read(dest.join("node/bin/node.exe")).unwrap(), b"node");
+        let root = archive.parent().unwrap();
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn extract_zip_rejects_path_traversal() {
+        let (archive, dest) = zip_fixture("unsafe.zip", "../escape.txt", b"escape");
+        fs::create_dir_all(&dest).unwrap();
+        assert!(extract_zip(&archive, &dest).is_err());
+        assert!(!dest.parent().unwrap().join("escape.txt").exists());
+        let root = archive.parent().unwrap();
+        fs::remove_dir_all(&dest).ok();
+        fs::remove_dir_all(root).ok();
+    }
 
     fn contract() -> crate::release::ManagedMcpContract {
         crate::release::ManagedMcpContract { package: "@scope/pkg".into(), version: "2.3.10".into(), node_requirement: ">=22.13.0".into(), npm_integrity: "sha512-AAAA".into(), jintia_version: "11.6.10".into() }

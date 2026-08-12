@@ -22,11 +22,10 @@ test("Desktop no empaqueta ni exporta la Skill de Jintia", async () => {
 });
 
 test("Desktop no conserva payload ni ZIP directo", async () => {
-  const [lib, cargo, config, runtimes] = await Promise.all(["src-tauri/src/lib.rs", "src-tauri/Cargo.toml", "src-tauri/src/config.rs", "src-tauri/src/runtimes.rs"].map(text));
+  const [lib, cargo, config] = await Promise.all(["src-tauri/src/lib.rs", "src-tauri/Cargo.toml", "src-tauri/src/config.rs"].map(text));
   assert.doesNotMatch(lib, /mod payload|payload::|crate::payload/);
-  assert.doesNotMatch(cargo, /^zip\s*=/m);
+  assert.match(cargo, /\[target\.'cfg\(target_os = "windows"\)'\.dependencies\][\s\S]*^zip\s*=/m);
   assert.doesNotMatch(config, /crate::payload/);
-  assert.doesNotMatch(runtimes, /ZipArchive|zip::/);
 });
 
 test("configuración mutable permanece en config.rs", async () => {
@@ -69,4 +68,26 @@ test("versiones y contrato de status Claude permanecen congelados", async () => 
   const [pkg, toolchain] = await Promise.all([text("package.json"), text("src-tauri/src/toolchain.rs")]);
   assert.match(pkg, /"version"\s*:\s*"1\.1\.1"/);
   assert.match(toolchain, /"status",\s*"--providers=claude",\s*"--scope=global",\s*"--json"/);
+});
+
+test("Activate no conserva el flujo ZIP legacy", async () => {
+  const activate = await text("src/pages/activate.js");
+  for (const marker of ["Claude/Cowork", "exportSkillZip", "export_skill_zip", "lastSkillZip", "claude-cowork"]) assert.doesNotMatch(activate, new RegExp(marker));
+  assert.doesNotMatch(activate, /sequence\s*=\s*\[[^\]]*["']zip["']/);
+  assert.match(activate, /institution/);
+  assert.match(activate, /skill/);
+  assert.match(activate, /mcp-desktop/);
+  assert.match(activate, /mcp-code/);
+  assert.match(activate, /auth/);
+});
+
+test("extract_zip usa ZIP hermético sólo en Windows", async () => {
+  const [runtime, cargo] = await Promise.all([text("src-tauri/src/runtimes.rs"), text("src-tauri/Cargo.toml")]);
+  const start = runtime.indexOf("fn extract_zip(");
+  const end = runtime.indexOf("\n#[cfg", start + 1);
+  const body = runtime.slice(start, end);
+  assert.match(body, /ZipArchive/);
+  assert.match(body, /enclosed_name/);
+  assert.doesNotMatch(body, /Command::new\("tar"\)|Command::new\("powershell"\)|Command::new\("7z"\)|Command::new\("unzip"\)/);
+  assert.match(cargo, /\[target\.'cfg\(target_os = "windows"\)'\.dependencies\][\s\S]*zip\s*=/);
 });
