@@ -178,7 +178,7 @@ async fn export_skill_zip(destination_dir: String) -> ActionResult {
 
 #[tauri::command]
 async fn install_openai_plugin() -> ActionResult {
-    payload::install_openai_plugin()
+    tauri::async_runtime::spawn_blocking(toolchain::install_openai_plugin).await.unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar el plugin OpenAI: {e}")))
 }
 
 #[tauri::command]
@@ -213,7 +213,7 @@ async fn save_notebooks_config(entries: Vec<NotebookEntry>) -> ActionResult {
 
 #[tauri::command]
 async fn get_setup_status() -> SetupStatus {
-    config::setup_status()
+    tauri::async_runtime::spawn_blocking(config::setup_status).await.unwrap_or_default()
 }
 
 #[tauri::command]

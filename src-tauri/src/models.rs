@@ -181,6 +181,7 @@ pub struct NotebookLmEntry {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Default)]
 pub struct SetupStatus {
     pub skill_installed: bool,
     pub skill_current: bool,

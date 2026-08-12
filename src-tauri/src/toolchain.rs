@@ -3,6 +3,78 @@ use crate::models::{ActionResult, ToolchainReport};
 use serde_json::Value;
 use std::path::Path;
 
+fn openai_plugin_status_args() -> [&'static str; 3] {
+    ["plugin", "status", "--json"]
+}
+
+fn openai_plugin_install_args() -> [&'static str; 4] {
+    ["plugin", "install", "--yes", "--json"]
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OpenAiPluginStatus {
+    pub installed: bool,
+    pub current: bool,
+    pub target: String,
+}
+
+fn report_data<'a>(report: &'a Value, command: &str, operation: &str) -> Result<&'a Value, String> {
+    if report.get("tool").and_then(Value::as_str) != Some("jintia")
+        || report.get("command").and_then(Value::as_str) != Some(command)
+        || report.get("status").and_then(Value::as_str) != Some("success")
+        || report.get("exitCode").and_then(Value::as_i64) != Some(0) {
+        return Err("El reporte de Jintia no cumple el contrato esperado.".into());
+    }
+    let data = report.get("data").ok_or("Jintia no devolvió data.")?;
+    if data.get("operation").and_then(Value::as_str) != Some(operation) { return Err("La operación del reporte Jintia no coincide.".into()); }
+    Ok(data)
+}
+
+fn parse_openai_plugin_status(stdout: &str) -> Result<OpenAiPluginStatus, String> {
+    let report: Value = serde_json::from_str(stdout).map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
+    let data = report_data(&report, "plugin status", "status")?;
+    let target = data.get("target").and_then(Value::as_str).ok_or("target inválido en el status del plugin.")?;
+    if target.is_empty() {
+        return Err("target vacío en el status del plugin.".into());
+    }
+    let installed = data.get("installed").and_then(Value::as_bool).ok_or("installed inválido en el status del plugin.")?;
+    let current = data.get("current").and_then(Value::as_bool).ok_or("current inválido en el status del plugin.")?;
+    let status = data.get("status").and_then(Value::as_str).ok_or("status inválido en el status del plugin.")?;
+    if !["not-installed", "installed", "outdated", "incomplete", "foreign"].contains(&status) { return Err("estado de plugin desconocido.".into()); }
+    if data.get("marketplaceConfigured").and_then(Value::as_bool).is_none() { return Err("marketplaceConfigured inválido en el status del plugin.".into()); }
+    Ok(OpenAiPluginStatus { installed, current, target: target.to_owned() })
+}
+
+fn parse_openai_plugin_install(stdout: &str) -> Result<(String, String, bool), String> {
+    let report: Value = serde_json::from_str(stdout).map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
+    let data = report_data(&report, "plugin install", "install")?;
+    if data.get("installed").and_then(Value::as_bool) != Some(true) || data.get("current").and_then(Value::as_bool) != Some(true) || data.get("marketplaceConfigured").and_then(Value::as_bool) != Some(true) { return Err("Jintia no confirmó la instalación actual del plugin.".to_string()); }
+    let target = data.get("target").and_then(Value::as_str).ok_or("target vacío en la instalación del plugin.")?;
+    if target.is_empty() { return Err("target vacío en la instalación del plugin.".to_string()); }
+    let version = data.get("version").and_then(Value::as_str).ok_or("version vacía en la instalación del plugin.")?;
+    if version.is_empty() { return Err("version vacía en la instalación del plugin.".to_string()); }
+    let changed = data.get("changed").and_then(Value::as_bool).ok_or("changed inválido en la instalación del plugin.")?;
+    Ok((target.to_owned(), version.to_owned(), changed))
+}
+
+pub fn openai_plugin_status() -> Result<OpenAiPluginStatus, String> {
+    let skill = crate::runtimes::resolve_skill().ok_or("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.")?;
+    let args = openai_plugin_status_args();
+    let result = engine::run_jintia(Path::new(&skill), &args).map_err(|e| e.to_string())?;
+    if !result.success { return Err("El Jintia administrado no pudo consultar el estado del plugin OpenAI.".into()); }
+    parse_openai_plugin_status(&result.stdout)
+}
+
+pub fn install_openai_plugin() -> ActionResult {
+    let skill = match crate::runtimes::resolve_skill() { Some(v) => v, None => return ActionResult::error("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.") };
+    let args = openai_plugin_install_args();
+    match engine::run_jintia(Path::new(&skill), &args) {
+        Ok(result) if !result.success => ActionResult::error(result.stderr),
+        Ok(result) => match parse_openai_plugin_install(&result.stdout) { Ok((target, _, _)) => ActionResult::ok("Jintia gestionó el plugin OpenAI.").with_path(target), Err(e) => ActionResult::error(e) },
+        Err(e) => ActionResult::error(e),
+    }
+}
+
 fn claude_install_args() -> [&'static str; 6] {
     [
         "install",
@@ -152,7 +224,7 @@ pub fn manage_harness(
 
 #[cfg(test)]
 mod tests {
-    use super::{claude_install_args, installed_target};
+    use super::{claude_install_args, installed_target, openai_plugin_install_args, openai_plugin_status_args, parse_openai_plugin_install, parse_openai_plugin_status};
     use serde_json::json;
 
     #[test]
@@ -174,5 +246,39 @@ mod tests {
         ] {
             assert_eq!(installed_target(&report), None);
         }
+    }
+
+    #[test]
+    fn openai_plugin_uses_exact_cli_contract() {
+        assert_eq!(openai_plugin_status_args(), ["plugin", "status", "--json"]);
+        assert_eq!(openai_plugin_install_args(), ["plugin", "install", "--yes", "--json"]);
+    }
+
+    #[test]
+    fn openai_plugin_status_parser_is_fail_closed() {
+        let valid = json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true,"status":"installed"}});
+        assert!(parse_openai_plugin_status(&valid.to_string()).is_ok());
+        for report in [
+            json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{}}),
+            json!({"tool":"other","command":"plugin status","status":"success","exitCode":0,"data":{}}),
+            json!({"tool":"jintia","command":"wrong","status":"success","exitCode":0,"data":{}}),
+            json!({"tool":"jintia","command":"plugin status","status":"failed","exitCode":1,"data":{}}),
+        ] { assert!(parse_openai_plugin_status(&report.to_string()).is_err()); }
+        let mut invalid = valid;
+        invalid["data"]["installed"] = json!("yes");
+        assert!(parse_openai_plugin_status(&invalid.to_string()).is_err());
+    }
+
+    #[test]
+    fn openai_plugin_install_parser_accepts_changed_boolean_and_rejects_invalid() {
+        for changed in [true, false] {
+            let report = json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":changed}});
+            assert!(parse_openai_plugin_install(&report.to_string()).is_ok());
+        }
+        for report in [
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"wrong"}}),
+            json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"data":{}}),
+            json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":false,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":true}}),
+        ] { assert!(parse_openai_plugin_install(&report.to_string()).is_err()); }
     }
 }

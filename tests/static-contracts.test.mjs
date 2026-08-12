@@ -308,7 +308,7 @@ test('la instalación Claude delega en Jintia y payload conserva sólo consumido
   ]);
   assert.doesNotMatch(payload, /pub fn install_local_skill|fn portable_skill_src|fn installed_portable_matches/);
   assert.doesNotMatch(payload, /\.jintia-skill\.stage-|jintia-skill\.backup-/);
-  for (const symbol of ['read_skill_package_version', 'install_openai_plugin', 'export_skill_zip', 'export_openai_plugin_zip', 'installed_skill_version', 'sync_user_config_to_install']) {
+  for (const symbol of ['read_skill_package_version', 'export_skill_zip', 'export_openai_plugin_zip', 'installed_skill_version', 'sync_user_config_to_install']) {
     assert.match(payload, new RegExp(symbol));
   }
   const helperStart = toolchain.indexOf('pub fn install_global_claude_skill()');
@@ -330,55 +330,19 @@ test('la instalación Claude delega en Jintia y payload conserva sólo consumido
   assert.match(lib, /spawn_blocking\(toolchain::install_global_claude_skill\)/);
 });
 
-test('el plugin ChatGPT Codex se instala desde el paquete npm administrado', async () => {
-  const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
-  const sourceStart = payload.indexOf('fn portable_openai_plugin_sources(');
-  const sourceEnd = payload.indexOf('\nfn materialize_openai_plugin_from_portable(', sourceStart);
-  const sourceFn = payload.slice(sourceStart, sourceEnd);
-  const installStart = payload.indexOf('pub fn install_openai_plugin()');
-  const installEnd = payload.indexOf('\nfn copy_dir_all(', installStart);
-  const installFn = payload.slice(installStart, installEnd);
-  const materializeStart = payload.indexOf('fn materialize_openai_plugin_from_portable(');
-  const materializeEnd = payload.indexOf('\nfn openai_plugin_portable_matches(', materializeStart);
-  const materializeFn = payload.slice(materializeStart, materializeEnd);
-  const currentStart = payload.indexOf('pub fn openai_plugin_is_current()');
-  const currentEnd = payload.indexOf('\npub fn openai_plugin_path()', currentStart);
-  const currentFn = payload.slice(currentStart, currentEnd);
-  const sourceIndex = installFn.indexOf('portable_openai_plugin_sources');
-  const stageIndex = installFn.indexOf('.jintia-plugin.stage-');
-
-  assert.match(sourceFn, /portable_skill_npm_package_dir/);
-  assert.match(sourceFn, /openai-plugin/);
-  assert.match(sourceFn, /skill/);
-  assert.match(sourceFn, /\.codex-plugin/);
-  assert.match(sourceFn, /plugin\.json/);
-  assert.match(sourceFn, /\.mcp\.json/);
-  assert.match(sourceFn, /README\.md/);
-  assert.match(sourceFn, /package\.json/);
-  assert.match(sourceFn, /version/);
-  assert.match(installFn, /portable_openai_plugin_sources/);
-  assert.match(installFn, /openai_plugin_portable_matches/);
-  assert.match(installFn, /register_openai_marketplace/);
-  assert.match(installFn, /\.jintia-plugin\.stage-/);
-  assert.match(installFn, /jintia\.backup-/);
-  assert.match(installFn, /fs::rename/);
-  assert.match(installFn, /managed_version/);
-  assert.doesNotMatch(installFn, /materialize_payload|OPENAI_PLUGIN_MANIFEST|OPENAI_PLUGIN_MCP|OPENAI_PLUGIN_README|SKILL_VERSION|openai_plugin_payload_matches/);
-  assert.ok(sourceIndex >= 0 && sourceIndex < stageIndex);
-  assert.match(installFn.slice(sourceIndex, stageIndex), /None\s*=>[\s\S]*return ActionResult::error/);
-  assert.match(materializeFn, /copy_dir_all/);
-  assert.match(materializeFn, /skills/);
-  assert.match(materializeFn, /jintia-skill/);
-  assert.match(materializeFn, /user_config/);
-  assert.match(materializeFn, /institution\.json/);
-  assert.match(materializeFn, /notebooks\.json/);
-  assert.doesNotMatch(materializeFn, /materialize_payload|OPENAI_PLUGIN_/);
-  assert.match(currentFn, /openai_plugin_portable_matches/);
-  assert.doesNotMatch(currentFn, /openai_plugin_payload_matches|installed_payload_matches/);
-  assert.match(payload, /"name": "jintia"/);
-  assert.match(payload, /"source": "local"/);
-  assert.match(payload, /\.\/\.codex\/plugins\/jintia/);
-  assert.match(payload, /"installation": "AVAILABLE"/);
+test('el plugin ChatGPT Codex delega instalación y estado a Jintia', async () => {
+  const [payload, toolchain, config, lib] = await Promise.all([
+    readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+  ]);
+  assert.doesNotMatch(payload, /materialize_openai_plugin_from_portable|openai_plugin_portable_matches|register_openai_marketplace|pub fn install_openai_plugin|pub fn openai_plugin_is_installed|pub fn openai_plugin_is_current|pub fn openai_plugin_path|\.jintia-plugin\.stage-|jintia\.backup-/);
+  for (const marker of ['plugin', 'status', 'install', '--yes', '--json', 'resolve_skill', 'run_jintia', 'tool', 'command', 'exitCode', 'marketplaceConfigured', 'target']) assert.match(toolchain, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(config, /toolchain::openai_plugin_status/);
+  assert.doesNotMatch(config, /openai_plugin_is_installed\(|openai_plugin_is_current\(|openai_plugin_path\(\)/);
+  assert.match(lib, /spawn_blocking\(toolchain::install_openai_plugin\)/);
+  assert.match(lib, /spawn_blocking\(config::setup_status\)/);
 });
 
 test('la exportación del plugin OpenAI usa Jintia npm administrado', async () => {
@@ -1167,8 +1131,8 @@ test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () 
     readFile(new URL("src/onboarding.js", root), "utf8"),
     readFile(new URL("src/api.js", root), "utf8"),
   ]);
-  assert.match(payload, /materialize_openai_plugin/);
-  assert.match(payload, /register_openai_marketplace/);
+  assert.doesNotMatch(payload, /materialize_openai_plugin|register_openai_marketplace/);
+  assert.doesNotMatch(payload, /register_openai_marketplace/);
   assert.match(paths, /\.codex.*plugins.*jintia/s);
   assert.match(onboarding, /id: "openai"/);
   assert.match(api, /installOpenAIPlugin/);
@@ -1177,7 +1141,7 @@ test('Jintia se empaqueta como plugin universal para ChatGPT y Codex', async () 
 test('el paquete OpenAI conserva su fuente npm administrada', async () => {
   const payload = await readFile(new URL("src-tauri/src/payload.rs", root), "utf8");
   assert.match(payload, /portable_openai_plugin_sources/);
-  assert.match(payload, /materialize_openai_plugin_from_portable/);
+  assert.doesNotMatch(payload, /materialize_openai_plugin_from_portable/);
 });
 
 test('payload.rs no incorpora una Skill embebida', async () => {

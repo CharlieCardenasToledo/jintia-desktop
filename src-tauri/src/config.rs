@@ -4,8 +4,7 @@ use crate::paths::{
     claude_desktop_config_path, path_text, portable_skill_source_dir,
 };
 use crate::payload::{
-    config_file_path, installed_skill_path, installed_skill_version, openai_plugin_is_current,
-    openai_plugin_is_installed, openai_plugin_path, portable_skill_version, skill_is_current,
+    config_file_path, installed_skill_path, installed_skill_version, portable_skill_version, skill_is_current,
     skill_is_installed, sync_user_config_to_install,
 };
 use serde_json::{json, Value};
@@ -369,6 +368,7 @@ fn server_configured(path: Result<std::path::PathBuf, String>) -> bool {
 }
 
 pub fn setup_status() -> SetupStatus {
+    let openai = crate::toolchain::openai_plugin_status().unwrap_or_default();
     let desktop_config = claude_desktop_config_path();
     let desktop_path_text = desktop_config
         .as_ref()
@@ -383,9 +383,9 @@ pub fn setup_status() -> SetupStatus {
         skill_current: skill_is_current(),
         skill_version: installed_skill_version(),
         available_skill_version: portable_skill_version().unwrap_or_default(),
-        openai_plugin_installed: openai_plugin_is_installed(),
-        openai_plugin_current: openai_plugin_is_current(),
-        openai_plugin_path: openai_plugin_path(),
+        openai_plugin_installed: openai.installed,
+        openai_plugin_current: openai.current,
+        openai_plugin_path: openai.target,
         mcp_configured: desktop || code,
         mcp_desktop_configured: desktop,
         mcp_claude_code_configured: code,
