@@ -2235,6 +2235,10 @@ test('Vivliostyle instala npm con el Node portable de Jintia', async () => {
   );
 
   const installer = runtimes.slice(start, end);
+  const helperStart = runtimes.indexOf('fn managed_node_runtime_path()');
+  const helperEnd = runtimes.indexOf('pub fn install_vivliostyle', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const managedPathHelper = runtimes.slice(helperStart, helperEnd);
 
   assert.match(
     installer,
@@ -2248,33 +2252,27 @@ test('Vivliostyle instala npm con el Node portable de Jintia', async () => {
 
   assert.match(
     installer,
-    /portable_node_bin_dir\(\)/
+    /portable_npm_cli\(\)/
+  );
+
+  assert.match(managedPathHelper, /portable_node_bin_dir\(\)/);
+  assert.match(managedPathHelper, /std::env::join_paths/);
+
+  assert.match(
+    installer,
+    /\.env\("PATH",\s*managed_path\)/
   );
 
   assert.match(
     installer,
-    /std::env::split_paths/
+    /Command::new\(&node\)[\s\S]*\.arg\(&npm_cli\)/
   );
 
-  assert.match(
-    installer,
-    /std::env::join_paths/
-  );
-
-  assert.match(
-    installer,
-    /\.env\("PATH",\s*&patched_path\)/
-  );
-
-  assert.match(
-    installer,
-    /Command::new\(&node\)[\s\S]*\.arg\(&npm\)/
-  );
-
-  assert.match(
-    installer,
-    /Command::new\("cmd"\)[\s\S]*\.arg\("\/C"\)[\s\S]*\.arg\(&npm\)/
-  );
+  assert.match(installer, /is_file\(\)/);
+  assert.match(installer, /--global/);
+  assert.match(installer, /--prefix/);
+  assert.doesNotMatch(installer, /npm_exe\(\)|var_os\("PATH"\)|split_paths|base_path/);
+  assert.doesNotMatch(installer, /Command::new\("cmd"\)|Command::new\("npm"\)|Command::new\("npx/);
 
   assert.match(
     installer,

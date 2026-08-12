@@ -1,4 +1,5 @@
 use crate::paths;
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -838,10 +839,18 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
+    use super::{managed_node_runtime_path, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
+    use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
     use std::fs;
+
+    #[test]
+    fn managed_node_runtime_path_contains_only_portable_node_bin() {
+        let path = managed_node_runtime_path().unwrap();
+        let entries: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+        assert_eq!(entries, vec![paths::portable_node_bin_dir()]);
+    }
 
     #[cfg(target_os = "windows")]
     fn zip_fixture(name: &str, entry: &str, bytes: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -1109,49 +1118,33 @@ pub fn node_cli_version(
         })
 }
 
-pub fn install_vivliostyle() -> Result<(), String> {
-    let npm = npm_exe().ok_or_else(|| "Node portable no está instalado.".to_string())?;
+fn managed_node_runtime_path() -> Result<OsString, String> {
+    std::env::join_paths([paths::portable_node_bin_dir()])
+        .map_err(|error| format!("No se pudo construir el PATH administrado de Node: {error}"))
+}
 
+pub fn install_vivliostyle() -> Result<(), String> {
     let node = paths::portable_node_exe();
     if !node.is_file() {
         return Err("El ejecutable Node portable no está disponible.".to_string());
     }
 
+    let npm_cli = paths::portable_npm_cli();
+    if !npm_cli.is_file() {
+        return Err("El npm administrado por Jintia no está disponible.".to_string());
+    }
+
     let prefix = paths::portable_node_prefix();
-    let portable_bin = paths::portable_node_bin_dir();
-
-    let base_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut path_entries = vec![portable_bin];
-    for entry in std::env::split_paths(&base_path) {
-        if !path_entries.contains(&entry) {
-            path_entries.push(entry);
-        }
-    }
-    let patched_path = std::env::join_paths(path_entries)
-        .map_err(|e| format!("No se pudo preparar PATH para npm portable: {e}"))?;
-
-    let output = if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .arg("/C")
-            .arg(&npm)
+    let managed_path = managed_node_runtime_path()?;
+    let output = Command::new(&node)
+            .arg(&npm_cli)
             .arg("install")
             .arg("--global")
             .arg("--prefix")
             .arg(&prefix)
             .arg("@vivliostyle/cli")
-            .env("PATH", &patched_path)
+            .env("PATH", managed_path)
             .output()
-    } else {
-        Command::new(&node)
-            .arg(&npm)
-            .arg("install")
-            .arg("--global")
-            .arg("--prefix")
-            .arg(&prefix)
-            .arg("@vivliostyle/cli")
-            .env("PATH", &patched_path)
-            .output()
-    }
     .map_err(|e| format!("No se pudo ejecutar npm con el runtime portable: {e}"))?;
 
     if !output.status.success() {
