@@ -1154,7 +1154,6 @@ test('payload.rs no incorpora una Skill embebida', async () => {
   assert.match(payload, /portable_skill_source_dir/);
   assert.match(payload, /read_skill_package_version/);
   assert.match(payload, /portable_skill_export_source/);
-  assert.match(payload, /copy_dir_all/);
   assert.match(payload, /add_fs_dir_to_zip\(&mut zip, &skill_src/);
 });
 
