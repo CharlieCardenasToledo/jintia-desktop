@@ -357,47 +357,8 @@ test('Desktop no reconstruye ni exporta el artefacto OpenAI', async () => {
 test('Desktop no conserva exportación manual de Skill', async () => {
   await assert.rejects(access(new URL('src-tauri/src/payload.rs', root)), error => error?.code === 'ENOENT');
   const sources = await Promise.all(['src-tauri/src/lib.rs','src/api.js','src/onboarding.js','src/pages/settings.js','src/pages/activate.js','src/mocks/tauri-core.mock.js'].map(path => readFile(new URL(path, root), 'utf8')));
-  for (const source of sources) assert.doesNotMatch(source, /export_skill_zip|exportSkillZip|btn-export-skill|export-zip|lastSkillZip|claude-cowork/);
-  return;
-  const payload = await readFile(new URL('src-tauri/src/payload.rs', root), 'utf8');
-  const sourceStart = payload.indexOf('fn portable_skill_export_source(');
-  const sourceEnd = payload.indexOf('\nfn file_fingerprint(', sourceStart);
-  const sourceFn = payload.slice(sourceStart, sourceEnd);
-  const exportStart = payload.indexOf('pub fn export_skill_zip(');
-  const exportEnd = payload.indexOf('\npub fn record_export(', exportStart);
-  const exportFn = payload.slice(exportStart, exportEnd);
-  const fingerprintStart = payload.indexOf('fn file_fingerprint(');
-  const fingerprintEnd = payload.indexOf('\nfn files_equal(', fingerprintStart);
-  const fingerprintFn = payload.slice(fingerprintStart, fingerprintEnd);
-
-  assert.match(sourceFn, /portable_skill_npm_package_dir/);
-  assert.match(sourceFn, /skill/);
-  assert.match(sourceFn, /package\.json/);
-  assert.match(sourceFn, /SKILL\.md/);
-  assert.match(sourceFn, /bin/);
-  assert.match(sourceFn, /jintia\.js/);
-  assert.match(sourceFn, /read_skill_package_version/);
-  assert.match(sourceFn, /package_version/);
-  assert.match(sourceFn, /skill_version/);
-  assert.match(exportFn, /portable_skill_export_source/);
-  assert.match(exportFn, /skill_src/);
-  assert.match(exportFn, /managed_version/);
-  assert.match(exportFn, /add_fs_dir_to_zip/);
-  assert.match(exportFn, /user_config/);
-  assert.match(exportFn, /institution\.json/);
-  assert.match(exportFn, /notebooks\.json/);
-  assert.match(exportFn, /files_equal/);
-  assert.match(exportFn, /file_fingerprint/);
-  assert.match(exportFn, /record_export/);
-  assert.doesNotMatch(exportFn, /SKILL_VERSION|SKILL_MD|LICENSE|REQUIREMENTS|SKILL_PACKAGE_JSON|REFERENCES|SCRIPTS|RUNTIME|THEMES|CONFIG|AGENTS|COMMANDS|BIN|RULES|SCHEMAS|add_dir_to_zip|payload_fingerprint|export_record_matches|"VERSION"/);
-  assert.match(exportFn, /jintia-skill-\{managed_version\}\.zip/);
-  assert.match(fingerprintFn, /fs::read/);
-  assert.match(fingerprintFn, /DefaultHasher/);
-  assert.match(fingerprintFn, /hash/);
-  assert.match(fingerprintFn, /finish/);
-  assert.doesNotMatch(fingerprintFn, /SKILL_VERSION|SKILL_MD|REFERENCES/);
+  for (const source of sources) assert.doesNotMatch(source, /export_skill_zip|exportSkillZip|btn-export-skill|export-zip|lastSkillZip|last_export_path|record_export|portable_skill_export_source|claude-cowork/);
 });
-
 test('el modo mock no anuncia plantillas que el backend no incorpora', async () => {
   const mock = await readFile(new URL('src/mocks/tauri-core.mock.js', root), 'utf8');
   assert.match(mock, /id:\s*"elegantbook-clasico"/);
@@ -789,20 +750,18 @@ test('Git no aparece como tarjeta en el onboarding (solo en Configuración > Ent
 });
 
 test('los destinos distinguen Claude del plugin universal de ChatGPT y Codex', async () => {
-  const onboardingSource = await readFile(new URL('src/onboarding.js', root), 'utf8');
-  assert.match(onboardingSource, /claude-code/); assert.match(onboardingSource, /openai/); assert.match(onboardingSource, /both/); assert.doesNotMatch(onboardingSource, /claude-cowork/);
-  assert.match(onboardingSource, /mcp_claude_code_configured/); assert.match(onboardingSource, /openai_plugin_current/); assert.doesNotMatch(onboardingSource, /lastSkillZip|mcp_desktop_configured/);
-  return;
   const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
-  const start = source.indexOf('function connectStep');
-  const end = source.indexOf('function finalStep', start);
+  const start = source.indexOf('function connectStep()');
+  const end = source.indexOf('function finalStep()', start);
+  assert.ok(start >= 0 && end > start);
   const connect = source.slice(start, end);
-  assert.match(connect, /id: "claude-code",\s*title: "Usar con Claude Code"/);
-  assert.match(connect, /id: "openai",\s*title: "Usar con ChatGPT y Codex"/);
-  assert.match(connect, /id: "both",\s*title: "Usar en todos"/);
-  assert.doesNotMatch(connect, /claude-cowork|export-zip|lastSkillZip/);
+  assert.match(connect, /id: "claude-code"/); assert.match(connect, /id: "openai"/); assert.match(connect, /id: "both"/);
+  assert.match(connect, /skill_installed && setup\.skill_current/);
+  assert.match(connect, /skillReady && setup\.mcp_claude_code_configured/);
+  assert.match(connect, /setup\.openai_plugin_current/);
+  assert.match(connect, /skillReady && setup\.mcp_claude_code_configured && setup\.openai_plugin_current/);
+  assert.doesNotMatch(connect, /claude-cowork|lastSkillZip|mcp_desktop_configured/);
 });
-
 test('Entorno detecta motores visuales opcionales sin instalarlos silenciosamente', async () => {
   const [course, models, setup, settings] = await Promise.all([
     readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
@@ -1099,54 +1058,21 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
   const [currentModels, currentConfig, currentToolchain] = await Promise.all(['src-tauri/src/models.rs','src-tauri/src/config.rs','src-tauri/src/toolchain.rs'].map(path => readFile(new URL(path, root), 'utf8')));
   assert.match(currentModels, /skill_installed[\s\S]*skill_current[\s\S]*skill_version[\s\S]*available_skill_version/);
   assert.match(currentConfig, /claude_skill_status/); assert.match(currentToolchain, /ClaudeSkillStatus[\s\S]*installed[\s\S]*current[\s\S]*version[\s\S]*available_version[\s\S]*target/);
-  return;
-  const [payload, models, onboarding, settings] = await Promise.all([
-    readFile(new URL("src-tauri/src/payload.rs", root), "utf8"),
-    readFile(new URL("src-tauri/src/models.rs", root), "utf8"),
-    readFile(new URL("src/onboarding.js", root), "utf8"),
-    readFile(new URL("src/pages/settings.js", root), "utf8"),
-  ]);
-  assert.doesNotMatch(payload, /pub fn skill_is_current|pub fn installed_skill_version/);
-  assert.match(payload, /read_skill_package_version/);
-  assert.match(models, /skill_current/);
-  assert.match(onboarding, /Paquete listo para importar en Claude/);
-  assert.match(settings, /Skill desactualizada/);
+  const setup = currentConfig.slice(currentConfig.indexOf('pub fn setup_status'), currentConfig.indexOf('\n}', currentConfig.indexOf('pub fn setup_status')) + 2);
+  assert.match(setup, /skill_installed:\s*claude\.installed/); assert.match(setup, /skill_current:\s*claude\.current/);
+  assert.match(setup, /skill_version:\s*claude\.version/); assert.match(setup, /available_skill_version:\s*claude\.available_version/); assert.match(setup, /skill_path:\s*claude\.target/);
 });
-
 test('Jintia se gestiona como plugin universal para ChatGPT y Codex', async () => {
   const [pluginToolchain, pluginOnboarding, pluginApi, pluginLib] = await Promise.all(['src-tauri/src/toolchain.rs','src/onboarding.js','src/api.js','src-tauri/src/lib.rs'].map(path => readFile(new URL(path, root), 'utf8')));
   assert.match(pluginToolchain, /install_openai_plugin/); assert.match(pluginToolchain, /openai_plugin_status/); assert.match(pluginToolchain, /resolve_skill/); assert.match(pluginToolchain, /run_jintia/);
   assert.match(pluginToolchain, /plugin.*status.*--json/s); assert.match(pluginToolchain, /plugin.*install.*--yes.*--json/s);
   assert.match(pluginOnboarding, /openai/); assert.match(pluginApi, /installOpenAIPlugin/); assert.match(pluginLib, /install_openai_plugin/);
-  return;
-  const [payload, paths, onboarding, api] = await Promise.all([
-    readFile(new URL("src-tauri/src/payload.rs", root), "utf8"),
-    readFile(new URL("src-tauri/src/paths.rs", root), "utf8"),
-    readFile(new URL("src/onboarding.js", root), "utf8"),
-    readFile(new URL("src/api.js", root), "utf8"),
-  ]);
-  assert.doesNotMatch(payload, /materialize_openai_plugin|register_openai_marketplace/);
-  assert.doesNotMatch(payload, /register_openai_marketplace/);
-  assert.match(paths, /\.codex.*plugins.*jintia/s);
-  assert.match(onboarding, /id: "openai"/);
-  assert.match(api, /installOpenAIPlugin/);
 });
-
 test('Desktop no contiene payload de Skill embebido', async () => {
   await assert.rejects(access(new URL('src-tauri/src/payload.rs', root)), error => error?.code === 'ENOENT');
   const sources = await Promise.all(['src-tauri/src/lib.rs','src-tauri/src/config.rs','src-tauri/src/toolchain.rs'].map(path => readFile(new URL(path, root), 'utf8')));
   assert.doesNotMatch(sources.join('\n'), /\$OUT_DIR\/jintia-skill|SKILL_MD|SKILL_PACKAGE_JSON|materialize_payload|write_embedded_dir|embedded_dir_matches|installed_payload_matches/);
-  return;
-  const payload = await readFile(new URL("src-tauri/src/payload.rs", root), "utf8");
-  const cargo = await readFile(new URL("src-tauri/Cargo.toml", root), "utf8");
-  assert.doesNotMatch(payload, /include_dir|include_bytes!|\$OUT_DIR\/jintia-skill/);
-  assert.doesNotMatch(payload, /SKILL_MD|SKILL_PACKAGE_JSON|materialize_payload|write_embedded_dir|embedded_dir_matches|installed_payload_matches/);
-  assert.doesNotMatch(cargo, /include_dir/);
-  assert.match(payload, /read_skill_package_version/);
-  assert.match(payload, /portable_skill_export_source/);
-  assert.match(payload, /add_fs_dir_to_zip\(&mut zip, &skill_src/);
 });
-
 test('Ayuda cubre el flujo real del producto y ofrece FAQ local buscable', async () => {
   const docs = await readFile(new URL('src/pages/docs.js', root), 'utf8');
   assert.match(docs, /const FAQS = \[/);
@@ -2771,23 +2697,11 @@ test('el estado Claude se resuelve mediante el contrato status de Jintia', async
   assert.match(statusToolchain, /claude_skill_status[\s\S]*parse_claude_skill_status[\s\S]*resolve_skill[\s\S]*run_jintia/);
   assert.match(statusToolchain, /"status"[\s\S]*"--providers=claude"[\s\S]*"--scope=global"[\s\S]*"--json"/); assert.match(statusConfig, /crate::toolchain::claude_skill_status/); assert.match(statusLib, /claude_skill_status/);
   assert.doesNotMatch(`${statusToolchain}\n${statusConfig}\n${statusLib}`, /payload::installed_skill_path|pub fn installed_skill_path|pub fn skill_is_installed|pub fn installed_skill_version|pub fn portable_skill_version|pub fn skill_is_current/);
-  return;
-  const [toolchain, config, lib, payload] = await Promise.all([
-    readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/payload.rs', root), 'utf8'),
-  ]);
-  assert.match(toolchain, /status.*--providers=claude.*--scope=global.*--json/s);
-  assert.match(toolchain, /resolve_skill/);
-  assert.match(toolchain, /run_jintia/);
-  assert.match(config, /claude_skill_status/);
-  assert.match(lib, /get_skill_path[\s\S]*spawn_blocking/);
-  for (const symbol of ['installed_skill_path', 'skill_is_installed', 'installed_skill_version', 'portable_skill_version', 'skill_is_current']) {
-    assert.doesNotMatch(payload, new RegExp(`pub fn ${symbol}`));
-  }
+  const pathStart = statusLib.indexOf('async fn get_skill_path');
+  const pathEnd = statusLib.indexOf('#[tauri::command]', pathStart + 1);
+  const pathBody = statusLib.slice(pathStart, pathEnd > pathStart ? pathEnd : statusLib.length);
+  assert.ok(pathStart >= 0); assert.match(pathBody, /spawn_blocking/); assert.match(pathBody, /claude_skill_status/);
 });
-
 test('la UI consume las fases actuales de instalación npm de Jintia', async () => {
   const settings = await readFile(
     new URL('src/pages/settings.js', root),
@@ -2879,21 +2793,10 @@ test('los perfiles visuales provienen del runtime npm administrado', async () =>
 test('el estado de la Skill requiere el runtime npm administrado', async () => {
   const [runtimePaths, runtimeSources, runtimeToolchain] = await Promise.all(['src-tauri/src/paths.rs','src-tauri/src/runtimes.rs','src-tauri/src/toolchain.rs'].map(path => readFile(new URL(path, root), 'utf8')));
   assert.match(runtimePaths, /@charlie\.act7\/jintia|jintia\.js/); assert.match(runtimeSources, /resolve_skill/); assert.match(runtimeToolchain, /resolve_skill[\s\S]*run_jintia/);
-  assert.doesNotMatch(`${runtimePaths}\n${runtimeSources}\n${runtimeToolchain}`, /Command::new\("(?:jintia|npx)"\)|legacy_skill_dir/);
-  return;
-  const [payload, config] = await Promise.all([
-    readFile(
-    new URL('src-tauri/src/payload.rs', root),
-    'utf8'
-    ),
-    readFile(new URL('src-tauri/src/config.rs', root), 'utf8')
-  ]);
-
-  assert.doesNotMatch(payload, /pub fn installed_skill_version|pub fn skill_is_current/);
-  assert.match(config, /claude_skill_status/);
-  assert.doesNotMatch(config, /SKILL_VERSION/);
+  assert.doesNotMatch(`${runtimePaths}\n${runtimeSources}\n${runtimeToolchain}`, /Command::new\("(?:jintia|npx|npx\.cmd)"\)|legacy_skill_dir|instructional-designer-skill/);
+  const authority = `${runtimePaths}\n${runtimeToolchain}`;
+  assert.doesNotMatch(authority, /jintia-skill-[^\s"']+\.(?:zip|tar\.gz)|github\.com\/[^\s"']+\/releases\/download|api\.github\.com[^\s"']+jintia|zipball|tarball|download_url/);
 });
-
 test('Plan 61A conserva el corte legacy y la extracción hermética de Node', async () => {
   const [activate, runtimes, cargo] = await Promise.all([
     readFile(new URL('src/pages/activate.js', root), 'utf8'),
