@@ -300,10 +300,10 @@ pub fn manage_harness(
 mod tests {
     use super::{
         claude_install_args, claude_status_args, installed_target, openai_plugin_install_args,
-        openai_plugin_status_args, parse_openai_plugin_install, parse_openai_plugin_status,
+        openai_plugin_status_args, parse_claude_skill_status, parse_openai_plugin_install, parse_openai_plugin_status,
         plugin_command_failure_message, plugin_report_error, OPENAI_PLUGIN_CAPABILITY_ERROR,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn claude_status_uses_exact_cli_contract() {
@@ -386,6 +386,99 @@ mod tests {
             json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":"yes"}}),
         ];
         for report in invalid_reports { assert!(parse_openai_plugin_install(&report.to_string()).is_err()); }
+    }
+
+    fn claude_report(providers: serde_json::Value) -> serde_json::Value {
+        json!({"tool":"jintia","command":"status","status":"success","exitCode":0,"data":{"operation":"status","providers":providers}})
+    }
+
+    fn claude_provider(scope: &str, installed: bool, managed: bool, version: serde_json::Value, available: &str, status: &str) -> serde_json::Value {
+        json!({"id":"claude","scope":scope,"target":format!("/{scope}/.claude/skills/jintia-skill"),"state":{"installed":installed,"managed":managed,"version":version,"availableVersion":available,"status":status}})
+    }
+
+    fn global_provider() -> serde_json::Value {
+        claude_provider("global", true, true, json!("11.6.13"), "11.6.13", "installed")
+    }
+
+    #[test]
+    fn claude_parser_selects_global_by_id_and_scope_in_any_order() {
+        let project = claude_provider("project", false, false, Value::Null, "11.6.13", "detected");
+        for providers in [json!([project.clone(), global_provider()]), json!([global_provider(), project])] {
+            let parsed = parse_claude_skill_status(&claude_report(providers).to_string()).unwrap();
+            assert!(parsed.installed && parsed.current);
+            assert_eq!(parsed.version, "11.6.13");
+            assert_eq!(parsed.available_version, "11.6.13");
+            assert_eq!(parsed.target, "/global/.claude/skills/jintia-skill");
+        }
+        let providers = json!([{"id":"codex","scope":"global"},{"id":"cursor","scope":"global"},{"id":"claude","scope":"project"},global_provider(),{"id":"opencode","scope":"project"}]);
+        assert!(parse_claude_skill_status(&claude_report(providers).to_string()).is_ok());
+    }
+
+    #[test]
+    fn claude_parser_maps_contractual_states_and_strict_current() {
+        for status in ["not-detected", "detected", "repair-needed", "incomplete", "outdated"] {
+            let installed = matches!(status, "outdated" | "repair-needed");
+            let report = claude_report(json!([claude_provider("global", installed, true, if installed { json!("11.6.12") } else { Value::Null }, "11.6.13", status)]));
+            let parsed = parse_claude_skill_status(&report.to_string()).unwrap();
+            assert_eq!(parsed.installed, installed);
+            assert!(!parsed.current);
+        }
+        for (managed, version, status, expected) in [(true, json!("11.6.13"), "installed", true), (false, json!("11.6.13"), "installed", false), (true, json!("11.6.12"), "installed", false), (true, Value::Null, "installed", false)] {
+            let parsed = parse_claude_skill_status(&claude_report(json!([claude_provider("global", true, managed, version, "11.6.13", status)])).to_string()).unwrap();
+            assert_eq!(parsed.current, expected);
+        }
+        let not_installed = parse_claude_skill_status(&claude_report(json!([claude_provider("global", false, false, Value::Null, "11.6.13", "not-detected")])).to_string()).unwrap();
+        assert_eq!(not_installed.version, "");
+    }
+
+    #[test]
+    fn claude_parser_accepts_incomplete_and_detected_without_current() {
+        for status in ["detected", "incomplete"] {
+            let parsed = parse_claude_skill_status(&claude_report(json!([claude_provider("global", false, false, Value::Null, "11.6.13", status)])).to_string()).unwrap();
+            assert!(!parsed.installed && !parsed.current);
+        }
+    }
+
+    #[test]
+    fn claude_parser_rejects_invalid_outer_report_and_provider() {
+        let valid = claude_report(json!([global_provider()]));
+        let mut invalid = vec![json!("not json")];
+        for (key, value) in [("tool", json!("other")), ("command", json!("wrong")), ("status", json!("failed")), ("exitCode", json!(1))] {
+            let mut report = valid.clone(); report[key] = value; invalid.push(report);
+        }
+        let mut missing_data = valid.clone(); missing_data.as_object_mut().unwrap().remove("data"); invalid.push(missing_data);
+        let mut wrong_operation = valid.clone(); wrong_operation["data"]["operation"] = json!("wrong"); invalid.push(wrong_operation);
+        let mut missing_providers = valid.clone(); missing_providers["data"].as_object_mut().unwrap().remove("providers"); invalid.push(missing_providers);
+        let mut non_array = valid.clone(); non_array["data"]["providers"] = json!({}); invalid.push(non_array);
+        for report in invalid { assert!(parse_claude_skill_status(&report.to_string()).is_err()); }
+
+        let malformed = [
+            json!([]),
+            json!([claude_provider("project", false, false, Value::Null, "11.6.13", "detected")]),
+            json!([global_provider(), global_provider()]),
+        ];
+        for providers in malformed { assert!(parse_claude_skill_status(&claude_report(providers).to_string()).is_err()); }
+        for (field, value) in [("target", json!(42)), ("target", json!("")), ("state", Value::Null)] {
+            let mut provider = global_provider(); provider[field] = value; assert!(parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err());
+        }
+    }
+
+    #[test]
+    fn claude_parser_rejects_invalid_state_types_and_values() {
+        let fields = [
+            ("installed", json!("yes")), ("managed", json!("yes")),
+            ("availableVersion", json!(11613)), ("availableVersion", json!("")),
+            ("version", json!(11613)), ("version", json!(true)), ("version", json!("")),
+            ("status", json!(1)), ("status", json!("foreign")),
+        ];
+        for (field, value) in fields {
+            let mut provider = global_provider(); provider["state"][field] = value;
+            assert!(parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err());
+        }
+        for field in ["availableVersion", "version", "status"] {
+            let mut provider = global_provider(); provider["state"].as_object_mut().unwrap().remove(field);
+            assert!(parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err());
+        }
     }
 
     #[test]
