@@ -423,6 +423,11 @@ mod tests {
             assert_eq!(parsed.installed, installed);
             assert!(!parsed.current);
         }
+        let repair_equal = parse_claude_skill_status(&claude_report(json!([claude_provider("global", true, true, json!("11.6.13"), "11.6.13", "repair-needed")])).to_string()).unwrap();
+        assert!(repair_equal.installed);
+        assert!(!repair_equal.current);
+        assert_eq!(repair_equal.version, "11.6.13");
+        assert_eq!(repair_equal.available_version, "11.6.13");
         for (managed, version, status, expected) in [(true, json!("11.6.13"), "installed", true), (false, json!("11.6.13"), "installed", false), (true, json!("11.6.12"), "installed", false), (true, Value::Null, "installed", false)] {
             let parsed = parse_claude_skill_status(&claude_report(json!([claude_provider("global", true, managed, version, "11.6.13", status)])).to_string()).unwrap();
             assert_eq!(parsed.current, expected);
@@ -442,7 +447,9 @@ mod tests {
     #[test]
     fn claude_parser_rejects_invalid_outer_report_and_provider() {
         let valid = claude_report(json!([global_provider()]));
-        let mut invalid = vec![json!("not json")];
+        let invalid = ["{".to_owned(), "not json".to_owned(), r#"{"tool":"jintia""#.to_owned()];
+        for raw in invalid { assert!(parse_claude_skill_status(&raw).is_err()); }
+        let mut invalid = Vec::new();
         for (key, value) in [("tool", json!("other")), ("command", json!("wrong")), ("status", json!("failed")), ("exitCode", json!(1))] {
             let mut report = valid.clone(); report[key] = value; invalid.push(report);
         }
@@ -461,6 +468,9 @@ mod tests {
         for (field, value) in [("target", json!(42)), ("target", json!("")), ("state", Value::Null)] {
             let mut provider = global_provider(); provider[field] = value; assert!(parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err());
         }
+        let mut missing_state = global_provider();
+        missing_state.as_object_mut().unwrap().remove("state");
+        assert!(parse_claude_skill_status(&claude_report(json!([missing_state])).to_string()).is_err());
     }
 
     #[test]
