@@ -15,6 +15,7 @@
     "build": "vite build",
     "licenses:generate": "node scripts/generate-third-party-notices.mjs",
     "licenses:check": "node scripts/generate-third-party-notices.mjs --check",
+    "skill:verify": "node --test tests/skill-verify.test.mjs",
     "test": "node --test tests/static-contracts.test.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

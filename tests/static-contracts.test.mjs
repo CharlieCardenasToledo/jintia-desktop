@@ -250,7 +250,8 @@ test('el smoke de CI ejecuta el engine publicado en npm', async () => {
   assert.match(smoke, /--json/);
   assert.doesNotMatch(smoke, /target\/debug\/build|OUT_DIR|out\/jintia-skill|if \[ -f|if test|\|\| true|npx|continue-on-error/);
 
-  assert.doesNotMatch(workflow, /npm run skill:verify|check-skill-release/);
+  assert.match(workflow, /npm run skill:verify/);
+  assert.doesNotMatch(workflow, /check-skill-release/);
   assert.match(workflow, /npm test/);
   assert.match(workflow, /npm run build/);
   assert.match(workflow, /cargo test --manifest-path src-tauri\/Cargo\.toml/);
@@ -266,9 +267,10 @@ test('Desktop no conserva estado release legacy de Jintia', async () => {
     readdir(new URL('scripts/', root)),
   ]);
   const pkg = JSON.parse(pkgText);
-  assert.equal(pkg.scripts['skill:verify'], undefined);
+  assert.equal(pkg.scripts['skill:verify'], 'node --test tests/skill-verify.test.mjs');
   assert.equal(pkg.scripts['skill:sync'], undefined);
-  for (const workflow of [ci, windows, macos]) {
+  assert.match(ci, /npm run skill:verify/);
+  for (const workflow of [windows, macos]) {
     assert.doesNotMatch(workflow, /skill:verify|check-skill-release/);
   }
   assert.ok(!scripts.includes('check-skill-release.mjs'));
