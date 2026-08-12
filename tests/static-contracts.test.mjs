@@ -2201,12 +2201,12 @@ test('Vivliostyle global no satisface el runtime requerido por Jintia', async ()
 
   assert.match(
     engine,
-    /portable_node_exe\(\)[\s\S]*\.parent\(\)/
+    /portable_node_bin_dir\(\)/
   );
 
   assert.match(
     engine,
-    /\.env\("PATH",\s*patched_path\)/
+    /\.env\("PATH",\s*managed_path\)/
   );
 });
 
@@ -2591,7 +2591,7 @@ test('Engine Adapter exige el archivo jintia.js resuelto por el runtime', async 
   assert.match(engine, /managed_entrypoint/);
   assert.match(engine, /is_file\(\)/);
   assert.match(engine, /resolve_node/);
-  assert.match(engine, /portable_node_exe/);
+  assert.match(engine, /portable_node_bin_dir/);
   assert.match(engine, /Command::new\(&node_bin\)/);
   assert.doesNotMatch(engine, /compatibilidad legacy/);
   assert.doesNotMatch(engine, /skill_path\.join\("bin"\)\.join\("jintia\.js"\)/);
@@ -2833,4 +2833,21 @@ test('Plan 61A conserva el corte legacy y la extracción hermética de Node', as
   assert.doesNotMatch(extractZip, /Command::new\("(?:tar|powershell|7z|unzip)"\)/);
   assert.match(cargo, /\[target\.'cfg\(target_os = "windows"\)'\.dependencies\][\s\S]*^zip\s*=/m);
   await assert.rejects(access(new URL('src-tauri/src/payload.rs', root)), error => error?.code === 'ENOENT');
+});
+
+test('engine entrega a Jintia un PATH compuesto sólo por runtimes administrados', async () => {
+  const source = await readFile(new URL('src-tauri/src/engine.rs', root), 'utf8');
+  const start = source.indexOf('fn managed_runtime_path');
+  const end = source.indexOf('\npub fn run_jintia', start);
+  const helper = source.slice(start, end);
+  const runStart = source.indexOf('pub fn run_jintia');
+  const runEnd = source.indexOf('\n/// Ejecuta un comando Jintia y parsea', runStart);
+  const run = source.slice(runStart, runEnd);
+  assert.ok(start >= 0 && end > start && runStart >= 0 && runEnd > runStart);
+  assert.match(helper, /portable_node_bin_dir/); assert.match(`${helper}\n${run}`, /resolve_python/);
+  assert.match(helper, /join_paths/);
+  assert.match(run, /managed_entrypoint/); assert.match(run, /resolve_node/); assert.match(run, /Command::new\(&node_bin\)/); assert.match(run, /\.env\("PATH", managed_path\)/);
+  assert.doesNotMatch(`${helper}\n${run}`, /var_os\("PATH"\)|base_path|split_paths/);
+  assert.doesNotMatch(`${helper}\n${run}`, /where\.exe|\bwhich\b|Command::new\("(?:node|npm|npx|python|python3|jintia)"\)/);
+  assert.doesNotMatch(`${helper}\n${run}`, /env_clear/);
 });

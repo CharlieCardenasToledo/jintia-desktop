@@ -1,4 +1,5 @@
 use serde::de::DeserializeOwned;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -29,6 +30,17 @@ fn managed_entrypoint(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
+fn managed_runtime_path(python: Option<&Path>) -> Result<OsString, String> {
+    let mut dirs = vec![crate::paths::portable_node_bin_dir()];
+    if let Some(python_exe) = python {
+        if let Some(parent) = python_exe.parent() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    std::env::join_paths(dirs)
+        .map_err(|error| format!("No se pudo construir el PATH administrado: {error}"))
+}
+
 pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, String> {
     let entrypoint = managed_entrypoint(skill_path)?;
 
@@ -39,25 +51,12 @@ pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, Stri
         "Node.js no disponible. Descárgalo desde Configuración > Entorno.".to_string()
     })?;
 
-    // Asegurar que el directorio bin del Node portable esté en PATH
-    // para que la Skill encuentre Vivliostyle y otros binarios npm globales.
-    let base_path = std::env::var_os("PATH").unwrap_or_default();
-    let node_bin_dir = crate::paths::portable_node_exe()
-        .parent()
-        .map(|p| p.to_path_buf());
-    let patched_path = if let Some(dir) = node_bin_dir.filter(|d| d.exists()) {
-        let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(&base_path).collect();
-        if !dirs.contains(&dir) {
-            dirs.insert(0, dir);
-        }
-        std::env::join_paths(dirs).unwrap_or(base_path)
-    } else {
-        base_path
-    };
+    let python = crate::runtimes::resolve_python().map(PathBuf::from);
+    let managed_path = managed_runtime_path(python.as_deref())?;
 
     match Command::new(&node_bin)
         .args(&cmd_args)
-        .env("PATH", patched_path)
+        .env("PATH", managed_path)
         .output()
     {
         Ok(output) => {
@@ -173,5 +172,22 @@ mod tests {
         assert!(deserialized.success);
         assert_eq!(deserialized.exit_code, Some(0));
         assert_eq!(deserialized.stdout, "test");
+    }
+
+    #[test]
+    fn managed_runtime_path_contains_only_managed_directories() {
+        let python = PathBuf::from("managed").join("python").join("python.exe");
+        let joined = managed_runtime_path(Some(&python)).unwrap();
+        let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+
+        assert_eq!(dirs, vec![crate::paths::portable_node_bin_dir(), python.parent().unwrap().to_path_buf()]);
+    }
+
+    #[test]
+    fn managed_runtime_path_without_python_uses_only_node() {
+        let joined = managed_runtime_path(None).unwrap();
+        let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+
+        assert_eq!(dirs, vec![crate::paths::portable_node_bin_dir()]);
     }
 }
