@@ -1,13 +1,28 @@
 use crate::models::{ActionResult, InstitutionConfig, NotebookEntry, SetupStatus, TemplateMeta};
 use crate::paths::{
     app_config_dir, atomic_write, atomic_write_if_changed, claude_code_config_path,
-    claude_desktop_config_path, path_text, portable_skill_source_dir,
+    claude_desktop_config_path, installed_skill_dir, openai_plugin_dir, path_text, portable_skill_source_dir,
 };
-use crate::payload::{config_file_path, sync_user_config_to_install};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+
+fn config_file_path(name: &str) -> Result<PathBuf, String> {
+    Ok(app_config_dir()?.join(name))
+}
+
+fn sync_user_config_to_install(name: &str, bytes: &[u8]) -> Result<(), String> {
+    let target = installed_skill_dir()?.join("config").join(name);
+    if target.parent().is_some_and(std::path::Path::exists) {
+        atomic_write_if_changed(&target, bytes)?;
+    }
+    let openai_target = openai_plugin_dir()?.join("skills").join("jintia-skill").join("config").join(name);
+    if openai_target.parent().is_some_and(std::path::Path::exists) {
+        atomic_write_if_changed(&openai_target, bytes)?;
+    }
+    Ok(())
+}
 use std::sync::Mutex;
 
 const DEFAULT_THEME: &str = "jintia-clasico";

@@ -158,53 +158,30 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn extract_zip(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> Result<(), String> {
-    use zip::ZipArchive;
-
-    let file = std::fs::File::open(zip_path)
-        .map_err(|e| format!("Error abriendo ZIP: {e}"))?;
-
-    let mut archive = ZipArchive::new(file)
-        .map_err(|e| format!("Error leyendo ZIP: {e}"))?;
-
-    let mut top_dir: Option<String> = None;
-
-    for i in 0..archive.len() {
-        let mut file = archive
-            .by_index(i)
-            .map_err(|e| format!("Error leyendo entrada ZIP: {e}"))?;
-
-        let outpath = dest_dir.join(file.name());
-
-        if let Some(p) = file.name().split('/').next() {
-            if top_dir.is_none() {
-                top_dir = Some(p.to_string());
-            }
-        }
-
-        if file.is_dir() {
-            fs::create_dir_all(&outpath)
-                .map_err(|e| format!("Error creando directorio: {e}"))?;
-        } else {
-            if let Some(p) = outpath.parent() {
-                fs::create_dir_all(p)
-                    .map_err(|e| format!("Error creando directorio padre: {e}"))?;
-            }
-            let mut outfile = fs::File::create(&outpath)
-                .map_err(|e| format!("Error creando archivo: {e}"))?;
-            std::io::copy(&mut file, &mut outfile)
-                .map_err(|e| format!("Error extrayendo archivo: {e}"))?;
-        }
+    let output = Command::new("tar")
+        .arg("-xf")
+        .arg(zip_path)
+        .arg("-C")
+        .arg(dest_dir)
+        .output()
+        .map_err(|e| format!("Error ejecutando tar para extraer ZIP: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Error extrayendo ZIP: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
-
-    if let Some(top) = top_dir {
-        let src = dest_dir.join(&top);
+    let entries = fs::read_dir(dest_dir)
+        .map_err(|e| format!("Error leyendo directorio extraído: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Error leyendo entrada extraída: {e}"))?;
+    if let Some(entry) = entries.into_iter().find(|entry| entry.path().is_dir()) {
+        let src = entry.path();
         let dst = dest_dir.join("node");
-        if src.exists() && src != dst {
-            fs::rename(&src, &dst)
-                .map_err(|e| format!("Error renombrando directorio: {e}"))?;
+        if src != dst {
+            fs::rename(&src, &dst).map_err(|e| format!("Error renombrando directorio: {e}"))?;
         }
     }
-
     Ok(())
 }
 

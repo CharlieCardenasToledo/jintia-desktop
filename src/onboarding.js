@@ -9,7 +9,6 @@ import {
   downloadNodeRuntime,
   downloadPythonRuntime,
   downloadSkillRuntime,
-  exportSkillZip,
   extractSitePalette,
   generateSyllabus,
   getActiveTemplate,
@@ -483,7 +482,6 @@ function actionBusyMessage(action, current) {
     "start-auth": "Abriendo el inicio de sesión de Google…",
     "verify-auth": "Verificando la sesión de NotebookLM…",
     "save-profile-and-template": "Guardando tu institución, perfil y plantilla…",
-    "export-zip": "Exportando el archivo…",
     "install-local": "Instalando en tu proyecto local…",
     "install-openai": "Preparando Jintia para ChatGPT y Codex…",
     "configure-code": "Conectando tu proyecto local…",
@@ -1108,15 +1106,13 @@ function connectStep() {
   const setup    = runtime.setup || {};
   const skillReady = !!(setup.skill_installed && setup.skill_current);
   const selected = runtime.status.selectedTarget || state.config.onboardingTarget || "claude-code";
-  const zipOk    = Boolean(state.config.lastSkillZip);
 
   // Cada destino nombra la plataforma porque usa un formato de instalación
   // distinto y el usuario debe saber exactamente cuál está preparando.
   const targets = [
-    { id: "claude-code",    title: "Usar con Claude",               icon: "terminal",       desc: "Instala la skill para Claude Code y conserva la exportación para la app de Claude." },
+    { id: "claude-code",    title: "Usar con Claude Code",          icon: "terminal",       desc: "Instala y conecta Jintia para Claude Code." },
     { id: "openai",         title: "Usar con ChatGPT y Codex",      icon: "sparkles",       desc: "Instala el plugin universal para ChatGPT desktop, Codex CLI y Codex en la app." },
-    { id: "claude-cowork",  title: "Usar solo en la app de Claude", icon: "monitor",        desc: "Exporta el paquete para incorporarlo manualmente en Claude." },
-    { id: "both",           title: "Usar en todos",                 icon: "laptop",         desc: "Prepara Claude, ChatGPT y Codex en el mismo equipo — completa los tres pasos siguientes." },
+    { id: "both",           title: "Usar en todos",                 icon: "laptop",         desc: "Prepara Jintia para Claude Code, ChatGPT y Codex en el mismo equipo." },
   ];
 
   // Checklist de pasos para el destino seleccionado
@@ -1138,13 +1134,6 @@ function connectStep() {
     actions   = actionButton(setup.skill_installed ? "1. Actualizar skill" : "1. Instalar", "install-local", skillReady, true) +
                 actionButton("2. Conectar con Claude Code", "configure-code", !skillReady || setup.mcp_claude_code_configured, true);
 
-  } else if (selected === "claude-cowork") {
-    checklist = checkItem("Paquete listo para importar en Claude", zipOk) +
-                checkItem("App de Claude conectada", setup.mcp_desktop_configured);
-    allReady  = !!(zipOk && setup.mcp_desktop_configured);
-    actions   = actionButton("1. Exportar archivo", "export-zip", zipOk, true) +
-                actionButton("2. Conectar app de Claude", "configure-desktop", !zipOk || setup.mcp_desktop_configured, true);
-
   } else if (selected === "openai") {
     checklist = checkItem(
       setup.openai_plugin_current ? `Plugin Jintia ${setup.available_skill_version || ""} preparado`.trim() : "Plugin pendiente de preparar o actualizar",
@@ -1160,15 +1149,11 @@ function connectStep() {
   } else { // all
     checklist = checkItem(skillReady ? `Skill ${setup.skill_version || ""} actualizada`.trim() : "Skill pendiente de instalar o actualizar", skillReady) +
                 checkItem("Claude Code puede abrir Jintia", setup.mcp_claude_code_configured) +
-                checkItem("Paquete listo para importar en Claude", zipOk) +
-                checkItem("App de Claude conectada", setup.mcp_desktop_configured) +
                 checkItem("Plugin ChatGPT/Codex preparado", setup.openai_plugin_current);
-    allReady  = !!(skillReady && setup.mcp_claude_code_configured && zipOk && setup.mcp_desktop_configured && setup.openai_plugin_current);
+    allReady  = !!(skillReady && setup.mcp_claude_code_configured && setup.openai_plugin_current);
     actions   = actionButton(setup.skill_installed ? "Actualizar (proyecto local)" : "Instalar (proyecto local)", "install-local", skillReady, true) +
-                actionButton("Exportar archivo (app de Claude)", "export-zip", zipOk, true) +
                 actionButton(setup.openai_plugin_installed ? "Actualizar ChatGPT/Codex" : "Preparar ChatGPT/Codex", "install-openai", setup.openai_plugin_current, true) +
-                actionButton("Conectar con Claude Code", "configure-code", !setup.skill_installed || setup.mcp_claude_code_configured, true) +
-                actionButton("Conectar app de Claude", "configure-desktop", !zipOk || setup.mcp_desktop_configured, true);
+                actionButton("Conectar con Claude Code", "configure-code", !setup.skill_installed || setup.mcp_claude_code_configured, true);
   }
 
   setFooter("Continuar al paso final", "advance-target", !authenticated || !allReady);
@@ -1211,7 +1196,6 @@ function connectStep() {
       </div>
 
       <div class="flex justify-center flex-wrap gap-2">${actions}</div>
-      ${selected === "claude-cowork" || selected === "both" ? `<p class="mt-3 text-xs leading-relaxed text-gray-500"><strong>Claude:</strong> exportar prepara el paquete, pero no lo incorpora automáticamente; debes añadir el ZIP manualmente.</p>` : ""}
       ${selected === "openai" || selected === "both" ? `<p class="mt-3 text-xs leading-relaxed text-gray-500"><strong>ChatGPT y Codex:</strong> reinicia ChatGPT después de instalar y activa Jintia desde Plugins. Su disponibilidad puede depender del plan y la política del workspace.</p>` : ""}
       <div class="${INLINE_ERROR}" id="onb-target-message" hidden></div>
     </div>
@@ -1222,20 +1206,13 @@ function finalStep() {
   const config = state.config || {};
   const setup  = runtime.setup || {};
   const target = runtime.status?.selectedTarget || config.onboardingTarget || "claude-code";
-  const targetLabel = { "claude-code": "Usar con Claude", "openai": "Usar con ChatGPT y Codex", "claude-cowork": "Usar solo en la app de Claude", "both": "Usar en todos" }[target] || target;
+  const targetLabel = { "claude-code": "Usar con Claude Code", "openai": "Usar con ChatGPT y Codex", "both": "Usar en todos" }[target] || target;
   const skillReady = !!(setup.skill_installed && setup.skill_current);
 
-  // El checklist de conexión depende del destino elegido: a "claude-cowork"
-  // no le corresponde "Instalado localmente" (usa un ZIP exportado, no una
-  // instalación local), así que mostrar esa fila ahí sería una X roja falsa.
   const connectionChecks = {
     "claude-code": [
       { label: "Skill local actualizada", ok: skillReady },
       { label: "Proyecto local conectado", ok: setup.mcp_claude_code_configured },
-    ],
-    "claude-cowork": [
-      { label: "Archivo exportado", ok: Boolean(config.lastSkillZip) },
-      { label: "App de Claude conectada", ok: setup.mcp_desktop_configured },
     ],
     openai: [
       { label: "Plugin ChatGPT/Codex preparado", ok: setup.openai_plugin_current },
@@ -1243,8 +1220,6 @@ function finalStep() {
     both: [
       { label: "Skill local actualizada", ok: skillReady },
       { label: "Proyecto local conectado", ok: setup.mcp_claude_code_configured },
-      { label: "Archivo exportado", ok: Boolean(config.lastSkillZip) },
-      { label: "App de Claude conectada", ok: setup.mcp_desktop_configured },
       { label: "Plugin ChatGPT/Codex preparado", ok: setup.openai_plugin_current },
     ],
   };
@@ -1999,16 +1974,6 @@ async function performAction(action, current) {
     }
     return advance(current);
   }
-  if (action === "export-zip") {
-    const destination = await pickDirectory("Carpeta para guardar el ZIP de Claude/Cowork");
-    if (!destination) return;
-    const result = await exportSkillZip(destination);
-    toast(result.message, result.success ? "success" : "error", 9000);
-    if (result.success && result.path) { state.config.lastSkillZip = result.path; saveConfig(); }
-    await refreshTarget();
-    renderCurrentStep();
-    return;
-  }
   if (action === "install-local") {
     const result = await installSkill(); toast(result.message, result.success ? "success" : "error", 9000); await refreshTarget(); renderCurrentStep(); return;
   }
@@ -2074,8 +2039,7 @@ function targetReady(target) {
   const skillReady = setup.skill_installed && setup.skill_current;
   if (target === "claude-code") return skillReady && setup.mcp_claude_code_configured;
   if (target === "openai") return !!setup.openai_plugin_current;
-  if (target === "claude-cowork") return Boolean(state.config.lastSkillZip) && setup.mcp_desktop_configured;
-  return Boolean(state.config.lastSkillZip) && skillReady && setup.mcp_desktop_configured && setup.mcp_claude_code_configured && setup.openai_plugin_current;
+  return skillReady && setup.mcp_claude_code_configured && setup.openai_plugin_current;
 }
 
 function hexToRgb(hex) {

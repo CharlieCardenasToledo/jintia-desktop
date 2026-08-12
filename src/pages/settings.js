@@ -2,8 +2,7 @@ import {
   applyInstitutionConfig, checkDependencies, getVisualInstallProfiles, installDependency,
   downloadNodeRuntime, downloadPythonRuntime, downloadSkillRuntime,
   configureMcp, configureCodexMcp, getSetupStatus, checkNotebookLMAuth, runNotebookLMAuth,
-  installSkill, exportSkillZip, installOpenAIPlugin,
-  pickDirectory,
+  installSkill, installOpenAIPlugin,
   resetOnboarding, getSkillPath, extractSitePalette, runSkillTool, detectHarnesses, manageHarnesses
 } from "../api.js";
 import { state, saveConfig } from "../state.js";
@@ -359,15 +358,6 @@ export async function renderSettings() {
                 ${ic("puzzle", 14)} Preparar
               </button>
             </div>
-            <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3.5 py-3">
-              <div>
-                <div class="text-[13px] font-semibold text-app-text">Exportar configuración</div>
-                <div class="mt-0.5 text-[11.5px] text-app-muted">Para instalar manualmente en la app de Claude</div>
-              </div>
-              <button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" id="btn-export-skill">
-                ${ic("archive", 14)} Exportar ZIP
-              </button>
-            </div>
             <div class="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-3">
               <div class="mb-1.5 text-[13px] font-semibold text-app-text">Volver a mostrar el asistente inicial</div>
               <div class="flex flex-wrap items-center justify-between gap-2">
@@ -500,16 +490,6 @@ export async function renderSettings() {
         toast(r.message, r.success ? "success" : "error", 6000);
         if (r.success) loadSkillPath();
       } catch (e) { toast(`No se pudo instalar: ${e}`, "error", 7000); }
-    });
-  });
-
-  el.querySelector("#btn-export-skill")?.addEventListener("click", async event => {
-    const dir = await pickDirectory("Selecciona el directorio de destino");
-    if (!dir) return;
-    await runSettingsOperation(event.currentTarget, "export-skill", "Exportando…", async () => {
-      toast("Exportando ZIP…", "loading", 15000);
-      try { const r = await exportSkillZip(dir); toast(r.message, r.success ? "success" : "error", 6000); }
-      catch (e) { toast(`No se pudo exportar: ${e}`, "error", 7000); }
     });
   });
 

@@ -8,7 +8,6 @@ mod models;
 mod onboarding;
 mod palette;
 mod paths;
-mod payload;
 mod pdfs;
 mod release;
 mod runtimes;
@@ -175,11 +174,6 @@ async fn install_skill() -> ActionResult {
     tauri::async_runtime::spawn_blocking(toolchain::install_global_claude_skill)
         .await
         .unwrap_or_else(|error| ActionResult::error(format!("No se pudo instalar Jintia Skill: {error}")))
-}
-
-#[tauri::command]
-async fn export_skill_zip(destination_dir: String) -> ActionResult {
-    payload::export_skill_zip(destination_dir)
 }
 
 #[tauri::command]
@@ -515,7 +509,6 @@ pub fn run() {
             reset_onboarding,
             get_skill_path,
             install_skill,
-            export_skill_zip,
             install_openai_plugin,
             configure_mcp,
             configure_codex_mcp,

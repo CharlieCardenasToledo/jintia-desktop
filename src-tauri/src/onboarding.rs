@@ -3,7 +3,6 @@ use crate::course;
 use crate::mcp;
 use crate::models::{OnboardingResult, OnboardingStatus};
 use crate::paths::{app_config_dir, atomic_write, timestamp};
-use crate::payload;
 use std::fs;
 use std::path::PathBuf;
 
@@ -126,16 +125,9 @@ fn validate_environment(dependencies: &[crate::models::DependencyStatus]) -> Res
 fn target_ready(target: &str) -> bool {
     let setup = config::setup_status();
     match target {
-        "claude-cowork" => payload::last_export_path().is_some() && setup.mcp_desktop_configured,
         "claude-code" => setup.skill_current && setup.mcp_claude_code_configured,
         "openai" => setup.openai_plugin_current,
-        "both" => {
-            payload::last_export_path().is_some()
-                && setup.skill_current
-                && setup.mcp_desktop_configured
-                && setup.mcp_claude_code_configured
-                && setup.openai_plugin_current
-        }
+        "both" => setup.skill_current && setup.mcp_claude_code_configured && setup.openai_plugin_current,
         _ => false,
     }
 }
@@ -249,7 +241,7 @@ pub fn advance(step: u8, selected_target: Option<String>) -> OnboardingResult {
                 let target = selected_target.unwrap_or_else(|| status.selected_target.clone());
                 if !matches!(
                     target.as_str(),
-                    "claude-cowork" | "claude-code" | "openai" | "both"
+                    "claude-code" | "openai" | "both"
                 ) {
                     Err("Selecciona dónde usarás la skill.".to_string())
                 } else if !target_ready(&target) {

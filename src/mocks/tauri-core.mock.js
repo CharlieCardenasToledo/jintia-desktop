@@ -55,7 +55,6 @@ const state = {
   auth: BYPASS
     ? { authenticated: true, message: "Sesión activa — demo@uide.edu.ec" }
     : { authenticated: false, message: "Sin sesión activa. El skill no podrá consultar NotebookLM." },
-  lastSkillZip: BYPASS ? "/mock/exports/jintia-skill.zip" : null,
   notebooksLibrary: BYPASS ? [
     { id: "ift200-fuentes", name: "IFT200 — Interacción Persona Computador", url: "https://notebook.google.com/notebook/ift200-fuentes", description: "Fuentes curadas para el curso de IPC." },
   ] : [],
@@ -84,12 +83,11 @@ function onboardingResult(success, message) {
 }
 
 function targetReady(target) {
-  if (target === "claude-cowork") return Boolean(state.lastSkillZip) && state.setup.mcp_desktop_configured;
   if (target === "claude-code") return state.setup.skill_installed && state.setup.skill_current && state.setup.mcp_claude_code_configured;
   if (target === "openai") return state.setup.openai_plugin_current;
   if (target === "both") {
-    return Boolean(state.lastSkillZip) && state.setup.skill_installed && state.setup.skill_current &&
-      state.setup.mcp_desktop_configured && state.setup.mcp_claude_code_configured &&
+    return state.setup.skill_installed && state.setup.skill_current &&
+      state.setup.mcp_claude_code_configured &&
       state.setup.openai_plugin_current;
   }
   return false;
@@ -157,11 +155,6 @@ const handlers = {
     state.setup.skill_current = true;
     state.setup.skill_version = state.setup.available_skill_version;
     return actionResult(true, "Skill instalado en tu proyecto local (mock).");
-  },
-  export_skill_zip: ({ destinationDir }) => {
-    const path = `${destinationDir || "/mock/exports"}/jintia-skill.zip`;
-    state.lastSkillZip = path;
-    return actionResult(true, "Archivo exportado (mock).", { path });
   },
   install_openai_plugin: () => {
     state.setup.openai_plugin_installed = true;

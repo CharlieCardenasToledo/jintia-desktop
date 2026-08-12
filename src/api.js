@@ -94,10 +94,6 @@ export async function installSkill() {
   return invoke("install_skill");
 }
 
-export async function exportSkillZip(destinationDir) {
-  return invoke("export_skill_zip", { destinationDir });
-}
-
 export async function installOpenAIPlugin() {
   return invoke("install_openai_plugin");
 }

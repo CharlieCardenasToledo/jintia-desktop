@@ -2,14 +2,12 @@ import {
   applyInstitutionConfig,
   checkNotebookLMAuth,
   configureMcp,
-  exportSkillZip,
   getSetupStatus,
   installSkill,
-  pickDirectory,
   runNotebookLMAuth,
 } from "../api.js";
 import { escapeHtml } from "../dom.js";
-import { state, saveConfig } from "../state.js";
+import { state } from "../state.js";
 import { ui, cx } from "../uiClasses.js";
 import { toast } from "../toast.js";
 import { ic, refreshIcons } from "../icons.js";
@@ -59,7 +57,7 @@ export async function renderActivate() {
   document.getElementById("activate-count").textContent = `${completed} de ${steps.length} pasos preparados`;
 
   const requiredReady = status.institution_configured
-    && (status.skill_installed || Boolean(state.config.lastSkillZip))
+    && status.skill_installed
     && auth.authenticated;
   document.getElementById("activate-status").innerHTML = requiredReady
     ? `<div class="mb-3.5 rounded-app border border-teal-600/25 bg-teal-600/[0.08] px-3.5 py-2.5 text-xs leading-relaxed text-app-text-2">${ic("check-circle-2", 14)} <strong class="text-teal-700">Base preparada.</strong> Reinicia el cliente donde configuraste MCP.</div>`
@@ -75,13 +73,6 @@ function buildSteps(status, auth) {
       ok: status.institution_configured,
       detail: "Datos JSON preservados entre actualizaciones",
       action: "Guardar",
-    },
-    {
-      id: "zip",
-      label: "ZIP para Claude y Cowork",
-      ok: Boolean(state.config.lastSkillZip),
-      detail: state.config.lastSkillZip || "Se sube desde Customize → Skills",
-      action: "Generar ZIP",
     },
     {
       id: "skill",
@@ -140,16 +131,6 @@ const ACTIONS = {
       return null;
     }
     return applyInstitutionConfig(payload);
-  },
-  zip: async () => {
-    const destination = await pickDirectory("Carpeta donde guardar el ZIP para Claude/Cowork");
-    if (!destination) return null;
-    const result = await exportSkillZip(destination);
-    if (result.success && result.path) {
-      state.config.lastSkillZip = result.path;
-      saveConfig();
-    }
-    return result;
   },
   skill: installSkill,
   "mcp-desktop": () => configureMcp("desktop"),
