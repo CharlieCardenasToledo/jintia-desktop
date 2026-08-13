@@ -40,16 +40,38 @@ fn managed_mcp() -> Result<ManagedMcp, String> {
     Ok(ManagedMcp { node, bin })
 }
 
-fn server_matches_paths(server: &Value, node: &Path, bin: &Path) -> bool {
+fn managed_mcp_server_json(node: &Path, bin: &Path, managed_path: &str) -> Value {
+    json!({
+        "command": node.to_string_lossy(),
+        "args": [bin.to_string_lossy()],
+        "env": {
+            "PATH": managed_path,
+        },
+    })
+}
+
+fn managed_node_runtime_path_text() -> Result<String, String> {
+    crate::runtimes::managed_node_runtime_path()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn server_matches_paths(server: &Value, node: &Path, bin: &Path, managed_path: &str) -> bool {
     server.get("command").and_then(Value::as_str) == node.to_str()
         && server.get("args").and_then(Value::as_array).is_some_and(|args| {
             args.len() == 1 && args[0].as_str() == bin.to_str()
         })
+        && server
+            .get("env")
+            .and_then(Value::as_object)
+            .and_then(|env| env.get("PATH"))
+            .and_then(Value::as_str)
+            == Some(managed_path)
 }
 
 pub(crate) fn server_matches_managed_mcp(server: &Value) -> bool {
     let Ok(managed) = managed_mcp() else { return false; };
-    server_matches_paths(server, &managed.node, &managed.bin)
+    let Ok(managed_path) = managed_node_runtime_path_text() else { return false; };
+    server_matches_paths(server, &managed.node, &managed.bin, &managed_path)
 }
 
 fn managed_node_version(node: &std::path::Path) -> Result<Version, String> {
@@ -90,6 +112,10 @@ pub fn configure_mcp(target: String) -> ActionResult {
     };
     let managed = match managed_mcp() {
         Ok(managed) => managed,
+        Err(error) => return ActionResult::error(error),
+    };
+    let managed_path = match managed_node_runtime_path_text() {
+        Ok(path) => path,
         Err(error) => return ActionResult::error(error),
     };
     let (path, label) = match target.as_str() {
@@ -141,12 +167,11 @@ pub fn configure_mcp(target: String) -> ActionResult {
         root["mcpServers"] = json!({});
     }
     let previous = root.clone();
-    root["mcpServers"]["notebooklm"] = json!({
-        "command": managed.node.to_string_lossy(),
-        "args": [
-            managed.bin.to_string_lossy()
-        ]
-    });
+    root["mcpServers"]["notebooklm"] = managed_mcp_server_json(
+        &managed.node,
+        &managed.bin,
+        &managed_path,
+    );
     if root == previous {
         return ActionResult::ok(format!(
             "NotebookLM MCP ya estaba configurado correctamente para {label}; no se volvió a escribir."
@@ -185,6 +210,46 @@ pub fn configure_mcp(target: String) -> ActionResult {
 /// confianza, otros servidores MCP, plugins). Se edita con `toml_edit` en vez
 /// de un parser TOML "de solo lectura + reescritura" para no reordenar ni
 /// perder comentarios de secciones ajenas a `mcp_servers.notebooklm`.
+fn apply_managed_codex_mcp_server(
+    doc: &mut toml_edit::DocumentMut,
+    node: &Path,
+    bin: &Path,
+    managed_path: &str,
+) -> Result<(), String> {
+    if doc.get("mcp_servers").is_some_and(|item| !item.is_table()) {
+        return Err("La clave mcp_servers existente no es una tabla. Corrígela antes de continuar.".to_string());
+    }
+    if doc.get("mcp_servers").is_none() {
+        doc["mcp_servers"] = toml_edit::table();
+    }
+    if doc["mcp_servers"]
+        .get("notebooklm")
+        .is_some_and(|item| !item.is_table())
+    {
+        return Err("mcp_servers.notebooklm existente no es una tabla. Corrígela antes de continuar.".to_string());
+    }
+    if doc["mcp_servers"].get("notebooklm").is_none() {
+        doc["mcp_servers"]["notebooklm"] = toml_edit::table();
+    }
+    {
+        let env = &mut doc["mcp_servers"]["notebooklm"]["env"];
+        if env.is_none() {
+            *env = toml_edit::table();
+        }
+        if !env.is_table() {
+            return Err("mcp_servers.notebooklm.env existente no es una tabla. Corrígela antes de continuar.".to_string());
+        }
+    }
+
+    doc["mcp_servers"]["notebooklm"]["command"] =
+        toml_edit::value(node.to_string_lossy().into_owned());
+    let mut args = toml_edit::Array::new();
+    args.push(bin.to_string_lossy().into_owned());
+    doc["mcp_servers"]["notebooklm"]["args"] = toml_edit::value(args);
+    doc["mcp_servers"]["notebooklm"]["env"]["PATH"] = toml_edit::value(managed_path);
+    Ok(())
+}
+
 pub fn configure_codex_mcp() -> ActionResult {
     let _operation = match MCP_CONFIG_OPERATION.lock() {
         Ok(operation) => operation,
@@ -194,6 +259,10 @@ pub fn configure_codex_mcp() -> ActionResult {
     };
     let managed = match managed_mcp() {
         Ok(managed) => managed,
+        Err(error) => return ActionResult::error(error),
+    };
+    let managed_path = match managed_node_runtime_path_text() {
+        Ok(path) => path,
         Err(error) => return ActionResult::error(error),
     };
     let path = match crate::paths::codex_config_path() {
@@ -260,14 +329,14 @@ pub fn configure_codex_mcp() -> ActionResult {
             "mcp_servers.notebooklm existente no es una tabla. Corrígela antes de continuar.",
         );
     }
-    if doc["mcp_servers"].get("notebooklm").is_none() {
-        doc["mcp_servers"]["notebooklm"] = toml_edit::table();
+    if let Err(error) = apply_managed_codex_mcp_server(
+        &mut doc,
+        &managed.node,
+        &managed.bin,
+        &managed_path,
+    ) {
+        return ActionResult::error(error);
     }
-    doc["mcp_servers"]["notebooklm"]["command"] =
-        toml_edit::value(managed.node.to_string_lossy().into_owned());
-    let mut args = toml_edit::Array::new();
-    args.push(managed.bin.to_string_lossy().into_owned());
-    doc["mcp_servers"]["notebooklm"]["args"] = toml_edit::value(args);
 
     let next = doc.to_string();
     if next == previous {
@@ -887,22 +956,114 @@ mod tests {
     }
 
     #[test]
-    fn managed_server_matcher_requires_exact_node_and_bin() {
+    fn managed_mcp_json_server_includes_managed_path() {
+        let server = managed_mcp_server_json(
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        );
+        assert_eq!(server["command"], "managed-node");
+        assert_eq!(server["args"], json!(["managed-bin.js"]));
+        assert_eq!(server["env"]["PATH"], "managed-only-bin");
+    }
+
+    #[test]
+    fn managed_server_matcher_requires_exact_node_bin_and_path() {
         let node = Path::new("/managed/node");
         let bin = Path::new("/managed/node_modules/@scope/pkg/bin.js");
-        let valid = serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"]});
-        assert!(server_matches_paths(&valid, node, bin));
+        let managed_path = "/managed/bin";
+        let valid = serde_json::json!({
+            "command": "/managed/node",
+            "args": ["/managed/node_modules/@scope/pkg/bin.js"],
+            "env": {"PATH": managed_path},
+        });
+        assert!(server_matches_paths(&valid, node, bin, managed_path));
+        let with_extra_env = serde_json::json!({
+            "command": "/managed/node",
+            "args": ["/managed/node_modules/@scope/pkg/bin.js"],
+            "env": {"PATH": managed_path, "OTHER": "preserved"},
+        });
+        assert!(server_matches_paths(&with_extra_env, node, bin, managed_path));
         for server in [
-            serde_json::json!({"command": "/other/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"]}),
-            serde_json::json!({"command": "/managed/node", "args": ["/other/bin"]}),
-            serde_json::json!({"command": "/managed/node", "args": []}),
-            serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js", "--extra"]}),
-            serde_json::json!({"command": "npx", "args": ["@scope/pkg@latest"]}),
-            serde_json::json!({"command": "/managed/node", "args": ["@scope/pkg"]}),
-            serde_json::json!({"args": ["/managed/node_modules/@scope/pkg/bin.js"]}),
+            serde_json::json!({"command": "/other/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"], "env": {"PATH": managed_path}}),
+            serde_json::json!({"command": "/managed/node", "args": ["/other/bin"], "env": {"PATH": managed_path}}),
+            serde_json::json!({"command": "/managed/node", "args": [], "env": {"PATH": managed_path}}),
+            serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js", "--extra"], "env": {"PATH": managed_path}}),
+            serde_json::json!({"command": "npx", "args": ["@scope/pkg@latest"], "env": {"PATH": managed_path}}),
+            serde_json::json!({"command": "/managed/node", "args": ["@scope/pkg"], "env": {"PATH": managed_path}}),
+            serde_json::json!({"args": ["/managed/node_modules/@scope/pkg/bin.js"], "env": {"PATH": managed_path}}),
+            serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"]}),
+            serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"], "env": {}}),
+            serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"], "env": {"PATH": "host-only-bin"}}),
+            serde_json::json!({"command": "/managed/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"], "env": {"PATH": ""}}),
         ] {
-            assert!(!server_matches_paths(&server, node, bin));
+            assert!(!server_matches_paths(&server, node, bin, managed_path));
         }
+    }
+
+    #[test]
+    fn codex_managed_mcp_server_includes_managed_path() {
+        let mut doc = "".parse::<toml_edit::DocumentMut>().unwrap();
+        apply_managed_codex_mcp_server(
+            &mut doc,
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        )
+        .unwrap();
+        assert_eq!(doc["mcp_servers"]["notebooklm"]["command"].as_str(), Some("managed-node"));
+        assert_eq!(
+            doc["mcp_servers"]["notebooklm"]["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .next()
+                .and_then(toml_edit::Value::as_str),
+            Some("managed-bin.js")
+        );
+        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(), Some("managed-only-bin"));
+    }
+
+    #[test]
+    fn codex_managed_mcp_server_preserves_other_environment() {
+        let mut doc = "[mcp_servers.notebooklm.env]\nEXISTING = \"keep\"\n".parse::<toml_edit::DocumentMut>().unwrap();
+        apply_managed_codex_mcp_server(
+            &mut doc,
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        )
+        .unwrap();
+        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"]["EXISTING"].as_str(), Some("keep"));
+        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(), Some("managed-only-bin"));
+    }
+
+    #[test]
+    fn codex_managed_mcp_server_rejects_non_table_environment() {
+        let mut doc = "[mcp_servers.notebooklm]\nenv = \"invalid\"\n".parse::<toml_edit::DocumentMut>().unwrap();
+        let error = apply_managed_codex_mcp_server(
+            &mut doc,
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        )
+        .unwrap_err();
+        assert!(error.contains("env"));
+        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"].as_str(), Some("invalid"));
+    }
+
+    #[test]
+    fn codex_managed_mcp_server_replaces_host_path() {
+        let mut doc = "[mcp_servers.notebooklm.env]\nPATH = \"host-only-bin\"\n".parse::<toml_edit::DocumentMut>().unwrap();
+        apply_managed_codex_mcp_server(
+            &mut doc,
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        )
+        .unwrap();
+        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(), Some("managed-only-bin"));
+        assert!(!doc.to_string().contains("host-only-bin"));
     }
 
     #[test]

@@ -2198,6 +2198,62 @@ test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administra
   assert.ok((retry.match(/McpConnection::spawn\(\)/g) ?? []).length >= 2);
 });
 
+test('Las configuraciones externas de NotebookLM MCP persisten el PATH Node administrado', async () => {
+  const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
+
+  const jsonStart = mcp.indexOf('pub fn configure_mcp');
+  const codexStart = mcp.indexOf('pub fn configure_codex_mcp');
+  assert.ok(jsonStart >= 0 && codexStart > jsonStart);
+  const jsonConfig = mcp.slice(jsonStart, codexStart);
+  assert.match(jsonConfig, /managed_mcp/);
+  assert.match(jsonConfig, /managed_node_runtime_path/);
+  assert.match(jsonConfig, /managed_mcp_server_json/);
+  assert.match(jsonConfig, /mcpServers/);
+  assert.match(jsonConfig, /notebooklm/);
+  assert.doesNotMatch(jsonConfig, /std::env::var(?:_os)?\(\s*"PATH"|split_paths/);
+
+  const matcherStart = mcp.indexOf('fn server_matches_paths');
+  const matcherEnd = mcp.indexOf('\npub(crate) fn server_matches_managed_mcp', matcherStart);
+  assert.ok(matcherStart >= 0 && matcherEnd > matcherStart);
+  const matcher = mcp.slice(matcherStart, matcherEnd);
+  assert.match(matcher, /env/);
+  assert.match(matcher, /PATH/);
+  assert.match(matcher, /managed_path/);
+  assert.match(matcher, /args/);
+
+  const managedMatcherStart = mcp.indexOf('pub(crate) fn server_matches_managed_mcp');
+  const managedMatcherEnd = mcp.indexOf('\nfn managed_node_version', managedMatcherStart);
+  assert.ok(managedMatcherStart >= 0 && managedMatcherEnd > managedMatcherStart);
+  const managedMatcher = mcp.slice(managedMatcherStart, managedMatcherEnd);
+  assert.match(managedMatcher, /managed_mcp\(\)/);
+  assert.match(managedMatcher, /managed_node_runtime_path/);
+  assert.match(managedMatcher, /server_matches_paths/);
+
+  const helperStart = mcp.indexOf('fn apply_managed_codex_mcp_server');
+  const helperEnd = mcp.indexOf('\npub fn configure_codex_mcp', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const helper = mcp.slice(helperStart, helperEnd);
+  assert.match(helper, /DocumentMut/);
+  assert.match(helper, /mcp_servers/);
+  assert.match(helper, /notebooklm/);
+  assert.match(helper, /command/);
+  assert.match(helper, /args/);
+  assert.match(helper, /env/);
+  assert.match(helper, /PATH/);
+  assert.match(helper, /is_table/);
+
+  const codexEnd = mcp.indexOf('\nfn receive_json', codexStart);
+  assert.ok(codexEnd > codexStart);
+  const codexConfig = mcp.slice(codexStart, codexEnd);
+  assert.match(codexConfig, /managed_mcp/);
+  assert.match(codexConfig, /managed_node_runtime_path/);
+  assert.match(codexConfig, /apply_managed_codex_mcp_server/);
+  assert.match(codexConfig, /mcp_servers/);
+  assert.match(codexConfig, /notebooklm/);
+  assert.doesNotMatch(`${helper}\n${codexConfig}`, /env_vars/);
+  assert.doesNotMatch(`${helper}\n${codexConfig}`, /std::env::var(?:_os)?\(\s*"PATH"|split_paths/);
+});
+
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([
