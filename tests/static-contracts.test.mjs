@@ -1937,6 +1937,65 @@ test('Node portable extrae tar.gz sin depender del tar anfitrión', async () => 
   assert.doesNotMatch(url, /node-v22\.13\.0-linux-x64\.tar\.xz/);
 });
 
+test('Python portable restaura explícitamente el runtime anterior si falla la activación', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const activationStart = runtimes.indexOf(
+    'fn activate_staged_python_runtime'
+  );
+  const activationEnd = runtimes.indexOf(
+    'fn global_python_command',
+    activationStart
+  );
+  assert.ok(
+    activationStart >= 0 && activationEnd > activationStart,
+    'debe existir un helper único de activación Python'
+  );
+  const activation = runtimes.slice(activationStart, activationEnd);
+
+  for (const required of [
+    'python_dir.exists()',
+    'fs::rename(python_dir, backup_dir)',
+    'fs::rename(staged_python, python_dir)',
+    'fs::rename(backup_dir, python_dir)',
+    'restore_error',
+    'Error activando Python',
+    'no se pudo restaurar el runtime anterior',
+  ]) {
+    assert.match(
+      activation,
+      new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `falta ${required}`
+    );
+  }
+
+  assert.doesNotMatch(
+    activation,
+    /let\s+_\s*=\s*fs::rename\(backup_dir,\s*python_dir\)/
+  );
+  assert.doesNotMatch(activation, /remove_dir_all\(python_dir\)/);
+  assert.doesNotMatch(activation, /reqwest|verify_sha256|extract_|Command::new|workspace/);
+
+  const downloadStart = runtimes.indexOf(
+    'pub fn download_portable_python('
+  );
+  const downloadEnd = runtimes.indexOf(
+    'fn emit_python_progress',
+    downloadStart
+  );
+  assert.ok(downloadStart >= 0 && downloadEnd > downloadStart);
+  const downloader = runtimes.slice(downloadStart, downloadEnd);
+  assert.match(downloader, /validate_python_runtime\(&staged_python\)/);
+  assert.match(downloader, /activate_staged_python_runtime\(/);
+  assert.doesNotMatch(
+    downloader,
+    /match\s+fs::rename\(\s*&staged_python,\s*&python_dir\s*\)/
+  );
+});
+
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([

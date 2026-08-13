@@ -629,6 +629,37 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+fn activate_staged_python_runtime(
+    staged_python: &std::path::Path,
+    python_dir: &std::path::Path,
+    backup_dir: &std::path::Path,
+) -> Result<(), String> {
+    let had_previous_runtime = python_dir.exists();
+
+    if had_previous_runtime {
+        fs::rename(python_dir, backup_dir)
+            .map_err(|e| format!("Error preparando reemplazo de Python: {e}"))?;
+    }
+
+    if let Err(activation_error) = fs::rename(staged_python, python_dir) {
+        if had_previous_runtime {
+            if let Err(restore_error) = fs::rename(backup_dir, python_dir) {
+                return Err(format!(
+                    "Error activando Python: {activation_error}; además no se pudo restaurar el runtime anterior: {restore_error}"
+                ));
+            }
+        }
+
+        return Err(format!("Error activando Python: {activation_error}"));
+    }
+
+    if had_previous_runtime && backup_dir.exists() {
+        let _ = fs::remove_dir_all(backup_dir);
+    }
+
+    Ok(())
+}
+
 fn global_python_command() -> Option<String> {
     let checker = if cfg!(target_os = "windows") {
         "where.exe"
@@ -773,26 +804,16 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
     let python_dir = paths::portable_python_prefix();
     let backup_dir = runtimes_dir.join(format!(".python-backup-{}", paths::timestamp()));
 
-    if python_dir.exists() {
-        fs::rename(&python_dir, &backup_dir)
-            .map_err(|e| format!("Error preparando reemplazo de Python: {e}"))?;
+    if let Err(error) = activate_staged_python_runtime(
+        &staged_python,
+        &python_dir,
+        &backup_dir,
+    ) {
+        let _ = fs::remove_dir_all(&stage_dir);
+        return Err(error);
     }
 
-    match fs::rename(&staged_python, &python_dir) {
-        Ok(_) => {
-            if backup_dir.exists() {
-                let _ = fs::remove_dir_all(&backup_dir);
-            }
-            let _ = fs::remove_dir_all(&stage_dir);
-        }
-        Err(e) => {
-            if backup_dir.exists() {
-                let _ = fs::rename(&backup_dir, &python_dir);
-            }
-            let _ = fs::remove_dir_all(&stage_dir);
-            return Err(format!("Error activando Python: {e}"));
-        }
-    }
+    let _ = fs::remove_dir_all(&stage_dir);
 
     emit_python_progress(app, "done", 100.0, "Python instalado correctamente.");
     Ok(())
@@ -1014,7 +1035,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1250,6 +1271,74 @@ mod tests {
         assert!(error.contains("Error activando Node"));
         assert!(node_dir.join("marker-old").is_file());
         assert!(!backup_dir.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn python_activation_fixture(name: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "jintia-python-activation-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn python_activation_installs_staged_runtime_when_live_is_absent() {
+        let root = python_activation_fixture("first");
+        let staged_python = root.join("stage/python");
+        let python_dir = root.join("python");
+        let backup_dir = root.join("backup");
+        fs::create_dir_all(&staged_python).unwrap();
+        fs::write(staged_python.join("marker-new"), "new").unwrap();
+
+        activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir).unwrap();
+
+        assert!(python_dir.join("marker-new").is_file());
+        assert!(!staged_python.exists());
+        assert!(!backup_dir.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn python_activation_replaces_existing_runtime_after_staging() {
+        let root = python_activation_fixture("replace");
+        let staged_python = root.join("stage/python");
+        let python_dir = root.join("python");
+        let backup_dir = root.join("backup");
+        fs::create_dir_all(&staged_python).unwrap();
+        fs::create_dir_all(&python_dir).unwrap();
+        fs::write(staged_python.join("marker-new"), "new").unwrap();
+        fs::write(python_dir.join("marker-old"), "old").unwrap();
+
+        activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir).unwrap();
+
+        assert!(python_dir.join("marker-new").is_file());
+        assert!(!python_dir.join("marker-old").exists());
+        assert!(!backup_dir.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn python_activation_restores_previous_runtime_when_stage_activation_fails() {
+        let root = python_activation_fixture("rollback");
+        let staged_python = root.join("stage/python");
+        let python_dir = root.join("python");
+        let backup_dir = root.join("backup");
+        fs::create_dir_all(&python_dir).unwrap();
+        fs::write(python_dir.join("marker-old"), "old").unwrap();
+
+        let error = activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir)
+            .unwrap_err();
+
+        assert!(error.contains("Error activando Python"));
+        assert!(python_dir.join("marker-old").is_file());
+        assert!(!backup_dir.exists());
+        assert!(!python_dir.join("marker-new").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
