@@ -488,7 +488,10 @@ fn build_managed_mcp_server_command(
     managed_path: &std::ffi::OsStr,
 ) -> Command {
     let mut command = Command::new(node);
-    command.arg(bin).env("PATH", managed_path);
+    command
+        .arg(bin)
+        .env("PATH", managed_path)
+        .env_remove("NODE_OPTIONS");
     command
 }
 
@@ -988,6 +991,21 @@ mod tests {
             .expect("PATH administrado");
         assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
         assert!(!path.to_string_lossy().contains("host-only-bin"));
+    }
+
+    #[test]
+    fn managed_mcp_server_command_removes_node_options() {
+        let command = build_managed_mcp_server_command(
+            Path::new("managed-node"),
+            Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-only-bin"),
+        );
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
     }
 
     #[test]

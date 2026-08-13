@@ -2198,6 +2198,32 @@ test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administra
   assert.ok((retry.match(/McpConnection::spawn\(\)/g) ?? []).length >= 2);
 });
 
+test('NotebookLM MCP persistente no hereda NODE_OPTIONS del host', async () => {
+  const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
+  const builderStart = mcp.indexOf('fn build_managed_mcp_server_command');
+  const builderEnd = mcp.indexOf('\nimpl McpConnection', builderStart);
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = mcp.slice(builderStart, builderEnd);
+
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /\.arg\(bin\)/);
+  assert.match(builder, /\.env\("PATH", managed_path\)/);
+  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
+  assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|Command::new\("(?:node|npm|npx)"\)|current_dir|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
+
+  const spawnStart = mcp.indexOf('fn spawn() -> Result<Self, String>');
+  const spawnEnd = mcp.indexOf('\n    fn ', spawnStart + 1);
+  assert.ok(spawnStart >= 0 && spawnEnd > spawnStart);
+  const spawn = mcp.slice(spawnStart, spawnEnd);
+  assert.match(spawn, /managed_mcp\(\)\?/);
+  assert.match(spawn, /managed_node_runtime_path\(\)\?/);
+  assert.match(spawn, /build_managed_mcp_server_command/);
+  assert.match(spawn, /Stdio::piped\(\)/);
+  assert.match(spawn, /Stdio::inherit\(\)/);
+  assert.match(spawn, /\.spawn\(\)/);
+  assert.doesNotMatch(spawn, /env_remove\("NODE_OPTIONS"\)/);
+});
+
 test('Las configuraciones externas de NotebookLM MCP persisten el PATH Node administrado', async () => {
   const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
 
