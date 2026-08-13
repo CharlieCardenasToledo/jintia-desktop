@@ -356,11 +356,25 @@ struct McpConnection {
     next_id: i64,
 }
 
+fn build_managed_mcp_server_command(
+    node: &Path,
+    bin: &Path,
+    managed_path: &std::ffi::OsStr,
+) -> Command {
+    let mut command = Command::new(node);
+    command.arg(bin).env("PATH", managed_path);
+    command
+}
+
 impl McpConnection {
     fn spawn() -> Result<Self, String> {
         let managed = managed_mcp()?;
-        let mut child = Command::new(&managed.node)
-            .arg(&managed.bin)
+        let managed_path = crate::runtimes::managed_node_runtime_path()?;
+        let mut child = build_managed_mcp_server_command(
+            &managed.node,
+            &managed.bin,
+            &managed_path,
+        )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -821,6 +835,56 @@ pub fn list_account_notebooks() -> Result<Vec<NotebookLmEntry>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_mcp_server_command_uses_exact_node_and_bin() {
+        let command = build_managed_mcp_server_command(
+            Path::new("managed-node"),
+            Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-only-bin"),
+        );
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
+        assert_eq!(args, [std::ffi::OsStr::new("managed-mcp-bin.js")]);
+    }
+
+    #[test]
+    fn managed_mcp_server_command_uses_only_managed_path() {
+        let command = build_managed_mcp_server_command(
+            Path::new("managed-node"),
+            Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-only-bin"),
+        );
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, value)| value)
+            .expect("PATH administrado");
+        assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
+        assert!(!path.to_string_lossy().contains("host-only-bin"));
+    }
+
+    #[test]
+    fn managed_mcp_server_command_does_not_override_current_dir() {
+        let command = build_managed_mcp_server_command(
+            Path::new("managed-node"),
+            Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-only-bin"),
+        );
+        assert!(command.get_current_dir().is_none());
+    }
+
+    #[test]
+    fn managed_mcp_server_command_has_only_public_bin_argument() {
+        let command = build_managed_mcp_server_command(
+            Path::new("managed-node"),
+            Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-only-bin"),
+        );
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], std::ffi::OsStr::new("managed-mcp-bin.js"));
+    }
 
     #[test]
     fn managed_server_matcher_requires_exact_node_and_bin() {

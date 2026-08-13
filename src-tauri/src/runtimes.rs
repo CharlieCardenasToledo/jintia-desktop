@@ -2254,7 +2254,7 @@ pub fn node_cli_version(
         })
 }
 
-fn managed_node_runtime_path() -> Result<OsString, String> {
+pub(crate) fn managed_node_runtime_path() -> Result<OsString, String> {
     std::env::join_paths([paths::portable_node_bin_dir()])
         .map_err(|error| format!("No se pudo construir el PATH administrado de Node: {error}"))
 }

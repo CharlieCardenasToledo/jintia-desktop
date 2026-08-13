@@ -161,8 +161,8 @@ test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   const spawnEnd = mcp.indexOf('\n    fn ', spawnStart + 1);
   const spawnFn = mcp.slice(spawnStart, spawnEnd < 0 ? mcp.length : spawnEnd);
   assert.match(spawnFn, /managed_mcp/);
-  assert.match(spawnFn, /Command::new\(&managed\.node\)/);
-  assert.match(spawnFn, /\.arg\(&managed\.bin\)/);
+  assert.match(spawnFn, /managed_node_runtime_path/);
+  assert.match(spawnFn, /build_managed_mcp_server_command/);
   assert.doesNotMatch(`${paths}\n${runtimes}\n${mcp}`, /dist\/(?:index|cli)\.js|patchright|\.local-browsers|PLAYWRIGHT_BROWSERS_PATH/);
 });
 
@@ -2148,6 +2148,54 @@ test('NotebookLM MCP ejecuta browser install y status sólo con Node y PATH admi
   assert.match(validator, /validate_browser_status/);
   assert.ok(validator.indexOf('resolve_notebooklm_mcp_bin_for') < validator.indexOf('run_notebooklm_browser_command'));
   assert.ok(validator.indexOf('run_notebooklm_browser_command') < validator.indexOf('validate_browser_status'));
+});
+
+test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administrados', async () => {
+  const [mcp, runtimes] = await Promise.all([
+    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+  ]);
+
+  const pathStart = runtimes.indexOf('pub(crate) fn managed_node_runtime_path');
+  const pathEnd = runtimes.indexOf('\nfn build_managed_node_cli_version_command', pathStart);
+  assert.ok(pathStart >= 0 && pathEnd > pathStart);
+  const managedPath = runtimes.slice(pathStart, pathEnd);
+  assert.match(managedPath, /portable_node_bin_dir\(\)/);
+  assert.doesNotMatch(managedPath, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|HOME|USERPROFILE/);
+
+  const builderStart = mcp.indexOf('fn build_managed_mcp_server_command');
+  const spawnStart = mcp.indexOf('fn spawn()', builderStart);
+  const testsStart = mcp.indexOf('\n#[cfg(test)]', spawnStart);
+  assert.ok(builderStart >= 0 && spawnStart > builderStart && testsStart > spawnStart);
+  const builder = mcp.slice(builderStart, spawnStart);
+  const spawn = mcp.slice(spawnStart, testsStart);
+
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /\.arg\(bin\)/);
+  assert.match(builder, /\.env\("PATH", managed_path\)/);
+  assert.doesNotMatch(builder, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|env_clear|current_dir|Command::new\("(?:node|npm|npx)"\)|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
+
+  for (const required of [
+    'managed_mcp()?',
+    'crate::runtimes::managed_node_runtime_path()?',
+    'build_managed_mcp_server_command',
+    'Stdio::piped()',
+    'Stdio::inherit()',
+    '.spawn()',
+  ]) {
+    assert.match(spawn, new RegExp(required.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')));
+  }
+  assert.ok(spawn.indexOf('managed_mcp()?') < spawn.indexOf('managed_node_runtime_path()?'));
+  assert.ok(spawn.indexOf('managed_node_runtime_path()?') < spawn.indexOf('build_managed_mcp_server_command'));
+  assert.doesNotMatch(spawn, /Command::new\(\s*&managed\.node\s*\)/s);
+  assert.doesNotMatch(spawn, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|env_clear|Command::new\("(?:node|npm|npx)"\)|powershell|sh\s+-c|bash\s+-c/);
+
+  const retryStart = mcp.indexOf('fn spawn_connection()');
+  const retryEnd = mcp.indexOf('\nfn call_tool', retryStart);
+  assert.ok(retryStart >= 0 && retryEnd > retryStart);
+  const retry = mcp.slice(retryStart, retryEnd);
+  assert.match(retry, /McpConnection::spawn\(\)/);
+  assert.ok((retry.match(/McpConnection::spawn\(\)/g) ?? []).length >= 2);
 });
 
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
