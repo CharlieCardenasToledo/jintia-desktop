@@ -136,26 +136,137 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
         error
     })?;
 
+    let stage_dir = runtimes_dir.join(format!(".node-stage-{NODE_VERSION}"));
+    if stage_dir.exists() {
+        fs::remove_dir_all(&stage_dir).map_err(|error| {
+            let _ = fs::remove_file(&tmp_file);
+            let message = format!("Error limpiando staging de Node.js: {error}");
+            emit_progress(app, "error", 100.0, &message);
+            message
+        })?;
+    }
+    fs::create_dir_all(&stage_dir).map_err(|error| {
+        let _ = fs::remove_file(&tmp_file);
+        let message = format!("Error creando staging de Node.js: {error}");
+        emit_progress(app, "error", 100.0, &message);
+        message
+    })?;
+
     emit_progress(app, "extracting", 100.0, "Extrayendo Node.js...");
 
-    if node_dir.exists() {
-        fs::remove_dir_all(&node_dir)
-            .map_err(|e| format!("Error removiendo instalación anterior: {e}"))?;
-    }
+    let extraction_result = {
+        #[cfg(target_os = "windows")]
+        {
+            extract_zip(&tmp_file, &stage_dir)
+        }
 
-    #[cfg(target_os = "windows")]
-    {
-        extract_zip(&tmp_file, &runtimes_dir)?;
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        extract_tar(&tmp_file, &runtimes_dir)?;
+        #[cfg(not(target_os = "windows"))]
+        {
+            extract_tar(&tmp_file, &stage_dir)
+        }
+    };
+    if let Err(error) = extraction_result {
+        let _ = fs::remove_file(&tmp_file);
+        let _ = fs::remove_dir_all(&stage_dir);
+        emit_progress(app, "error", 100.0, &error);
+        return Err(error);
     }
 
     let _ = fs::remove_file(&tmp_file);
 
+    let staged_node = stage_dir.join("node");
+    if let Err(error) = validate_node_runtime(&staged_node) {
+        let _ = fs::remove_dir_all(&stage_dir);
+        emit_progress(app, "error", 100.0, &error);
+        return Err(error);
+    }
+
+    let backup_dir = runtimes_dir.join(format!(".node-backup-{}", paths::timestamp()));
+    if let Err(error) = activate_staged_node_runtime(&staged_node, &node_dir, &backup_dir) {
+        let _ = fs::remove_dir_all(&stage_dir);
+        emit_progress(app, "error", 100.0, &error);
+        return Err(error);
+    }
+
+    let _ = fs::remove_dir_all(&stage_dir);
+    if backup_dir.exists() {
+        let _ = fs::remove_dir_all(&backup_dir);
+    }
+
     emit_progress(app, "done", 100.0, "Node.js instalado correctamente.");
+
+    Ok(())
+}
+
+fn node_version_text_matches_expected(text: &str) -> bool {
+    text.trim() == format!("v{NODE_VERSION}")
+}
+
+fn validate_node_runtime(prefix: &std::path::Path) -> Result<(), String> {
+    let node_exe = if cfg!(target_os = "windows") {
+        prefix.join("node.exe")
+    } else {
+        prefix.join("bin").join("node")
+    };
+
+    if !node_exe.is_file() {
+        return Err(format!(
+            "El runtime Node extraído no contiene el ejecutable esperado: {}",
+            node_exe.display()
+        ));
+    }
+
+    let output = Command::new(&node_exe)
+        .arg("--version")
+        .output()
+        .map_err(|error| format!("No se pudo ejecutar el Node extraído: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("El Node extraído no pudo informar su versión: {stderr}"));
+    }
+
+    let version = if output.stdout.is_empty() {
+        String::from_utf8(output.stderr)
+            .map_err(|error| format!("Salida inválida del Node extraído: {error}"))?
+    } else {
+        String::from_utf8(output.stdout)
+            .map_err(|error| format!("Salida inválida del Node extraído: {error}"))?
+    };
+
+    if !node_version_text_matches_expected(&version) {
+        return Err(format!("Versión de Node inesperada: {}", version.trim()));
+    }
+
+    Ok(())
+}
+
+fn activate_staged_node_runtime(
+    staged_node: &std::path::Path,
+    node_dir: &std::path::Path,
+    backup_dir: &std::path::Path,
+) -> Result<(), String> {
+    let had_previous_runtime = node_dir.exists();
+
+    if had_previous_runtime {
+        fs::rename(node_dir, backup_dir)
+            .map_err(|error| format!("Error preparando backup de Node.js: {error}"))?;
+    }
+
+    if let Err(error) = fs::rename(staged_node, node_dir) {
+        if had_previous_runtime {
+            if let Err(restore_error) = fs::rename(backup_dir, node_dir) {
+                return Err(format!(
+                    "Error activando Node: {error}; además no se pudo restaurar el runtime anterior: {restore_error}"
+                ));
+            }
+        }
+        return Err(format!("Error activando Node: {error}"));
+    }
+
+    if had_previous_runtime && backup_dir.exists() {
+        let _ = fs::remove_dir_all(backup_dir);
+    }
 
     Ok(())
 }
@@ -842,7 +953,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_managed_node_cli_version_command, build_managed_npm_install_command, install_npm_packages, managed_node_runtime_path, node_checksum_from_manifest, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, install_npm_packages, managed_node_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -938,6 +1049,86 @@ mod tests {
         let _ = fs::remove_file(&path);
 
         assert!(result.unwrap_err().contains("Checksum inválido"));
+    }
+
+    fn activation_fixture(name: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "jintia-node-activation-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn node_activation_installs_staged_runtime_when_live_is_absent() {
+        let root = activation_fixture("first");
+        let staged_node = root.join("stage/node");
+        let node_dir = root.join("node");
+        let backup_dir = root.join("backup");
+        fs::create_dir_all(&staged_node).unwrap();
+        fs::write(staged_node.join("marker-new"), "new").unwrap();
+
+        activate_staged_node_runtime(&staged_node, &node_dir, &backup_dir).unwrap();
+
+        assert!(node_dir.join("marker-new").is_file());
+        assert!(!staged_node.exists());
+        assert!(!backup_dir.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn node_activation_replaces_existing_runtime_after_staging() {
+        let root = activation_fixture("replace");
+        let staged_node = root.join("stage/node");
+        let node_dir = root.join("node");
+        let backup_dir = root.join("backup");
+        fs::create_dir_all(&staged_node).unwrap();
+        fs::create_dir_all(&node_dir).unwrap();
+        fs::write(staged_node.join("marker-new"), "new").unwrap();
+        fs::write(node_dir.join("marker-old"), "old").unwrap();
+
+        activate_staged_node_runtime(&staged_node, &node_dir, &backup_dir).unwrap();
+
+        assert!(node_dir.join("marker-new").is_file());
+        assert!(!node_dir.join("marker-old").exists());
+        assert!(!backup_dir.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn node_activation_restores_previous_runtime_when_stage_activation_fails() {
+        let root = activation_fixture("rollback");
+        let staged_node = root.join("stage/node");
+        let node_dir = root.join("node");
+        let backup_dir = root.join("backup");
+        fs::create_dir_all(&node_dir).unwrap();
+        fs::write(node_dir.join("marker-old"), "old").unwrap();
+
+        let error = activate_staged_node_runtime(&staged_node, &node_dir, &backup_dir)
+            .unwrap_err();
+
+        assert!(error.contains("Error activando Node"));
+        assert!(node_dir.join("marker-old").is_file());
+        assert!(!backup_dir.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn node_version_text_accepts_exact_managed_version() {
+        assert!(node_version_text_matches_expected("v22.13.0"));
+        assert!(node_version_text_matches_expected(" v22.13.0\n"));
+    }
+
+    #[test]
+    fn node_version_text_rejects_unexpected_runtime_version() {
+        assert!(!node_version_text_matches_expected("v21.0.0"));
+        assert!(!node_version_text_matches_expected("v22.13.1"));
+        assert!(!node_version_text_matches_expected("22.13.0"));
     }
 
     #[test]

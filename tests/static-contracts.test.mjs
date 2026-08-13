@@ -1711,10 +1711,10 @@ test('Node portable nunca se activa sin checksum SHA-256 verificado', async () =
       downloader.indexOf('extract_zip'),
     'la verificación debe ocurrir antes de extraer'
   );
-  assert.ok(
-    downloader.indexOf('verify_sha256') <
-      downloader.indexOf('remove_dir_all(&node_dir)'),
-    'la verificación debe ocurrir antes de reemplazar el runtime anterior'
+  assert.doesNotMatch(
+    downloader,
+    /remove_dir_all\(&node_dir\)/,
+    'el runtime anterior no debe eliminarse directamente'
   );
 
   assert.doesNotMatch(
@@ -1747,6 +1747,84 @@ test('Node portable nunca se activa sin checksum SHA-256 verificado', async () =
   assert.match(parser, /Checksum no encontrado/);
   assert.match(fetcher, /node_checksum_from_manifest/);
   assert.match(fetcher, /error_for_status\(\)/);
+});
+
+test('Node portable valida staging y restaura el runtime anterior si falla la activación', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const downloadStart = runtimes.indexOf(
+    'pub fn download_portable_node('
+  );
+  const downloadEnd = runtimes.indexOf(
+    '// ==================== PYTHON RUNTIME ====================',
+    downloadStart
+  );
+  assert.ok(downloadStart >= 0 && downloadEnd > downloadStart);
+  const downloader = runtimes.slice(downloadStart, downloadEnd);
+
+  for (const required of [
+    'stage_dir',
+    'extract_zip',
+    'extract_tar',
+    'staged_node',
+    'validate_node_runtime',
+    'activate_staged_node_runtime',
+  ]) {
+    assert.match(
+      downloader,
+      new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `falta ${required}`
+    );
+  }
+
+  assert.match(downloader, /extract_zip\(\s*&tmp_file,\s*&stage_dir\s*\)/);
+  assert.match(downloader, /extract_tar\(\s*&tmp_file,\s*&stage_dir\s*\)/);
+  assert.doesNotMatch(
+    downloader,
+    /extract_(?:zip|tar)\(\s*&tmp_file,\s*&runtimes_dir\s*\)/
+  );
+  assert.doesNotMatch(downloader, /remove_dir_all\(&node_dir\)/);
+
+  assert.ok(downloader.indexOf('verify_sha256') < downloader.indexOf('extract_'));
+  assert.ok(downloader.indexOf('extract_') < downloader.indexOf('validate_node_runtime'));
+  assert.ok(
+    downloader.indexOf('validate_node_runtime') <
+      downloader.indexOf('activate_staged_node_runtime')
+  );
+
+  const validatorStart = runtimes.indexOf('fn validate_node_runtime');
+  const activationStart = runtimes.indexOf(
+    'fn activate_staged_node_runtime',
+    validatorStart
+  );
+  const extractionStart = runtimes.indexOf(
+    'fn extract_zip',
+    activationStart
+  );
+  assert.ok(validatorStart >= 0 && activationStart > validatorStart);
+  assert.ok(extractionStart > activationStart);
+
+  const validator = runtimes.slice(validatorStart, activationStart);
+  const activation = runtimes.slice(activationStart, extractionStart);
+  assert.match(validator, /node_exe/);
+  assert.match(validator, /Command::new\(&node_exe\)/);
+  assert.match(validator, /--version/);
+  assert.match(validator, /node_version_text_matches_expected/);
+  assert.match(runtimes, /const NODE_VERSION:\s*&str\s*=\s*"22\.13\.0"/);
+  assert.doesNotMatch(
+    validator,
+    /portable_node_exe\(\)|Command::new\("node"\)|which|where\.exe|global_node_available/
+  );
+  assert.match(activation, /rename\(node_dir,\s*backup_dir\)/);
+  assert.match(activation, /rename\(staged_node,\s*node_dir\)/);
+  assert.match(activation, /rename\(backup_dir,\s*node_dir\)/);
+  assert.doesNotMatch(
+    activation,
+    /extract_|reqwest|verify_sha256|Command::new/
+  );
 });
 
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
