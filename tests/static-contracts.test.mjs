@@ -1669,6 +1669,86 @@ test('Mermaid CLI se detecta únicamente desde el Node portable administrado', a
   );
 });
 
+test('Node portable nunca se activa sin checksum SHA-256 verificado', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const downloadStart = runtimes.indexOf(
+    'pub fn download_portable_node('
+  );
+  const downloadEnd = runtimes.indexOf(
+    '// ==================== PYTHON RUNTIME ====================',
+    downloadStart
+  );
+  assert.ok(
+    downloadStart >= 0 && downloadEnd > downloadStart,
+    'debe poder aislarse download_portable_node'
+  );
+  const downloader = runtimes.slice(downloadStart, downloadEnd);
+
+  for (const required of [
+    'fetch_node_checksum()',
+    'verify_sha256',
+    'extract_zip',
+    'extract_tar',
+  ]) {
+    assert.match(
+      downloader,
+      new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `falta ${required}`
+    );
+  }
+
+  assert.ok(
+    downloader.indexOf('fetch_node_checksum()') <
+      downloader.indexOf('verify_sha256'),
+    'el checksum debe obtenerse antes de verificarlo'
+  );
+  assert.ok(
+    downloader.indexOf('verify_sha256') <
+      downloader.indexOf('extract_zip'),
+    'la verificación debe ocurrir antes de extraer'
+  );
+  assert.ok(
+    downloader.indexOf('verify_sha256') <
+      downloader.indexOf('remove_dir_all(&node_dir)'),
+    'la verificación debe ocurrir antes de reemplazar el runtime anterior'
+  );
+
+  assert.doesNotMatch(
+    downloader,
+    /fetch_node_checksum\(\)\.unwrap_or_default\(\)|if\s*!expected_checksum\.is_empty\(\)|unwrap_or_default\(\)/
+  );
+
+  const parserStart = runtimes.indexOf(
+    'fn node_checksum_from_manifest'
+  );
+  const fetchStart = runtimes.indexOf(
+    'fn fetch_node_checksum()'
+  );
+  const skillRuntimeStart = runtimes.indexOf(
+    '// ==================== SKILL RUNTIME ===================='
+  );
+  assert.ok(
+    parserStart >= 0 && fetchStart > parserStart,
+    'debe existir un parser puro de checksum'
+  );
+  assert.ok(
+    skillRuntimeStart > fetchStart,
+    'debe poder aislarse fetch_node_checksum'
+  );
+
+  const parser = runtimes.slice(parserStart, fetchStart);
+  const fetcher = runtimes.slice(fetchStart, skillRuntimeStart);
+  assert.match(parser, /is_ascii_hexdigit/);
+  assert.match(parser, /Checksum duplicado/);
+  assert.match(parser, /Checksum no encontrado/);
+  assert.match(fetcher, /node_checksum_from_manifest/);
+  assert.match(fetcher, /error_for_status\(\)/);
+});
+
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([

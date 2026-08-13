@@ -125,13 +125,16 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
     drop(file);
 
     emit_progress(app, "verifying", 100.0, "Verificando integridad del archivo...");
-    let expected_checksum = fetch_node_checksum().unwrap_or_default();
-    if !expected_checksum.is_empty() {
-        verify_sha256(&tmp_file, &expected_checksum).map_err(|e| {
-            let _ = fs::remove_file(&tmp_file);
-            e
-        })?;
-    }
+    let expected_checksum = fetch_node_checksum().map_err(|error| {
+        let _ = fs::remove_file(&tmp_file);
+        emit_progress(app, "error", 100.0, &error);
+        error
+    })?;
+    verify_sha256(&tmp_file, &expected_checksum).map_err(|error| {
+        let _ = fs::remove_file(&tmp_file);
+        emit_progress(app, "error", 100.0, &error);
+        error
+    })?;
 
     emit_progress(app, "extracting", 100.0, "Extrayendo Node.js...");
 
@@ -839,7 +842,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_managed_node_cli_version_command, build_managed_npm_install_command, install_npm_packages, managed_node_runtime_path, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
+    use super::{build_managed_node_cli_version_command, build_managed_npm_install_command, install_npm_packages, managed_node_runtime_path, node_checksum_from_manifest, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -850,6 +853,91 @@ mod tests {
         let path = managed_node_runtime_path().unwrap();
         let entries: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
         assert_eq!(entries, vec![paths::portable_node_bin_dir()]);
+    }
+
+    #[test]
+    fn node_checksum_manifest_resolves_exact_asset() {
+        let manifest = format!(
+            "{}  node-v22.13.0-win-x64.zip\n{}  node-v22.13.0-darwin-arm64.tar.gz\n",
+            "a".repeat(64),
+            "b".repeat(64),
+        );
+
+        assert_eq!(
+            node_checksum_from_manifest(&manifest, "node-v22.13.0-darwin-arm64.tar.gz")
+                .unwrap(),
+            "b".repeat(64)
+        );
+    }
+
+    #[test]
+    fn node_checksum_manifest_rejects_missing_asset() {
+        let manifest = format!("{}  node-v22.13.0-win-x64.zip\n", "a".repeat(64));
+        let error = node_checksum_from_manifest(&manifest, "node-v22.13.0-linux-x64.tar.xz")
+            .unwrap_err();
+
+        assert!(error.contains("Checksum no encontrado"));
+    }
+
+    #[test]
+    fn node_checksum_manifest_rejects_malformed_sha256() {
+        let short = node_checksum_from_manifest(
+            "abc123  node-v22.13.0-win-x64.zip\n",
+            "node-v22.13.0-win-x64.zip",
+        )
+        .unwrap_err();
+        let non_hex = node_checksum_from_manifest(
+            &format!("{}  node-v22.13.0-win-x64.zip\n", "g".repeat(64)),
+            "node-v22.13.0-win-x64.zip",
+        )
+        .unwrap_err();
+
+        assert!(short.contains("Checksum SHA-256 inválido"));
+        assert!(non_hex.contains("Checksum SHA-256 inválido"));
+    }
+
+    #[test]
+    fn node_checksum_manifest_rejects_duplicate_asset() {
+        let manifest = format!(
+            "{}  node-v22.13.0-win-x64.zip\n{}  node-v22.13.0-win-x64.zip\n",
+            "a".repeat(64),
+            "b".repeat(64),
+        );
+        let error = node_checksum_from_manifest(&manifest, "node-v22.13.0-win-x64.zip")
+            .unwrap_err();
+
+        assert!(error.contains("Checksum duplicado"));
+    }
+
+    #[test]
+    fn verify_sha256_accepts_matching_digest() {
+        let path = std::env::temp_dir().join(format!(
+            "jintia-node-checksum-matching-{}",
+            std::process::id()
+        ));
+        fs::write(&path, []).unwrap();
+
+        let result = verify_sha256(
+            &path,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        );
+        let _ = fs::remove_file(&path);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn verify_sha256_rejects_mismatch() {
+        let path = std::env::temp_dir().join(format!(
+            "jintia-node-checksum-mismatch-{}",
+            std::process::id()
+        ));
+        fs::write(&path, []).unwrap();
+
+        let result = verify_sha256(&path, &"a".repeat(64));
+        let _ = fs::remove_file(&path);
+
+        assert!(result.unwrap_err().contains("Checksum inválido"));
     }
 
     #[test]
@@ -1402,9 +1490,37 @@ fn verify_sha256(file_path: &std::path::Path, expected_hex: &str) -> Result<(), 
     Ok(())
 }
 
+fn node_checksum_from_manifest(manifest: &str, filename: &str) -> Result<String, String> {
+    let mut checksum = None;
+
+    for line in manifest.lines() {
+        let Some((candidate, candidate_filename)) = line.trim_end().split_once("  ") else {
+            continue;
+        };
+
+        if candidate_filename.trim() != filename {
+            continue;
+        }
+
+        if checksum.is_some() {
+            return Err(format!("Checksum duplicado para {filename}"));
+        }
+
+        if candidate.len() != 64 || !candidate.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!("Checksum SHA-256 inválido para {filename}"));
+        }
+
+        checksum = Some(candidate.to_ascii_lowercase());
+    }
+
+    checksum.ok_or_else(|| format!("Checksum no encontrado para {filename}"))
+}
+
 fn fetch_node_checksum() -> Result<String, String> {
     let url = format!("https://nodejs.org/dist/v{NODE_VERSION}/SHASUMS256.txt");
     let text = reqwest::blocking::get(&url)
+        .map_err(|e| format!("Error descargando checksums: {e}"))?
+        .error_for_status()
         .map_err(|e| format!("Error descargando checksums: {e}"))?
         .text()
         .map_err(|e| format!("Error leyendo checksums: {e}"))?;
@@ -1412,16 +1528,9 @@ fn fetch_node_checksum() -> Result<String, String> {
     let filename = node_download_url()
         .rsplit('/')
         .next()
-        .unwrap_or("");
+        .ok_or_else(|| "No se pudo determinar el archivo de Node.js".to_string())?;
 
-    for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(2, "  ").collect();
-        if parts.len() == 2 && parts[1].trim() == filename {
-            return Ok(parts[0].trim().to_string());
-        }
-    }
-
-    Err(format!("Checksum no encontrado para {filename}"))
+    node_checksum_from_manifest(&text, filename)
 }
 
 // ==================== SKILL RUNTIME ====================
