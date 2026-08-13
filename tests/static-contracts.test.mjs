@@ -2243,6 +2243,66 @@ test('Python administrado está disponible en Windows y macOS sin instaladores g
   );
 });
 
+test('Python staged exige exactamente la versión administrada antes de activarse', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const validatorStart = runtimes.indexOf('fn validate_python_runtime');
+  const validatorEnd = runtimes.indexOf(
+    'fn activate_staged_python_runtime',
+    validatorStart
+  );
+  assert.ok(validatorStart >= 0 && validatorEnd > validatorStart);
+  const validator = runtimes.slice(validatorStart, validatorEnd);
+
+  const helperStart = runtimes.indexOf(
+    'fn python_version_text_matches_expected'
+  );
+  const helperEnd = runtimes.indexOf(
+    'fn activate_staged_python_runtime',
+    helperStart
+  );
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const helper = runtimes.slice(helperStart, helperEnd);
+
+  for (const required of [
+    'Command::new(&python_exe)',
+    '"--version"',
+    'version_out.status.success()',
+    'python_version_text_matches_expected',
+    '"-m", "pip", "--version"',
+    'pip_out.status.success()',
+  ]) {
+    assert.match(
+      validator,
+      new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `falta ${required}`
+    );
+  }
+
+  assert.match(helper, /PYTHON_VERSION/);
+  assert.match(helper, /format!/);
+  assert.match(helper, /\.trim\(\)/);
+  assert.match(helper, /==/);
+  assert.doesNotMatch(helper, /starts_with|contains|ends_with|Python 3\.13\./);
+  assert.doesNotMatch(validator, /starts_with\("Python 3\.13\."\)/);
+
+  assert.ok(
+    validator.indexOf('version_out.status.success()') <
+      validator.indexOf('python_version_text_matches_expected')
+  );
+  const pipProbeIndex = validator.indexOf(
+    '.args(["-m", "pip", "--version"])'
+  );
+  assert.ok(pipProbeIndex >= 0);
+  assert.ok(
+    validator.indexOf('python_version_text_matches_expected') <
+      pipProbeIndex
+  );
+});
+
 test('el runtime Python pagina los assets de la release fija', async () => {
   const runtimes = await readFile(
     new URL(

@@ -601,6 +601,14 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
         .output()
         .map_err(|e| format!("No se pudo ejecutar python --version: {e}"))?;
 
+    if !version_out.status.success() {
+        let stderr = String::from_utf8_lossy(&version_out.stderr);
+        return Err(format!(
+            "El Python extraído no pudo informar su versión: {}",
+            stderr.trim()
+        ));
+    }
+
     let version_text = String::from_utf8_lossy(
         if version_out.stdout.is_empty() {
             &version_out.stderr
@@ -609,7 +617,7 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
         }
     );
 
-    if !version_text.trim().starts_with("Python 3.13.") {
+    if !python_version_text_matches_expected(&version_text) {
         return Err(format!(
             "Versión de Python inesperada: {}",
             version_text.trim()
@@ -627,6 +635,10 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn python_version_text_matches_expected(text: &str) -> bool {
+    text.trim() == format!("Python {PYTHON_VERSION}")
 }
 
 fn activate_staged_python_runtime(
@@ -1035,7 +1047,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1353,6 +1365,32 @@ mod tests {
         assert!(!node_version_text_matches_expected("v21.0.0"));
         assert!(!node_version_text_matches_expected("v22.13.1"));
         assert!(!node_version_text_matches_expected("22.13.0"));
+    }
+
+    #[test]
+    fn python_version_text_accepts_exact_managed_version() {
+        assert!(python_version_text_matches_expected("Python 3.13.15"));
+        assert!(python_version_text_matches_expected(" Python 3.13.15\n"));
+    }
+
+    #[test]
+    fn python_version_text_rejects_unexpected_patch_version() {
+        assert!(!python_version_text_matches_expected("Python 3.13.14"));
+        assert!(!python_version_text_matches_expected("Python 3.13.16"));
+        assert!(!python_version_text_matches_expected("Python 3.13.0"));
+    }
+
+    #[test]
+    fn python_version_text_rejects_other_python_series() {
+        assert!(!python_version_text_matches_expected("Python 3.12.15"));
+        assert!(!python_version_text_matches_expected("Python 3.14.0"));
+    }
+
+    #[test]
+    fn python_version_text_rejects_non_exact_version_output() {
+        assert!(!python_version_text_matches_expected("Python 3.13.15rc1"));
+        assert!(!python_version_text_matches_expected("Python 3.13.15 custom"));
+        assert!(!python_version_text_matches_expected("3.13.15"));
     }
 
     #[test]
