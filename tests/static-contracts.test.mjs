@@ -1408,7 +1408,7 @@ test('el perfil disciplinar se instala después de guardar la disciplina', async
   );
 });
 
-test('los paquetes Node disciplinares usan el runtime portable y su prefix', async () => {
+test('los paquetes Node disciplinares usan exclusivamente Node npm CLI y PATH administrados', async () => {
   const runtimes = await readFile(
     new URL('src-tauri/src/runtimes.rs', root),
     'utf8'
@@ -1481,12 +1481,22 @@ test('los paquetes Node disciplinares usan el runtime portable y su prefix', asy
 
   assert.match(
     builder,
+    /\.args\(packages\)/
+  );
+
+  assert.match(
+    builder,
     /\.arg\(npm_cli\)[\s\S]*\.arg\("install"\)[\s\S]*\.arg\("--global"\)[\s\S]*\.arg\("--prefix"\)[\s\S]*\.arg\(prefix\)[\s\S]*\.env\("PATH",\s*managed_path\)/
   );
 
   assert.doesNotMatch(
     fn,
     /var_os\("PATH"\)|split_paths|base_path|path_entries|patched_path|npm_exe|Command::new\("cmd"\)|npm\.cmd|cmd.*\/C|sh.*-c|bash.*-c|powershell/
+  );
+
+  assert.doesNotMatch(
+    builder,
+    /var_os\("PATH"\)|split_paths|base_path|path_entries|patched_path|Command::new\("cmd"\)|npm\.cmd|cmd.*\/C|sh.*-c|bash.*-c|powershell/
   );
 });
 
