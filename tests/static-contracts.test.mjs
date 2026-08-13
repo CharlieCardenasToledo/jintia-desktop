@@ -1529,6 +1529,70 @@ test('los paquetes Node disciplinares usan exclusivamente Node npm CLI y PATH ad
   );
 });
 
+test('los paquetes pip disciplinares usan exclusivamente Python y PATH administrados', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const installerStart = runtimes.indexOf(
+    'pub fn install_pip_packages'
+  );
+  const installerEnd = runtimes.indexOf(
+    '// ==================== NPM PACKAGES ====================',
+    installerStart
+  );
+  assert.ok(installerStart >= 0 && installerEnd > installerStart);
+  const pipInstaller = runtimes.slice(installerStart, installerEnd);
+
+  const builderStart = runtimes.indexOf(
+    'fn build_managed_pip_install_command'
+  );
+  const builderEnd = runtimes.indexOf(
+    '// ==================== NPM PACKAGES ====================',
+    builderStart
+  );
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = runtimes.slice(builderStart, builderEnd);
+
+  const pathStart = runtimes.indexOf(
+    'fn managed_python_runtime_path'
+  );
+  const pathEnd = runtimes.indexOf(
+    'fn build_managed_pip_install_command',
+    pathStart
+  );
+  assert.ok(pathStart >= 0 && pathEnd > pathStart);
+  const managedPath = runtimes.slice(pathStart, pathEnd);
+
+  for (const required of [
+    'portable_python_exe()',
+    'managed_python_runtime_path()',
+    'build_managed_pip_install_command',
+    '.output()',
+    'pip install falló',
+  ]) {
+    assert.match(
+      pipInstaller,
+      new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `falta ${required}`
+    );
+  }
+
+  assert.match(builder, /Command::new\(python\)/);
+  assert.match(builder, /\.args\(\["-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
+  assert.match(builder, /\.args\(packages\)/);
+  assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
+  assert.match(managedPath, /portable_python_prefix\(\)/);
+  assert.match(managedPath, /std::env::join_paths/);
+
+  const forbidden = /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|base_path|path_entries|patched_path|Command::new\("pip(?:3)?"\)|Command::new\("python(?:3)?"\)|Command::new\("cmd"\)|powershell|sh\s*-c|bash\s*-c|zsh\s*-c|\bwhich\b|where\.exe/;
+  assert.doesNotMatch(pipInstaller, forbidden);
+  assert.doesNotMatch(builder, forbidden);
+  assert.doesNotMatch(builder, /packages\.join|format!\([^)]*packages/);
+  assert.doesNotMatch(managedPath, /split_paths|HOME|USERPROFILE|var_os\("PATH"\)|std::env::var\("PATH"\)/);
+});
+
 test('Mermaid CLI se detecta únicamente desde el Node portable administrado', async () => {
   const [runtimes, course] =
     await Promise.all([

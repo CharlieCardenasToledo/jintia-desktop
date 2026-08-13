@@ -819,9 +819,12 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
     if !python_exe.is_file() {
         return Err("Python portable no está instalado.".to_string());
     }
-    let output = Command::new(&python_exe)
-        .args(["-m", "pip", "install", "--quiet"])
-        .args(packages)
+    let managed_path = managed_python_runtime_path()?;
+    let output = build_managed_pip_install_command(
+        &python_exe,
+        &managed_path,
+        packages,
+    )
         .output()
         .map_err(|e| format!("Error ejecutando pip: {e}"))?;
     if !output.status.success() {
@@ -829,6 +832,31 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
         return Err(format!("pip install falló: {stderr}"));
     }
     Ok(())
+}
+
+fn managed_python_runtime_path() -> Result<OsString, String> {
+    let prefix = paths::portable_python_prefix();
+    let entries = if cfg!(target_os = "windows") {
+        vec![prefix.clone(), prefix.join("Scripts")]
+    } else {
+        vec![prefix.join("bin")]
+    };
+
+    std::env::join_paths(entries)
+        .map_err(|error| format!("No se pudo construir el PATH del Python administrado: {error}"))
+}
+
+fn build_managed_pip_install_command(
+    python: &std::path::Path,
+    managed_path: &std::ffi::OsStr,
+    packages: &[String],
+) -> Command {
+    let mut command = Command::new(python);
+    command
+        .args(["-m", "pip", "install", "--quiet"])
+        .args(packages)
+        .env("PATH", managed_path);
+    command
 }
 
 // ==================== NPM PACKAGES ====================
@@ -986,7 +1014,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, install_npm_packages, managed_node_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -999,6 +1027,78 @@ mod tests {
         let path = managed_node_runtime_path().unwrap();
         let entries: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
         assert_eq!(entries, vec![paths::portable_node_bin_dir()]);
+    }
+
+    #[test]
+    fn managed_python_runtime_path_contains_only_portable_python_dirs() {
+        let path = managed_python_runtime_path().unwrap();
+        let entries: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+        let prefix = paths::portable_python_prefix();
+        let expected = if cfg!(target_os = "windows") {
+            vec![prefix.clone(), prefix.join("Scripts")]
+        } else {
+            vec![prefix.join("bin")]
+        };
+
+        assert_eq!(entries, expected);
+    }
+
+    #[test]
+    fn managed_pip_command_uses_portable_python_module() {
+        let packages = vec!["pkg-a".to_string()];
+        let command = build_managed_pip_install_command(
+            std::path::Path::new("managed-python"),
+            std::ffi::OsStr::new("managed-python-only"),
+            &packages,
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-python"));
+        assert_eq!(&args[..4], ["-m", "pip", "install", "--quiet"]);
+    }
+
+    #[test]
+    fn managed_pip_command_uses_only_managed_path() {
+        let command = build_managed_pip_install_command(
+            std::path::Path::new("managed-python"),
+            std::ffi::OsStr::new("managed-python-only"),
+            &[],
+        );
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, value)| value)
+            .expect("PATH administrado");
+
+        assert_eq!(path, std::ffi::OsStr::new("managed-python-only"));
+        assert!(!path.to_string_lossy().contains("host-only-bin"));
+    }
+
+    #[test]
+    fn managed_pip_command_preserves_package_arguments() {
+        let packages = vec![
+            "package-a>=1".to_string(),
+            "package-b[extra]==2.0".to_string(),
+        ];
+        let command = build_managed_pip_install_command(
+            std::path::Path::new("managed-python"),
+            std::ffi::OsStr::new("managed-python-only"),
+            &packages,
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(&args[4..], ["package-a>=1", "package-b[extra]==2.0"]);
+    }
+
+    #[test]
+    fn install_pip_packages_empty_input_is_noop() {
+        assert!(install_pip_packages(&[]).is_ok());
     }
 
     #[test]
