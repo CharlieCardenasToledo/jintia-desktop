@@ -988,6 +988,62 @@ fn validate_notebooklm_browser(node: &std::path::Path, package_dir: &std::path::
     validate_browser_status(&status, managed_root)
 }
 
+fn activate_staged_notebooklm_mcp<F>(
+    stage: &std::path::Path,
+    active: &std::path::Path,
+    backup: &std::path::Path,
+    validate_active: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&std::path::Path) -> Result<(), String>,
+{
+    let had_previous_runtime = active.exists();
+
+    if had_previous_runtime {
+        fs::rename(active, backup)
+            .map_err(|e| format!("Error preparando reemplazo de NotebookLM MCP: {e}"))?;
+    }
+
+    if let Err(activation_error) = fs::rename(stage, active) {
+        if had_previous_runtime {
+            if let Err(restore_error) = fs::rename(backup, active) {
+                return Err(format!(
+                    "Error activando NotebookLM MCP: {activation_error}; además no se pudo restaurar el runtime anterior: {restore_error}"
+                ));
+            }
+        }
+
+        return Err(format!("Error activando NotebookLM MCP: {activation_error}"));
+    }
+
+    if let Err(validation_error) = validate_active(active) {
+        if let Err(cleanup_error) = fs::remove_dir_all(active) {
+            return Err(format!(
+                "NotebookLM MCP no pasó validación post-activación: {validation_error}; además no se pudo retirar el runtime inválido: {cleanup_error}; el backup anterior se conserva en {}",
+                backup.display()
+            ));
+        }
+
+        if had_previous_runtime {
+            if let Err(restore_error) = fs::rename(backup, active) {
+                return Err(format!(
+                    "NotebookLM MCP no pasó validación post-activación: {validation_error}; además no se pudo restaurar el runtime anterior: {restore_error}"
+                ));
+            }
+        }
+
+        return Err(format!(
+            "NotebookLM MCP no pasó validación post-activación: {validation_error}"
+        ));
+    }
+
+    if had_previous_runtime && backup.exists() {
+        let _ = fs::remove_dir_all(backup);
+    }
+
+    Ok(())
+}
+
 pub fn portable_notebooklm_mcp_installed_for(contract: &crate::release::ManagedMcpContract) -> bool {
     let package_dir = portable_notebooklm_mcp_package_dir_for(&contract.package);
     let package = package_dir.join("package.json");
@@ -1030,16 +1086,21 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
         validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "status", &contract)?;
         let active = paths::portable_notebooklm_mcp_prefix();
         let backup = root.join(format!(".notebooklm-mcp-backup-{}", paths::timestamp()));
-        if active.exists() { fs::rename(&active, &backup).map_err(|e| e.to_string())?; }
-        if let Err(error) = fs::rename(&stage, &active) { if backup.exists() { let _ = fs::rename(&backup, &active); } return Err(error.to_string()); }
-        let active_package = notebooklm_package_dir(&active, &contract.package);
-        if let Err(error) = validate_notebooklm_browser(&node, &active_package, &active.join("node_modules"), "status", &contract) {
-            let _ = fs::remove_dir_all(&active);
-            if backup.exists() { let _ = fs::rename(&backup, &active); }
-            return Err(error);
-        }
-        if backup.exists() { let _ = fs::remove_dir_all(backup); }
-        Ok(())
+        activate_staged_notebooklm_mcp(
+            &stage,
+            &active,
+            &backup,
+            |active_root| {
+                let active_package = notebooklm_package_dir(active_root, &contract.package);
+                validate_notebooklm_browser(
+                    &node,
+                    &active_package,
+                    &active_root.join("node_modules"),
+                    "status",
+                    &contract,
+                )
+            },
+        )
     })();
     if result.is_err() { let _ = fs::remove_dir_all(&stage); }
     result
@@ -1047,7 +1108,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1366,6 +1427,109 @@ mod tests {
         assert!(python_dir.join("marker-old").is_file());
         assert!(!backup_dir.exists());
         assert!(!python_dir.join("marker-new").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn notebooklm_activation_fixture(name: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "jintia-notebooklm-activation-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn notebooklm_activation_installs_staged_runtime_when_live_is_absent() {
+        let root = notebooklm_activation_fixture("first");
+        let stage = root.join("stage");
+        let active = root.join("active");
+        let backup = root.join("backup");
+        fs::create_dir_all(&stage).unwrap();
+        fs::write(stage.join("marker-new"), "new").unwrap();
+        activate_staged_notebooklm_mcp(&stage, &active, &backup, |_active| Ok(())).unwrap();
+        assert!(active.join("marker-new").is_file());
+        assert!(!stage.exists());
+        assert!(!backup.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notebooklm_activation_replaces_existing_runtime_after_validation() {
+        let root = notebooklm_activation_fixture("replace");
+        let stage = root.join("stage");
+        let active = root.join("active");
+        let backup = root.join("backup");
+        fs::create_dir_all(&stage).unwrap();
+        fs::create_dir_all(&active).unwrap();
+        fs::write(stage.join("marker-new"), "new").unwrap();
+        fs::write(active.join("marker-old"), "old").unwrap();
+        activate_staged_notebooklm_mcp(&stage, &active, &backup, |active_root| {
+            assert!(active_root.join("marker-new").is_file());
+            Ok(())
+        })
+        .unwrap();
+        assert!(active.join("marker-new").is_file());
+        assert!(!active.join("marker-old").exists());
+        assert!(!backup.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notebooklm_activation_restores_previous_runtime_when_stage_move_fails() {
+        let root = notebooklm_activation_fixture("stage-rollback");
+        let stage = root.join("missing-stage");
+        let active = root.join("active");
+        let backup = root.join("backup");
+        fs::create_dir_all(&active).unwrap();
+        fs::write(active.join("marker-old"), "old").unwrap();
+        let error = activate_staged_notebooklm_mcp(&stage, &active, &backup, |_active| Ok(())).unwrap_err();
+        assert!(error.contains("Error activando NotebookLM MCP"));
+        assert!(active.join("marker-old").is_file());
+        assert!(!backup.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notebooklm_activation_restores_previous_runtime_when_active_validation_fails() {
+        let root = notebooklm_activation_fixture("validation-rollback");
+        let stage = root.join("stage");
+        let active = root.join("active");
+        let backup = root.join("backup");
+        fs::create_dir_all(&stage).unwrap();
+        fs::create_dir_all(&active).unwrap();
+        fs::write(stage.join("marker-new"), "new").unwrap();
+        fs::write(active.join("marker-old"), "old").unwrap();
+        let error = activate_staged_notebooklm_mcp(&stage, &active, &backup, |_active| {
+            Err("validation failed".to_string())
+        })
+        .unwrap_err();
+        assert!(error.contains("validation failed"));
+        assert!(active.join("marker-old").is_file());
+        assert!(!active.join("marker-new").exists());
+        assert!(!backup.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notebooklm_activation_removes_invalid_first_install() {
+        let root = notebooklm_activation_fixture("invalid-first");
+        let stage = root.join("stage");
+        let active = root.join("active");
+        let backup = root.join("backup");
+        fs::create_dir_all(&stage).unwrap();
+        fs::write(stage.join("marker-new"), "new").unwrap();
+        let error = activate_staged_notebooklm_mcp(&stage, &active, &backup, |_active| {
+            Err("validation failed".to_string())
+        })
+        .unwrap_err();
+        assert!(error.contains("validation failed"));
+        assert!(!active.exists());
+        assert!(!backup.exists());
         fs::remove_dir_all(root).unwrap();
     }
 

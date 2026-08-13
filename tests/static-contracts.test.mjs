@@ -2030,6 +2030,41 @@ test('Python portable restaura explícitamente el runtime anterior si falla la a
   );
 });
 
+test('NotebookLM MCP restaura explícitamente el runtime anterior si falla la activación', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const helperStart = runtimes.indexOf('fn activate_staged_notebooklm_mcp');
+  const helperEnd = runtimes.indexOf('\npub fn portable_notebooklm_mcp_installed_for', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const helper = runtimes.slice(helperStart, helperEnd);
+
+  assert.match(helper, /active\.exists\(\)/);
+  assert.match(helper, /fs::rename\(active, backup\)/);
+  assert.match(helper, /fs::rename\(stage, active\)/);
+  assert.match(helper, /validate_active\(active\)/);
+  assert.match(helper, /fs::remove_dir_all\(active\)/);
+  assert.match(helper, /fs::rename\(backup, active\)/);
+  assert.match(helper, /restore_error/);
+  assert.match(helper, /Error activando NotebookLM MCP/);
+  assert.match(helper, /no se pudo restaurar el runtime anterior/);
+
+  assert.doesNotMatch(helper, /let _\s*=\s*fs::rename\(backup, active\)/s);
+  assert.doesNotMatch(helper, /let _\s*=\s*fs::remove_dir_all\(active\)/s);
+
+  const installerStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
+  const installerEnd = runtimes.indexOf('\n#[cfg(test)]', installerStart);
+  assert.ok(installerStart >= 0 && installerEnd > installerStart);
+  const installer = runtimes.slice(installerStart, installerEnd);
+  assert.match(installer, /activate_staged_notebooklm_mcp/);
+  assert.match(installer, /validate_notebooklm_browser/);
+  assert.match(installer, /"status"/);
+  assert.doesNotMatch(installer, /fs::rename\(\s*&backup,\s*&active/s);
+  assert.doesNotMatch(installer, /fs::rename\(\s*&stage,\s*&active/s);
+});
+
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([
