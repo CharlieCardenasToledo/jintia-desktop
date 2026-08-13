@@ -1434,6 +1434,20 @@ test('los paquetes Node disciplinares usan el runtime portable y su prefix', asy
   );
 
   const fn = runtimes.slice(start, end);
+  const builderStart = runtimes.indexOf(
+    'fn build_managed_npm_install_command'
+  );
+  const builderEnd = runtimes.indexOf(
+    'pub fn install_vivliostyle',
+    builderStart
+  );
+
+  assert.ok(
+    builderStart >= 0 && builderEnd > builderStart,
+    'debe poder aislarse el builder del command npm administrado'
+  );
+
+  const builder = runtimes.slice(builderStart, builderEnd);
 
   assert.match(
     fn,
@@ -1447,32 +1461,32 @@ test('los paquetes Node disciplinares usan el runtime portable y su prefix', asy
 
   assert.match(
     fn,
-    /portable_node_bin_dir\(\)/
+    /portable_npm_cli\(\)/
   );
 
   assert.match(
     fn,
-    /\.arg\("--prefix"\)/
+    /managed_node_runtime_path\(\)/
   );
 
   assert.match(
     fn,
-    /\.arg\(&prefix\)/
+    /build_managed_npm_install_command/
   );
 
   assert.match(
-    fn,
-    /\.env\("PATH",\s*&patched_path\)/
+    builder,
+    /Command::new\(node\)/
   );
 
   assert.match(
-    fn,
-    /Command::new\(&node\)/
+    builder,
+    /\.arg\(npm_cli\)[\s\S]*\.arg\("install"\)[\s\S]*\.arg\("--global"\)[\s\S]*\.arg\("--prefix"\)[\s\S]*\.arg\(prefix\)[\s\S]*\.env\("PATH",\s*managed_path\)/
   );
 
   assert.doesNotMatch(
     fn,
-    /Command::new\(&npm\)/
+    /var_os\("PATH"\)|split_paths|base_path|path_entries|patched_path|npm_exe|Command::new\("cmd"\)|npm\.cmd|cmd.*\/C|sh.*-c|bash.*-c|powershell/
   );
 });
 

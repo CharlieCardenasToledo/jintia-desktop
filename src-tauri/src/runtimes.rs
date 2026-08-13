@@ -839,7 +839,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{managed_node_runtime_path, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
+    use super::{build_managed_npm_install_command, install_npm_packages, managed_node_runtime_path, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -850,6 +850,76 @@ mod tests {
         let path = managed_node_runtime_path().unwrap();
         let entries: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
         assert_eq!(entries, vec![paths::portable_node_bin_dir()]);
+    }
+
+    #[test]
+    fn disciplinary_npm_command_uses_managed_node_and_npm_cli() {
+        let packages = vec!["pkg-a".to_string(), "@scope/pkg-b".to_string()];
+        let managed_path = std::ffi::OsString::from("managed-bin");
+        let command = build_managed_npm_install_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-prefix"),
+            &managed_path,
+            &packages,
+        );
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
+        let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
+        assert_eq!(args, vec![
+            std::ffi::OsStr::new("managed-npm-cli.js"),
+            std::ffi::OsStr::new("install"),
+            std::ffi::OsStr::new("--global"),
+            std::ffi::OsStr::new("--prefix"),
+            std::ffi::OsStr::new("managed-prefix"),
+            std::ffi::OsStr::new("pkg-a"),
+            std::ffi::OsStr::new("@scope/pkg-b"),
+        ]);
+    }
+
+    #[test]
+    fn disciplinary_npm_command_uses_only_managed_path() {
+        let managed_path = std::ffi::OsString::from("managed-only-bin");
+        let command = build_managed_npm_install_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-prefix"),
+            &managed_path,
+            &[],
+        );
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, value)| value)
+            .expect("PATH must be explicitly managed");
+        assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
+        assert!(!path.to_string_lossy().contains("host-only-bin"));
+    }
+
+    #[test]
+    fn disciplinary_npm_command_preserves_package_arguments() {
+        let packages = vec!["@scope/pkg@1.2.3".to_string(), "plain-package@4.5.6".to_string()];
+        let command = build_managed_npm_install_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-prefix"),
+            std::ffi::OsStr::new("managed-bin"),
+            &packages,
+        );
+        let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
+        assert_eq!(&args[5..], [
+            std::ffi::OsStr::new("@scope/pkg@1.2.3"),
+            std::ffi::OsStr::new("plain-package@4.5.6"),
+        ]);
+        assert_ne!(command.get_program(), std::ffi::OsStr::new("npm"));
+        assert_ne!(command.get_program(), std::ffi::OsStr::new("npm.cmd"));
+        assert_ne!(command.get_program(), std::ffi::OsStr::new("cmd"));
+        assert_ne!(command.get_program(), std::ffi::OsStr::new("sh"));
+        assert_ne!(command.get_program(), std::ffi::OsStr::new("bash"));
+    }
+
+    #[test]
+    fn install_npm_packages_empty_input_is_noop() {
+        assert!(install_npm_packages(&[]).is_ok());
     }
 
     #[cfg(target_os = "windows")]
@@ -969,17 +1039,6 @@ mod tests {
         assert!(resolve_notebooklm_mcp_bin_for(&package, &contract).is_err());
         fs::remove_dir_all(root).ok();
     }
-}
-
-fn npm_exe() -> Option<std::path::PathBuf> {
-    let node_exe = paths::portable_node_exe();
-    if !node_exe.is_file() {
-        return None;
-    }
-    let npm = node_exe
-        .parent()?
-        .join(if cfg!(windows) { "npm.cmd" } else { "npm" });
-    if npm.exists() { Some(npm) } else { None }
 }
 
 pub fn resolve_vivliostyle() -> Option<PathBuf> {
@@ -1123,6 +1182,25 @@ fn managed_node_runtime_path() -> Result<OsString, String> {
         .map_err(|error| format!("No se pudo construir el PATH administrado de Node: {error}"))
 }
 
+fn build_managed_npm_install_command(
+    node: &std::path::Path,
+    npm_cli: &std::path::Path,
+    prefix: &std::path::Path,
+    managed_path: &std::ffi::OsStr,
+    packages: &[String],
+) -> Command {
+    let mut command = Command::new(node);
+    command
+        .arg(npm_cli)
+        .arg("install")
+        .arg("--global")
+        .arg("--prefix")
+        .arg(prefix)
+        .args(packages)
+        .env("PATH", managed_path);
+    command
+}
+
 pub fn install_vivliostyle() -> Result<(), String> {
     let node = paths::portable_node_exe();
     if !node.is_file() {
@@ -1168,68 +1246,28 @@ pub fn install_npm_packages(packages: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let npm = npm_exe()
-        .ok_or_else(|| "Node portable no está instalado.".to_string())?;
-
     let node = paths::portable_node_exe();
-
     if !node.is_file() {
-        return Err(
-            "El ejecutable Node portable no está disponible.".to_string()
-        );
+        return Err("El ejecutable Node portable no está disponible.".to_string());
+    }
+
+    let npm_cli = paths::portable_npm_cli();
+    if !npm_cli.is_file() {
+        return Err("El npm administrado por Jintia no está disponible.".to_string());
     }
 
     let prefix = paths::portable_node_prefix();
-    let portable_bin = paths::portable_node_bin_dir();
-
-    // Los procesos npm y sus scripts lifecycle deben resolver primero
-    // el Node y los binarios administrados por Jintia.
-    let base_path =
-        std::env::var_os("PATH").unwrap_or_default();
-
-    let mut path_entries = vec![portable_bin];
-
-    for entry in std::env::split_paths(&base_path) {
-        if !path_entries.contains(&entry) {
-            path_entries.push(entry);
-        }
-    }
-
-    let patched_path = std::env::join_paths(path_entries)
-        .map_err(|e| {
-            format!(
-                "No se pudo preparar PATH para npm portable: {e}"
-            )
-        })?;
-
-    let output = if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .arg("/C")
-            .arg(&npm)
-            .arg("install")
-            .arg("--global")
-            .arg("--prefix")
-            .arg(&prefix)
-            .args(packages)
-            .env("PATH", &patched_path)
-            .output()
-    } else {
-        // Ejecutar npm explícitamente con el Node portable evita
-        // depender de `#!/usr/bin/env node` y de un Node del sistema.
-        Command::new(&node)
-            .arg(&npm)
-            .arg("install")
-            .arg("--global")
-            .arg("--prefix")
-            .arg(&prefix)
-            .args(packages)
-            .env("PATH", &patched_path)
-            .output()
-    }
+    let managed_path = managed_node_runtime_path()?;
+    let output = build_managed_npm_install_command(
+        &node,
+        &npm_cli,
+        &prefix,
+        &managed_path,
+        packages,
+    )
+    .output()
     .map_err(|e| {
-        format!(
-            "No se pudo ejecutar npm con el runtime portable: {e}"
-        )
+        format!("No se pudo ejecutar npm con el runtime portable: {e}")
     })?;
 
     if !output.status.success() {
