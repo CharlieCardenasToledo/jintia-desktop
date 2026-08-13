@@ -979,6 +979,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn managed_node_cli_version_command_supports_vivliostyle_version() {
+        let command = build_managed_node_cli_version_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new(if cfg!(target_os = "windows") {
+                "vivliostyle.cmd"
+            } else {
+                "vivliostyle"
+            }),
+            std::ffi::OsStr::new("managed-only-bin"),
+            &["--version"],
+        );
+        let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, value)| value)
+            .expect("PATH must be explicitly managed");
+        assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
+        if cfg!(target_os = "windows") {
+            assert_eq!(command.get_program(), std::ffi::OsStr::new("cmd"));
+            assert_eq!(&args[..3], [
+                std::ffi::OsStr::new("/C"),
+                std::ffi::OsStr::new("vivliostyle.cmd"),
+                std::ffi::OsStr::new("--version"),
+            ]);
+        } else {
+            assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
+            assert_eq!(&args[..2], [
+                std::ffi::OsStr::new("vivliostyle"),
+                std::ffi::OsStr::new("--version"),
+            ]);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     fn zip_fixture(name: &str, entry: &str, bytes: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
         use std::io::Write;
@@ -1110,25 +1145,20 @@ pub fn resolve_vivliostyle() -> Option<PathBuf> {
 
 pub fn vivliostyle_version() -> Option<String> {
     let executable = resolve_vivliostyle()?;
+    let node = paths::portable_node_exe();
+    if !node.is_file() {
+        return None;
+    }
 
-    let output = if cfg!(target_os = "windows")
-        && executable
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"))
-    {
-        Command::new("cmd")
-            .arg("/C")
-            .arg(&executable)
-            .arg("--version")
-            .output()
-            .ok()?
-    } else {
-        Command::new(&executable)
-            .arg("--version")
-            .output()
-            .ok()?
-    };
+    let managed_path = managed_node_runtime_path().ok()?;
+    let output = build_managed_node_cli_version_command(
+        &node,
+        &executable,
+        &managed_path,
+        &["--version"],
+    )
+    .output()
+    .ok()?;
 
     if !output.status.success() {
         return None;

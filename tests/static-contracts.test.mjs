@@ -657,6 +657,35 @@ test('Vivliostyle se resuelve únicamente desde el runtime portable administrado
   );
 });
 
+test('Vivliostyle consulta su versión únicamente con el runtime Node administrado', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+  const versionStart = runtimes.indexOf(
+    'pub fn vivliostyle_version()'
+  );
+  const versionEnd = runtimes.indexOf(
+    'pub fn resolve_node_cli',
+    versionStart
+  );
+  assert.ok(versionStart >= 0 && versionEnd > versionStart);
+  const versionFn = runtimes.slice(versionStart, versionEnd);
+
+  assert.match(versionFn, /resolve_vivliostyle\(\)/);
+  assert.match(versionFn, /portable_node_exe\(\)/);
+  assert.match(versionFn, /managed_node_runtime_path\(\)/);
+  assert.match(
+    versionFn,
+    /build_managed_node_cli_version_command/
+  );
+  assert.match(versionFn, /\["--version"\]/);
+  assert.doesNotMatch(
+    versionFn,
+    /var_os\("PATH"\)|split_paths|base_path|path_entries|patched_path|Command::new\(&executable\)|Command::new\("node"\)|Command::new\("cmd"\)|\.arg\("\/C"\)|where\.exe|which/
+  );
+});
+
 test('el onboarding delega la prueba final a jintia self-test --json', async () => {
   const source = await readFile(
     new URL('src/onboarding.js', root),
