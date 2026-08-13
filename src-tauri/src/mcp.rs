@@ -118,9 +118,14 @@ pub(crate) fn server_matches_managed_mcp(server: &Value) -> bool {
     server_matches_paths(server, &managed.node, &managed.bin, &managed_path)
 }
 
+fn build_managed_node_version_command(node: &Path) -> Command {
+    let mut command = Command::new(node);
+    command.arg("--version").env_remove("NODE_OPTIONS");
+    command
+}
+
 fn managed_node_version(node: &std::path::Path) -> Result<Version, String> {
-    let output = Command::new(node)
-        .arg("--version")
+    let output = build_managed_node_version_command(node)
         .output()
         .map_err(|error| format!("No se pudo consultar el Node administrado: {error}"))?;
     if !output.status.success() {
@@ -1105,6 +1110,33 @@ mod tests {
         let first = server.clone();
         apply_managed_json_mcp_server(&mut server, &managed).unwrap();
         assert_eq!(server, first);
+    }
+
+    #[test]
+    fn managed_node_version_command_uses_exact_managed_node() {
+        let command = build_managed_node_version_command(Path::new("managed-node"));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
+        assert_eq!(args, [std::ffi::OsStr::new("--version")]);
+    }
+
+    #[test]
+    fn managed_node_version_command_removes_node_options() {
+        let command = build_managed_node_version_command(Path::new("managed-node"));
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn managed_node_version_command_has_only_version_argument() {
+        let command = build_managed_node_version_command(Path::new("managed-node"));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], std::ffi::OsStr::new("--version"));
     }
 
     #[test]

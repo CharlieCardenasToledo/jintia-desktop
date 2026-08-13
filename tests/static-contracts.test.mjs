@@ -2287,6 +2287,42 @@ test('La configuración JSON de NotebookLM MCP preserva campos y entorno ajenos 
   assert.doesNotMatch(configure, /root\["mcpServers"\]\["notebooklm"\]\s*=\s*managed_mcp_server_json/);
 });
 
+test('NotebookLM MCP valida la versión de Node sin heredar NODE_OPTIONS del host', async () => {
+  const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
+  const builderStart = mcp.indexOf('fn build_managed_node_version_command');
+  const builderEnd = mcp.indexOf('\nfn managed_node_version', builderStart);
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = mcp.slice(builderStart, builderEnd);
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /"--version"/);
+  assert.match(builder, /env_remove\("NODE_OPTIONS"\)/);
+  assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|Command::new\("(?:node|npm|npx)"\)|shell|current_dir|PATH/);
+
+  const runnerStart = mcp.indexOf('fn managed_node_version');
+  const runnerEnd = mcp.indexOf('\nfn parse_node_version', runnerStart);
+  assert.ok(runnerStart >= 0 && runnerEnd > runnerStart);
+  const runner = mcp.slice(runnerStart, runnerEnd);
+  assert.match(runner, /build_managed_node_version_command/);
+  assert.match(runner, /\.output\(\)/);
+  assert.match(runner, /output\.status\.success\(\)/);
+  assert.match(runner, /parse_node_version/);
+  assert.match(runner, /stdout/);
+  assert.doesNotMatch(runner, /Command::new\(node\)/);
+  assert.ok(runner.indexOf('build_managed_node_version_command') < runner.indexOf('.output()'));
+  assert.ok(runner.indexOf('.output()') < runner.indexOf('output.status.success()'));
+  assert.ok(runner.indexOf('output.status.success()') < runner.indexOf('parse_node_version'));
+
+  const validationStart = mcp.indexOf('fn validate_managed_node');
+  const validationEnd = mcp.indexOf('\npub fn configure_mcp', validationStart);
+  assert.ok(validationStart >= 0 && validationEnd > validationStart);
+  const validation = mcp.slice(validationStart, validationEnd);
+  assert.match(validation, /VersionReq::parse/);
+  assert.match(validation, /managed_node_version/);
+  assert.match(validation, /\.matches\(/);
+  assert.ok(validation.indexOf('VersionReq::parse') < validation.indexOf('managed_node_version'));
+  assert.ok(validation.indexOf('managed_node_version') < validation.indexOf('.matches('));
+});
+
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([
