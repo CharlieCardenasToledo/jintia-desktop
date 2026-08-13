@@ -988,6 +988,22 @@ fn validate_notebooklm_browser(node: &std::path::Path, package_dir: &std::path::
     validate_browser_status(&status, managed_root)
 }
 
+fn build_managed_notebooklm_npm_command(
+    node: &std::path::Path,
+    npm_cli: &std::path::Path,
+    stage: &std::path::Path,
+    managed_path: &std::ffi::OsStr,
+    args: &[&str],
+) -> Command {
+    let mut command = Command::new(node);
+    command
+        .arg(npm_cli)
+        .args(args)
+        .current_dir(stage)
+        .env("PATH", managed_path);
+    command
+}
+
 fn activate_staged_notebooklm_mcp<F>(
     stage: &std::path::Path,
     active: &std::path::Path,
@@ -1068,11 +1084,20 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let stage = root.join(format!(".notebooklm-mcp-stage-{}", paths::timestamp()));
     fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
+    let managed_path = managed_node_runtime_path()?;
     let package = serde_json::json!({"private": true, "dependencies": {contract.package.clone(): contract.version.clone()}});
     let result = (|| -> Result<(), String> {
         fs::write(stage.join("package.json"), serde_json::to_vec_pretty(&package).unwrap()).map_err(|e| e.to_string())?;
         let run = |args: &[&str]| -> Result<(), String> {
-            let output = Command::new(&node).arg(&npm).args(args).current_dir(&stage).output().map_err(|e| e.to_string())?;
+            let output = build_managed_notebooklm_npm_command(
+                &node,
+                &npm,
+                &stage,
+                &managed_path,
+                args,
+            )
+                .output()
+                .map_err(|e| e.to_string())?;
             if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).to_string()); }
             Ok(())
         };
@@ -1108,7 +1133,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1531,6 +1556,96 @@ mod tests {
         assert!(!active.exists());
         assert!(!backup.exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notebooklm_npm_command_uses_managed_node_and_npm_cli() {
+        let command = build_managed_notebooklm_npm_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-stage"),
+            std::ffi::OsStr::new("managed-bin"),
+            &["ci"],
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
+        assert_eq!(&args[..2], ["managed-npm-cli.js", "ci"]);
+    }
+
+    #[test]
+    fn notebooklm_npm_command_uses_only_managed_path() {
+        let command = build_managed_notebooklm_npm_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-stage"),
+            std::ffi::OsStr::new("managed-only-bin"),
+            &["ci"],
+        );
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, value)| value)
+            .expect("PATH administrado");
+        assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
+        assert!(!path.to_string_lossy().contains("host-only-bin"));
+    }
+
+    #[test]
+    fn notebooklm_npm_command_runs_inside_staging() {
+        let command = build_managed_notebooklm_npm_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-stage"),
+            std::ffi::OsStr::new("managed-bin"),
+            &["ci"],
+        );
+        assert_eq!(
+            command.get_current_dir(),
+            Some(std::path::Path::new("managed-stage"))
+        );
+    }
+
+    #[test]
+    fn notebooklm_npm_command_preserves_package_lock_arguments() {
+        let args = [
+            "install",
+            "--package-lock-only",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+        ];
+        let command = build_managed_notebooklm_npm_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-stage"),
+            std::ffi::OsStr::new("managed-bin"),
+            &args,
+        );
+        let actual: Vec<_> = command.get_args().skip(1).collect();
+        assert_eq!(actual, args.map(std::ffi::OsStr::new).to_vec());
+    }
+
+    #[test]
+    fn notebooklm_npm_command_preserves_ci_arguments() {
+        let args = [
+            "ci",
+            "--omit=dev",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+        ];
+        let command = build_managed_notebooklm_npm_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-stage"),
+            std::ffi::OsStr::new("managed-bin"),
+            &args,
+        );
+        let actual: Vec<_> = command.get_args().skip(1).collect();
+        assert_eq!(actual, args.map(std::ffi::OsStr::new).to_vec());
     }
 
     #[test]

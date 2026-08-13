@@ -2065,6 +2065,53 @@ test('NotebookLM MCP restaura explícitamente el runtime anterior si falla la ac
   assert.doesNotMatch(installer, /fs::rename\(\s*&stage,\s*&active/s);
 });
 
+test('NotebookLM MCP construye su staging npm sólo con Node y PATH administrados', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const builderStart = runtimes.indexOf('fn build_managed_notebooklm_npm_command');
+  const builderEnd = runtimes.indexOf('\npub fn portable_notebooklm_mcp_installed_for', builderStart);
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = runtimes.slice(builderStart, builderEnd);
+
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /\.arg\(npm_cli\)/);
+  assert.match(builder, /\.args\(args\)/);
+  assert.match(builder, /\.current_dir\(stage\)/);
+  assert.match(builder, /\.env\("PATH", managed_path\)/);
+  assert.doesNotMatch(
+    builder,
+    /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|Command::new\("(?:node|npm|npm\.cmd|npx)"\)|env_clear|cmd|powershell|sh\s+-c|bash\s+-c/
+  );
+
+  const installerStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
+  const installerEnd = runtimes.indexOf('\n#[cfg(test)]', installerStart);
+  assert.ok(installerStart >= 0 && installerEnd > installerStart);
+  const installer = runtimes.slice(installerStart, installerEnd);
+
+  for (const required of [
+    'portable_node_exe()',
+    'portable_npm_cli()',
+    'managed_node_runtime_path()?',
+    'build_managed_notebooklm_npm_command',
+    '--package-lock-only',
+    'contract.npm_integrity',
+    '"ci"',
+    'activate_staged_notebooklm_mcp',
+  ]) {
+    assert.match(installer, new RegExp(required.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')));
+  }
+
+  assert.ok(installer.indexOf('managed_node_runtime_path()?') < installer.indexOf('build_managed_notebooklm_npm_command'));
+  assert.ok(installer.indexOf('--package-lock-only') < installer.indexOf('contract.npm_integrity'));
+  assert.ok(installer.indexOf('contract.npm_integrity') < installer.indexOf('"ci"'));
+  assert.ok(installer.indexOf('"ci"') < installer.indexOf('activate_staged_notebooklm_mcp'));
+  assert.doesNotMatch(installer, /Command::new\(&node\)\s*\.arg\(&npm\)/s);
+  assert.doesNotMatch(installer, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|Command::new\("(?:node|npm|npm\.cmd|npx)"\)|env_clear|powershell|sh\s+-c|bash\s+-c/);
+});
+
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([
