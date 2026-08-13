@@ -24,7 +24,7 @@ fn node_download_url() -> &'static str {
     return "https://nodejs.org/dist/v22.13.0/node-v22.13.0-darwin-x64.tar.gz";
 
     #[cfg(target_os = "linux")]
-    return "https://nodejs.org/dist/v22.13.0/node-v22.13.0-linux-x64.tar.xz";
+    return "https://nodejs.org/dist/v22.13.0/node-v22.13.0-linux-x64.tar.gz";
 }
 
 // Jintia no reutiliza runtimes globales.
@@ -162,7 +162,7 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
 
         #[cfg(not(target_os = "windows"))]
         {
-            extract_tar(&tmp_file, &stage_dir)
+            extract_node_tar_gz(&tmp_file, &stage_dir)
         }
     };
     if let Err(error) = extraction_result {
@@ -301,40 +301,73 @@ fn extract_zip(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> Result
 }
 
 #[cfg(not(target_os = "windows"))]
-fn extract_tar(tar_path: &std::path::Path, dest_dir: &std::path::Path) -> Result<(), String> {
-    let output = Command::new("tar")
-        .arg("-xzf")
-        .arg(tar_path)
-        .arg("-C")
-        .arg(dest_dir)
-        .output()
-        .map_err(|e| format!("Error ejecutando tar: {e}"))?;
+fn extract_node_tar_gz(
+    tar_path: &std::path::Path,
+    dest_dir: &std::path::Path,
+) -> Result<(), String> {
+    use flate2::read::GzDecoder;
+    use std::path::{Component, PathBuf};
+    use tar::Archive;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Error extrayendo tar: {}", stderr));
-    }
+    let file = fs::File::open(tar_path)
+        .map_err(|error| format!("Error abriendo archive Node: {error}"))?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+    let mut node_roots: Vec<PathBuf> = Vec::new();
 
-    let entries = fs::read_dir(dest_dir)
-        .map_err(|e| format!("Error leyendo directorio: {e}"))?;
+    let entries = archive
+        .entries()
+        .map_err(|error| format!("Error leyendo archive Node: {error}"))?;
 
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("Error en entrada de directorio: {e}"))?;
-        let path = entry.path();
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    for entry_result in entries {
+        let mut entry = entry_result
+            .map_err(|error| format!("Error leyendo entrada Node: {error}"))?;
+        let path = entry
+            .path()
+            .map_err(|error| format!("Error leyendo ruta de entrada Node: {error}"))?
+            .into_owned();
 
-        if filename.starts_with("node-v") && path.is_dir() {
-            let dst = dest_dir.join("node");
-            if dst.exists() {
-                fs::remove_dir_all(&dst)
-                    .map_err(|e| format!("Error removiendo directorio anterior: {e}"))?;
+        if path.is_absolute() || path.components().any(|component| component == Component::ParentDir)
+        {
+            return Err(format!("Ruta insegura rechazada en archive Node: {}", path.display()));
+        }
+
+        if let Some(Component::Normal(root)) = path.components().next() {
+            if root.to_string_lossy().starts_with("node-v") {
+                let root = PathBuf::from(root);
+                if !node_roots.contains(&root) {
+                    node_roots.push(root);
+                }
             }
-            fs::rename(&path, &dst)
-                .map_err(|e| format!("Error renombrando directorio: {e}"))?;
-            break;
+        }
+
+        let unpacked = entry
+            .unpack_in(dest_dir)
+            .map_err(|error| format!("Error extrayendo archive Node: {error}"))?;
+        if !unpacked {
+            return Err(format!("Ruta insegura rechazada en archive Node: {}", path.display()));
         }
     }
 
+    if node_roots.is_empty() {
+        return Err("El archive Node no contiene el directorio raíz esperado.".to_string());
+    }
+    if node_roots.len() > 1 {
+        return Err("El archive Node contiene múltiples directorios raíz.".to_string());
+    }
+
+    let extracted_root = dest_dir.join(&node_roots[0]);
+    if !extracted_root.is_dir() {
+        return Err("El archive Node no contiene el directorio raíz esperado.".to_string());
+    }
+
+    let dst = dest_dir.join("node");
+    if dst.exists() {
+        return Err("El staging Node ya contiene un directorio node.".to_string());
+    }
+
+    fs::rename(&extracted_root, &dst)
+        .map_err(|error| format!("Error normalizando runtime Node: {error}"))?;
     Ok(())
 }
 
@@ -957,6 +990,8 @@ mod tests {
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
+    #[cfg(not(target_os = "windows"))]
+    use super::extract_node_tar_gz;
     use std::fs;
 
     #[test]
@@ -984,7 +1019,7 @@ mod tests {
     #[test]
     fn node_checksum_manifest_rejects_missing_asset() {
         let manifest = format!("{}  node-v22.13.0-win-x64.zip\n", "a".repeat(64));
-        let error = node_checksum_from_manifest(&manifest, "node-v22.13.0-linux-x64.tar.xz")
+        let error = node_checksum_from_manifest(&manifest, "node-v22.13.0-linux-x64.tar.gz")
             .unwrap_err();
 
         assert!(error.contains("Checksum no encontrado"));
@@ -1330,6 +1365,91 @@ mod tests {
         let root = archive.parent().unwrap();
         fs::remove_dir_all(&dest).ok();
         fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn tar_gz_fixture(
+        name: &str,
+        entries: &[(&str, &[u8])],
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        use tar::Builder;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "jintia-node-tar-gz-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("node.tar.gz");
+        let file = fs::File::create(&archive_path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+
+        for (path, bytes) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, *path, *bytes).unwrap();
+        }
+
+        let encoder = builder.into_inner().unwrap();
+        encoder.finish().unwrap();
+        (archive_path, root.join("dest"))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn node_tar_gz_extraction_normalizes_single_node_root() {
+        let (archive, dest) = tar_gz_fixture(
+            "normal",
+            &[("node-v22.13.0-test/bin/marker", b"marker")],
+        );
+        fs::create_dir_all(&dest).unwrap();
+
+        extract_node_tar_gz(&archive, &dest).unwrap();
+
+        assert_eq!(fs::read(dest.join("node/bin/marker")).unwrap(), b"marker");
+        assert!(!dest.join("node-v22.13.0-test").exists());
+        fs::remove_dir_all(archive.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn node_tar_gz_extraction_rejects_missing_node_root() {
+        let (archive, dest) = tar_gz_fixture("missing-root", &[("unexpected-root/file", b"file")]);
+        fs::create_dir_all(&dest).unwrap();
+
+        let error = extract_node_tar_gz(&archive, &dest).unwrap_err();
+
+        assert!(error.contains("directorio raíz esperado"));
+        assert!(!dest.join("node").exists());
+        fs::remove_dir_all(archive.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn node_tar_gz_extraction_rejects_multiple_node_roots() {
+        let (archive, dest) = tar_gz_fixture(
+            "multiple-roots",
+            &[
+                ("node-v22.13.0-a/file", b"a"),
+                ("node-v22.13.0-b/file", b"b"),
+            ],
+        );
+        fs::create_dir_all(&dest).unwrap();
+
+        let error = extract_node_tar_gz(&archive, &dest).unwrap_err();
+
+        assert!(error.contains("múltiples directorios raíz"));
+        assert!(!dest.join("node").exists());
+        fs::remove_dir_all(archive.parent().unwrap()).unwrap();
     }
 
     fn contract() -> crate::release::ManagedMcpContract {

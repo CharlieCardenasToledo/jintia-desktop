@@ -1692,7 +1692,7 @@ test('Node portable nunca se activa sin checksum SHA-256 verificado', async () =
     'fetch_node_checksum()',
     'verify_sha256',
     'extract_zip',
-    'extract_tar',
+    'extract_node_tar_gz',
   ]) {
     assert.match(
       downloader,
@@ -1768,7 +1768,7 @@ test('Node portable valida staging y restaura el runtime anterior si falla la ac
   for (const required of [
     'stage_dir',
     'extract_zip',
-    'extract_tar',
+    'extract_node_tar_gz',
     'staged_node',
     'validate_node_runtime',
     'activate_staged_node_runtime',
@@ -1781,7 +1781,7 @@ test('Node portable valida staging y restaura el runtime anterior si falla la ac
   }
 
   assert.match(downloader, /extract_zip\(\s*&tmp_file,\s*&stage_dir\s*\)/);
-  assert.match(downloader, /extract_tar\(\s*&tmp_file,\s*&stage_dir\s*\)/);
+  assert.match(downloader, /extract_node_tar_gz\(\s*&tmp_file,\s*&stage_dir\s*\)/);
   assert.doesNotMatch(
     downloader,
     /extract_(?:zip|tar)\(\s*&tmp_file,\s*&runtimes_dir\s*\)/
@@ -1825,6 +1825,52 @@ test('Node portable valida staging y restaura el runtime anterior si falla la ac
     activation,
     /extract_|reqwest|verify_sha256|Command::new/
   );
+});
+
+test('Node portable extrae tar.gz sin depender del tar anfitrión', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const extractorStart = runtimes.indexOf('fn extract_node_tar_gz');
+  const extractorEnd = runtimes.indexOf('fn emit_progress', extractorStart);
+  assert.ok(
+    extractorStart >= 0 && extractorEnd > extractorStart,
+    'debe poder aislarse el extractor tar.gz nativo'
+  );
+  const extractor = runtimes.slice(extractorStart, extractorEnd);
+
+  assert.match(extractor, /GzDecoder/);
+  assert.match(extractor, /tar::Archive/);
+  assert.match(extractor, /entries\(\)/);
+  assert.match(extractor, /unpack_in\(dest_dir\)/);
+  assert.match(extractor, /node-v/);
+  assert.match(extractor, /fs::rename/);
+  assert.doesNotMatch(
+    extractor,
+    /Command::new\(["'](?:\/usr\/bin\/)?tar["']\)|Command::new\(["']gtar["']\)|Command::new\(["']bsdtar["']\)|sh\s*-c|bash\s*-c|zsh\s*-c|\bwhich\b|where\.exe/
+  );
+
+  const downloaderStart = runtimes.indexOf(
+    'pub fn download_portable_node('
+  );
+  const downloaderEnd = runtimes.indexOf(
+    '// ==================== PYTHON RUNTIME ====================',
+    downloaderStart
+  );
+  const downloader = runtimes.slice(downloaderStart, downloaderEnd);
+  assert.match(
+    downloader,
+    /extract_node_tar_gz\(\s*&tmp_file,\s*&stage_dir\s*\)/
+  );
+  assert.doesNotMatch(downloader, /Command::new\(["']tar["']\)/);
+
+  const urlStart = runtimes.indexOf('fn node_download_url');
+  const urlEnd = runtimes.indexOf('fn global_node_available', urlStart);
+  const url = runtimes.slice(urlStart, urlEnd);
+  assert.match(url, /node-v22\.13\.0-linux-x64\.tar\.gz/);
+  assert.doesNotMatch(url, /node-v22\.13\.0-linux-x64\.tar\.xz/);
 });
 
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
@@ -3107,7 +3153,7 @@ test('Plan 61A conserva el corte legacy y la extracción hermética de Node', as
   assert.doesNotMatch(activate, /\[\s*"institution",\s*"zip"/);
   assert.match(activate, /institution[\s\S]*skill[\s\S]*mcp-desktop[\s\S]*mcp-code[\s\S]*auth/);
   const start = runtimes.indexOf('fn extract_zip(');
-  const end = runtimes.indexOf('\nfn extract_tar(', start);
+  const end = runtimes.indexOf('\nfn extract_node_tar_gz(', start);
   assert.ok(start >= 0 && end > start);
   const extractZip = runtimes.slice(start, end);
   assert.match(extractZip, /ZipArchive/);
