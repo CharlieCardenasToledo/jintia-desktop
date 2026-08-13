@@ -839,7 +839,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_managed_npm_install_command, install_npm_packages, managed_node_runtime_path, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
+    use super::{build_managed_node_cli_version_command, build_managed_npm_install_command, install_npm_packages, managed_node_runtime_path, notebooklm_lock_entry, notebooklm_package_matches_contract, resolve_notebooklm_mcp_bin_for};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -920,6 +920,63 @@ mod tests {
     #[test]
     fn install_npm_packages_empty_input_is_noop() {
         assert!(install_npm_packages(&[]).is_ok());
+    }
+
+    #[test]
+    fn managed_node_cli_version_command_uses_only_managed_path() {
+        let command = build_managed_node_cli_version_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-cli"),
+            std::ffi::OsStr::new("managed-only-bin"),
+            &["--version"],
+        );
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, value)| value)
+            .expect("PATH must be explicitly managed");
+        assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
+        assert!(!path.to_string_lossy().contains("host-only-bin"));
+    }
+
+    #[test]
+    fn managed_node_cli_version_command_preserves_arguments() {
+        let command = build_managed_node_cli_version_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-cli"),
+            std::ffi::OsStr::new("managed-only-bin"),
+            &["--version", "--verbose"],
+        );
+        let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
+        assert_eq!(&args[args.len() - 2..], [
+            std::ffi::OsStr::new("--version"),
+            std::ffi::OsStr::new("--verbose"),
+        ]);
+    }
+
+    #[test]
+    fn managed_node_cli_version_command_uses_expected_launcher() {
+        let command = build_managed_node_cli_version_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new(if cfg!(target_os = "windows") {
+                "managed-cli.cmd"
+            } else {
+                "managed-cli"
+            }),
+            std::ffi::OsStr::new("managed-only-bin"),
+            &["--version"],
+        );
+        let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
+        if cfg!(target_os = "windows") {
+            assert_eq!(command.get_program(), std::ffi::OsStr::new("cmd"));
+            assert_eq!(&args[..2], [
+                std::ffi::OsStr::new("/C"),
+                std::ffi::OsStr::new("managed-cli.cmd"),
+            ]);
+        } else {
+            assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
+            assert_eq!(&args[..1], [std::ffi::OsStr::new("managed-cli")]);
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -1119,39 +1176,15 @@ pub fn node_cli_version(
         return None;
     }
 
-    let portable_bin = paths::portable_node_bin_dir();
-    let base_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut path_entries = vec![portable_bin];
-    for entry in std::env::split_paths(&base_path) {
-        if !path_entries.contains(&entry) {
-            path_entries.push(entry);
-        }
-    }
-    let patched_path = std::env::join_paths(path_entries).ok()?;
-
-    let output = if cfg!(target_os = "windows")
-        && executable
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| {
-                ext.eq_ignore_ascii_case("cmd")
-            })
-    {
-        Command::new("cmd")
-            .arg("/C")
-            .arg(&executable)
-            .args(args)
-            .env("PATH", &patched_path)
-            .output()
-            .ok()?
-    } else {
-        Command::new(&node)
-            .arg(&executable)
-            .args(args)
-            .env("PATH", &patched_path)
-            .output()
-            .ok()?
-    };
+    let managed_path = managed_node_runtime_path().ok()?;
+    let output = build_managed_node_cli_version_command(
+        &node,
+        &executable,
+        &managed_path,
+        args,
+    )
+    .output()
+    .ok()?;
 
     if !output.status.success() {
         return None;
@@ -1180,6 +1213,31 @@ pub fn node_cli_version(
 fn managed_node_runtime_path() -> Result<OsString, String> {
     std::env::join_paths([paths::portable_node_bin_dir()])
         .map_err(|error| format!("No se pudo construir el PATH administrado de Node: {error}"))
+}
+
+fn build_managed_node_cli_version_command(
+    node: &std::path::Path,
+    executable: &std::path::Path,
+    managed_path: &std::ffi::OsStr,
+    args: &[&str],
+) -> Command {
+    let mut command = if cfg!(target_os = "windows")
+        && executable
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("cmd"))
+    {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(executable);
+        command
+    } else {
+        let mut command = Command::new(node);
+        command.arg(executable);
+        command
+    };
+
+    command.args(args).env("PATH", managed_path);
+    command
 }
 
 fn build_managed_npm_install_command(

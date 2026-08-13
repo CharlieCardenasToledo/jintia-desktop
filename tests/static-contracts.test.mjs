@@ -1560,6 +1560,49 @@ test('Mermaid CLI se detecta únicamente desde el Node portable administrado', a
     /Command::new\(checker\)/
   );
 
+  const versionStart = runtimes.indexOf(
+    'pub fn node_cli_version('
+  );
+  const versionEnd = runtimes.indexOf(
+    'fn managed_node_runtime_path',
+    versionStart
+  );
+  assert.ok(
+    versionStart >= 0 && versionEnd > versionStart,
+    'debe poder aislarse node_cli_version'
+  );
+  const versionFn = runtimes.slice(versionStart, versionEnd);
+  const builderStart = runtimes.indexOf(
+    'fn build_managed_node_cli_version_command'
+  );
+  const builderEnd = runtimes.indexOf(
+    'fn build_managed_npm_install_command',
+    builderStart
+  );
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = runtimes.slice(builderStart, builderEnd);
+
+  assert.match(
+    versionFn,
+    /managed_node_runtime_path\(\)/
+  );
+  assert.match(
+    versionFn,
+    /build_managed_node_cli_version_command/
+  );
+  assert.doesNotMatch(
+    versionFn,
+    /var_os\("PATH"\)|split_paths|base_path|path_entries|patched_path|which|where\.exe|global_node_available|Command::new\("node"\)|Command::new\("mmdc"\)/
+  );
+  assert.match(
+    builder,
+    /\.env\("PATH",\s*managed_path\)/
+  );
+  assert.doesNotMatch(
+    builder,
+    /var_os\("PATH"\)|split_paths|base_path|path_entries|patched_path|sh.*-c|bash.*-c|powershell/
+  );
+
   assert.match(
     course,
     /resolve_node_cli\("mmdc"\)/
@@ -2412,34 +2455,29 @@ test('Node CLI disciplinares usan exclusivamente el runtime administrado', async
     /portable_node_exe\(\)/
   );
 
+  assert.match(versioner, /managed_node_runtime_path\(\)/);
   assert.match(
     versioner,
-    /portable_node_bin_dir\(\)/
+    /build_managed_node_cli_version_command/
+  );
+  assert.doesNotMatch(
+    versioner,
+    /var_os\("PATH"\)|split_paths|base_path|path_entries|patched_path|which|where\.exe|global_node_available|Command::new\("node"\)|Command::new\("mmdc"\)/
   );
 
-  assert.match(
-    versioner,
-    /std::env::split_paths/
+  const builderStart = runtimes.indexOf(
+    'fn build_managed_node_cli_version_command'
   );
-
-  assert.match(
-    versioner,
-    /std::env::join_paths/
+  const builderEnd = runtimes.indexOf(
+    'fn build_managed_npm_install_command',
+    builderStart
   );
-
-  assert.match(
-    versioner,
-    /\.env\("PATH",\s*&patched_path\)/
-  );
-
-  assert.match(
-    versioner,
-    /Command::new\(&node\)[\s\S]*\.arg\(&executable\)/
-  );
-
-  assert.match(
-    versioner,
-    /Command::new\("cmd"\)[\s\S]*\.arg\("\/C"\)[\s\S]*\.arg\(&executable\)/
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = runtimes.slice(builderStart, builderEnd);
+  assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
+  assert.doesNotMatch(
+    builder,
+    /var_os\("PATH"\)|split_paths|base_path|path_entries|patched_path|sh.*-c|bash.*-c|powershell/
   );
 
   assert.doesNotMatch(
