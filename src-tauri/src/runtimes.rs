@@ -973,8 +973,24 @@ fn validate_browser_status(status: &NotebookLmBrowserStatus, managed_root: &std:
     Ok(())
 }
 
+fn build_managed_notebooklm_browser_command(
+    node: &std::path::Path,
+    bin: &std::path::Path,
+    managed_path: &std::ffi::OsStr,
+    action: &str,
+) -> Command {
+    let mut command = Command::new(node);
+    command
+        .arg(bin)
+        .args(["browser", action, "--json"])
+        .env("PATH", managed_path);
+    command
+}
+
 fn run_notebooklm_browser_command(node: &std::path::Path, bin: &std::path::Path, action: &str) -> Result<NotebookLmBrowserStatus, String> {
-    let output = Command::new(node).arg(bin).args(["browser", action, "--json"]).output()
+    let managed_path = managed_node_runtime_path()?;
+    let output = build_managed_notebooklm_browser_command(node, bin, &managed_path, action)
+        .output()
         .map_err(|e| format!("No se pudo ejecutar el bin público del MCP: {e}"))?;
     if !output.status.success() {
         return Err(format!("MCP browser {action} falló: {}", String::from_utf8_lossy(&output.stderr)));
@@ -1133,7 +1149,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1646,6 +1662,84 @@ mod tests {
         );
         let actual: Vec<_> = command.get_args().skip(1).collect();
         assert_eq!(actual, args.map(std::ffi::OsStr::new).to_vec());
+    }
+
+    #[test]
+    fn notebooklm_browser_command_uses_managed_node_and_bin() {
+        let command = build_managed_notebooklm_browser_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-bin"),
+            "status",
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
+        assert_eq!(args[0], "managed-mcp-bin.js");
+    }
+
+    #[test]
+    fn notebooklm_browser_command_uses_only_managed_path() {
+        let command = build_managed_notebooklm_browser_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-only-bin"),
+            "status",
+        );
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, value)| value)
+            .expect("PATH administrado");
+        assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
+        assert!(!path.to_string_lossy().contains("host-only-bin"));
+    }
+
+    #[test]
+    fn notebooklm_browser_command_preserves_status_arguments() {
+        let command = build_managed_notebooklm_browser_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-bin"),
+            "status",
+        );
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, [
+            std::ffi::OsStr::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("browser"),
+            std::ffi::OsStr::new("status"),
+            std::ffi::OsStr::new("--json"),
+        ]);
+    }
+
+    #[test]
+    fn notebooklm_browser_command_preserves_install_arguments() {
+        let command = build_managed_notebooklm_browser_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-bin"),
+            "install",
+        );
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, [
+            std::ffi::OsStr::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("browser"),
+            std::ffi::OsStr::new("install"),
+            std::ffi::OsStr::new("--json"),
+        ]);
+    }
+
+    #[test]
+    fn notebooklm_browser_command_does_not_override_current_dir() {
+        let command = build_managed_notebooklm_browser_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-bin"),
+            "status",
+        );
+        assert!(command.get_current_dir().is_none());
     }
 
     #[test]

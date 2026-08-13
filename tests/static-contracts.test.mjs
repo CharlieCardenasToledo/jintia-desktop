@@ -2112,6 +2112,44 @@ test('NotebookLM MCP construye su staging npm sólo con Node y PATH administrado
   assert.doesNotMatch(installer, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|Command::new\("(?:node|npm|npm\.cmd|npx)"\)|env_clear|powershell|sh\s+-c|bash\s+-c/);
 });
 
+test('NotebookLM MCP ejecuta browser install y status sólo con Node y PATH administrados', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const builderStart = runtimes.indexOf('fn build_managed_notebooklm_browser_command');
+  const runnerStart = runtimes.indexOf('fn run_notebooklm_browser_command');
+  const validatorStart = runtimes.indexOf('fn validate_notebooklm_browser');
+  assert.ok(builderStart >= 0 && runnerStart > builderStart && validatorStart > runnerStart);
+  const builder = runtimes.slice(builderStart, runnerStart);
+  const runner = runtimes.slice(runnerStart, validatorStart);
+  const validator = runtimes.slice(validatorStart, runtimes.indexOf('\npub fn portable_notebooklm_mcp_installed_for', validatorStart));
+
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /\.arg\(bin\)/);
+  assert.match(builder, /"browser"/);
+  assert.match(builder, /action/);
+  assert.match(builder, /"--json"/);
+  assert.match(builder, /\.env\("PATH", managed_path\)/);
+  assert.doesNotMatch(builder, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|env_clear|Command::new\("(?:node|npm|npx)"\)|current_dir|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
+
+  assert.match(runner, /managed_node_runtime_path\(\)\?/);
+  assert.match(runner, /build_managed_notebooklm_browser_command/);
+  assert.match(runner, /\.output\(\)/);
+  assert.match(runner, /output\.status\.success\(\)/);
+  assert.match(runner, /String::from_utf8_lossy\(&output\.stderr\)/);
+  assert.match(runner, /serde_json::from_slice\(&output\.stdout\)/);
+  assert.doesNotMatch(runner, /Command::new\(node\)/);
+  assert.doesNotMatch(runner, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|env_clear|PATH.*fallback/);
+
+  assert.match(validator, /resolve_notebooklm_mcp_bin_for/);
+  assert.match(validator, /run_notebooklm_browser_command/);
+  assert.match(validator, /validate_browser_status/);
+  assert.ok(validator.indexOf('resolve_notebooklm_mcp_bin_for') < validator.indexOf('run_notebooklm_browser_command'));
+  assert.ok(validator.indexOf('run_notebooklm_browser_command') < validator.indexOf('validate_browser_status'));
+});
+
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([
