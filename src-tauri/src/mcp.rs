@@ -50,6 +50,50 @@ fn managed_mcp_server_json(node: &Path, bin: &Path, managed_path: &str) -> Value
     })
 }
 
+fn apply_managed_json_mcp_server(server: &mut Value, managed: &Value) -> Result<(), String> {
+    let Some(server_object) = server.as_object() else {
+        return Err("mcpServers.notebooklm existente no es un objeto. Corrígelo antes de continuar.".to_string());
+    };
+    if server_object
+        .get("env")
+        .is_some_and(|environment| !environment.is_object())
+    {
+        return Err("mcpServers.notebooklm.env existente no es un objeto. Corrígelo antes de continuar.".to_string());
+    }
+
+    let managed_object = managed
+        .as_object()
+        .ok_or_else(|| "La identidad administrada de NotebookLM MCP no es un objeto.".to_string())?;
+    let command = managed_object
+        .get("command")
+        .cloned()
+        .ok_or_else(|| "La identidad administrada de NotebookLM MCP no contiene command.".to_string())?;
+    let args = managed_object
+        .get("args")
+        .cloned()
+        .ok_or_else(|| "La identidad administrada de NotebookLM MCP no contiene args.".to_string())?;
+    let managed_path = managed_object
+        .get("env")
+        .and_then(Value::as_object)
+        .and_then(|environment| environment.get("PATH"))
+        .cloned()
+        .ok_or_else(|| "La identidad administrada de NotebookLM MCP no contiene env.PATH.".to_string())?;
+
+    let server_object = server
+        .as_object_mut()
+        .expect("server fue validado como objeto antes de mutarlo");
+    server_object.insert("command".to_string(), command);
+    server_object.insert("args".to_string(), args);
+    let environment = server_object
+        .entry("env".to_string())
+        .or_insert_with(|| json!({}));
+    environment
+        .as_object_mut()
+        .expect("env fue validado como objeto antes de mutarlo")
+        .insert("PATH".to_string(), managed_path);
+    Ok(())
+}
+
 fn managed_node_runtime_path_text() -> Result<String, String> {
     crate::runtimes::managed_node_runtime_path()
         .map(|path| path.to_string_lossy().into_owned())
@@ -167,11 +211,19 @@ pub fn configure_mcp(target: String) -> ActionResult {
         root["mcpServers"] = json!({});
     }
     let previous = root.clone();
-    root["mcpServers"]["notebooklm"] = managed_mcp_server_json(
+    let managed_server = managed_mcp_server_json(
         &managed.node,
         &managed.bin,
         &managed_path,
     );
+    let server = root["mcpServers"]
+        .as_object_mut()
+        .expect("mcpServers fue validado como objeto")
+        .entry("notebooklm".to_string())
+        .or_insert_with(|| json!({}));
+    if let Err(error) = apply_managed_json_mcp_server(server, &managed_server) {
+        return ActionResult::error(error);
+    }
     if root == previous {
         return ActionResult::ok(format!(
             "NotebookLM MCP ya estaba configurado correctamente para {label}; no se volvió a escribir."
@@ -965,6 +1017,94 @@ mod tests {
         assert_eq!(server["command"], "managed-node");
         assert_eq!(server["args"], json!(["managed-bin.js"]));
         assert_eq!(server["env"]["PATH"], "managed-only-bin");
+    }
+
+    #[test]
+    fn managed_json_mcp_server_preserves_existing_environment() {
+        let mut server = json!({
+            "command": "old-node",
+            "args": ["old-bin"],
+            "env": {"PATH": "host-only-bin", "KEEP": "yes"},
+        });
+        let managed = managed_mcp_server_json(
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        );
+        apply_managed_json_mcp_server(&mut server, &managed).unwrap();
+        assert_eq!(server["command"], "managed-node");
+        assert_eq!(server["args"], json!(["managed-bin.js"]));
+        assert_eq!(server["env"]["PATH"], "managed-only-bin");
+        assert_eq!(server["env"]["KEEP"], "yes");
+    }
+
+    #[test]
+    fn managed_json_mcp_server_preserves_unmanaged_fields() {
+        let mut server = json!({
+            "command": "old-node",
+            "args": ["old-bin"],
+            "env": {"PATH": "old-path"},
+            "customField": {"nested": true},
+        });
+        let managed = managed_mcp_server_json(
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        );
+        apply_managed_json_mcp_server(&mut server, &managed).unwrap();
+        assert_eq!(server["customField"], json!({"nested": true}));
+    }
+
+    #[test]
+    fn managed_json_mcp_server_rejects_non_object_server() {
+        let mut server = Value::String("invalid".to_string());
+        let before = server.clone();
+        let managed = managed_mcp_server_json(
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        );
+        let error = apply_managed_json_mcp_server(&mut server, &managed).unwrap_err();
+        assert!(error.contains("mcpServers.notebooklm"));
+        assert_eq!(server, before);
+    }
+
+    #[test]
+    fn managed_json_mcp_server_rejects_non_object_environment() {
+        let mut server = json!({
+            "command": "old",
+            "args": [],
+            "env": "invalid",
+            "KEEP": "yes",
+        });
+        let before = server.clone();
+        let managed = managed_mcp_server_json(
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        );
+        let error = apply_managed_json_mcp_server(&mut server, &managed).unwrap_err();
+        assert!(error.contains(".env"));
+        assert_eq!(server, before);
+    }
+
+    #[test]
+    fn managed_json_mcp_server_is_idempotent_with_extra_fields() {
+        let mut server = json!({
+            "command": "managed-node",
+            "args": ["managed-bin.js"],
+            "env": {"PATH": "managed-only-bin", "KEEP": "yes"},
+            "customField": "keep",
+        });
+        let managed = managed_mcp_server_json(
+            Path::new("managed-node"),
+            Path::new("managed-bin.js"),
+            "managed-only-bin",
+        );
+        apply_managed_json_mcp_server(&mut server, &managed).unwrap();
+        let first = server.clone();
+        apply_managed_json_mcp_server(&mut server, &managed).unwrap();
+        assert_eq!(server, first);
     }
 
     #[test]

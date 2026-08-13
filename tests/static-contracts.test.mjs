@@ -2254,6 +2254,39 @@ test('Las configuraciones externas de NotebookLM MCP persisten el PATH Node admi
   assert.doesNotMatch(`${helper}\n${codexConfig}`, /std::env::var(?:_os)?\(\s*"PATH"|split_paths/);
 });
 
+test('La configuración JSON de NotebookLM MCP preserva campos y entorno ajenos al actualizar su identidad administrada', async () => {
+  const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
+
+  const helperStart = mcp.indexOf('fn apply_managed_json_mcp_server');
+  const helperEnd = mcp.indexOf('\nfn managed_node_runtime_path_text', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const helper = mcp.slice(helperStart, helperEnd);
+  assert.match(helper, /as_object/);
+  assert.match(helper, /env/);
+  assert.match(helper, /command/);
+  assert.match(helper, /args/);
+  assert.match(helper, /PATH/);
+  assert.match(helper, /mcpServers\.notebooklm/);
+  assert.match(helper, /mcpServers\.notebooklm\.env/);
+  assert.doesNotMatch(helper, /\*server\s*=\s*managed\.clone\(\)|\*server\s*=\s*json!\(/);
+
+  const configureStart = mcp.indexOf('pub fn configure_mcp');
+  const configureEnd = mcp.indexOf('\nfn apply_managed_codex_mcp_server', configureStart);
+  assert.ok(configureStart >= 0 && configureEnd > configureStart);
+  const configure = mcp.slice(configureStart, configureEnd);
+  assert.match(configure, /managed_mcp_server_json/);
+  assert.match(configure, /apply_managed_json_mcp_server/);
+  assert.match(configure, /let previous = root\.clone\(\)/);
+  assert.match(configure, /root == previous/);
+  assert.match(configure, /backup_file/);
+  assert.match(configure, /atomic_write/);
+  assert.ok(configure.indexOf('let previous = root.clone()') < configure.indexOf('apply_managed_json_mcp_server'));
+  assert.ok(configure.indexOf('apply_managed_json_mcp_server') < configure.indexOf('root == previous'));
+  assert.ok(configure.indexOf('root == previous') < configure.indexOf('backup_file'));
+  assert.ok(configure.indexOf('backup_file') < configure.indexOf('atomic_write'));
+  assert.doesNotMatch(configure, /root\["mcpServers"\]\["notebooklm"\]\s*=\s*managed_mcp_server_json/);
+});
+
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([
