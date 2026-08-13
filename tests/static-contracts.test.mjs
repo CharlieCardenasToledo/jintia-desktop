@@ -1580,7 +1580,7 @@ test('los paquetes pip disciplinares usan exclusivamente Python y PATH administr
   }
 
   assert.match(builder, /Command::new\(python\)/);
-  assert.match(builder, /\.args\(\["-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
+  assert.match(builder, /\.args\(\["-I",\s*"-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
   assert.match(builder, /\.args\(packages\)/);
   assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
   assert.match(managedPath, /portable_python_prefix\(\)/);
@@ -1591,6 +1591,40 @@ test('los paquetes pip disciplinares usan exclusivamente Python y PATH administr
   assert.doesNotMatch(builder, forbidden);
   assert.doesNotMatch(builder, /packages\.join|format!\([^)]*packages/);
   assert.doesNotMatch(managedPath, /split_paths|HOME|USERPROFILE|var_os\("PATH"\)|std::env::var\("PATH"\)/);
+});
+
+test('Python administrado usa modo aislado en validación e instalación pip', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const validatorStart = runtimes.indexOf('fn validate_python_runtime');
+  const validatorEnd = runtimes.indexOf(
+    'fn python_version_text_matches_expected',
+    validatorStart
+  );
+  assert.ok(validatorStart >= 0 && validatorEnd > validatorStart);
+  const validator = runtimes.slice(validatorStart, validatorEnd);
+
+  const builderStart = runtimes.indexOf('fn build_managed_pip_install_command');
+  const builderEnd = runtimes.indexOf(
+    '// ==================== NPM PACKAGES ====================',
+    builderStart
+  );
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = runtimes.slice(builderStart, builderEnd);
+
+  assert.match(validator, /Command::new\(&python_exe\)[\s\S]*\.args\(\["-I",\s*"--version"\]\)/);
+  assert.match(validator, /Command::new\(&python_exe\)[\s\S]*\.args\(\["-I",\s*"-m",\s*"pip",\s*"--version"\]\)/);
+  assert.match(builder, /\.args\(\["-I",\s*"-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
+  assert.match(builder, /\.args\(packages\)/);
+  assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
+
+  assert.ok(validator.indexOf('"-I"') < validator.indexOf('"--version"'));
+  assert.ok(validator.indexOf('"-I"') < validator.indexOf('"-m"'));
+  assert.ok(builder.indexOf('"-I"') < builder.indexOf('"-m"'));
+  assert.doesNotMatch(runtimes.slice(validatorStart, validatorEnd), /env_clear|set_var|remove_var/);
 });
 
 test('Mermaid CLI se detecta únicamente desde el Node portable administrado', async () => {
@@ -2272,7 +2306,7 @@ test('Python staged exige exactamente la versión administrada antes de activars
     '"--version"',
     'version_out.status.success()',
     'python_version_text_matches_expected',
-    '"-m", "pip", "--version"',
+    '"-I", "-m", "pip", "--version"',
     'pip_out.status.success()',
   ]) {
     assert.match(
@@ -2294,7 +2328,7 @@ test('Python staged exige exactamente la versión administrada antes de activars
       validator.indexOf('python_version_text_matches_expected')
   );
   const pipProbeIndex = validator.indexOf(
-    '.args(["-m", "pip", "--version"])'
+    '.args(["-I", "-m", "pip", "--version"])'
   );
   assert.ok(pipProbeIndex >= 0);
   assert.ok(

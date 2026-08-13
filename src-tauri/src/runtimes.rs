@@ -597,7 +597,7 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
     }
 
     let version_out = Command::new(&python_exe)
-        .arg("--version")
+        .args(["-I", "--version"])
         .output()
         .map_err(|e| format!("No se pudo ejecutar python --version: {e}"))?;
 
@@ -625,7 +625,7 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
     }
 
     let pip_out = Command::new(&python_exe)
-        .args(["-m", "pip", "--version"])
+        .args(["-I", "-m", "pip", "--version"])
         .output()
         .map_err(|e| format!("No se pudo ejecutar python -m pip --version: {e}"))?;
 
@@ -886,7 +886,7 @@ fn build_managed_pip_install_command(
 ) -> Command {
     let mut command = Command::new(python);
     command
-        .args(["-m", "pip", "install", "--quiet"])
+        .args(["-I", "-m", "pip", "install", "--quiet"])
         .args(packages)
         .env("PATH", managed_path);
     command
@@ -1090,7 +1090,22 @@ mod tests {
             .collect();
 
         assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-python"));
-        assert_eq!(&args[..4], ["-m", "pip", "install", "--quiet"]);
+        assert_eq!(&args[..5], ["-I", "-m", "pip", "install", "--quiet"]);
+    }
+
+    #[test]
+    fn managed_pip_command_uses_python_isolated_mode() {
+        let command = build_managed_pip_install_command(
+            std::path::Path::new("managed-python"),
+            std::ffi::OsStr::new("managed-only"),
+            &[],
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(&args[..5], ["-I", "-m", "pip", "install", "--quiet"]);
     }
 
     #[test]
@@ -1126,7 +1141,7 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
 
-        assert_eq!(&args[4..], ["package-a>=1", "package-b[extra]==2.0"]);
+        assert_eq!(&args[5..], ["package-a>=1", "package-b[extra]==2.0"]);
     }
 
     #[test]
