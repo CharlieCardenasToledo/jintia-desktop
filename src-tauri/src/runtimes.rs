@@ -1,15 +1,15 @@
 use crate::paths;
+use hex;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
-use serde::Deserialize;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri::Emitter;
-use sha2::{Digest, Sha256};
-use hex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const NODE_VERSION: &str = "22.13.0";
 
@@ -86,15 +86,13 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
     emit_progress(app, "downloading", 0.0, "Iniciando descarga de Node.js...");
 
     let url = node_download_url();
-    let mut response = reqwest::blocking::get(url)
-        .map_err(|e| format!("Error descargando Node.js: {e}"))?;
+    let mut response =
+        reqwest::blocking::get(url).map_err(|e| format!("Error descargando Node.js: {e}"))?;
 
-    let total_size = response
-        .content_length()
-        .unwrap_or(25_000_000u64);
+    let total_size = response.content_length().unwrap_or(25_000_000u64);
 
-    let mut file = fs::File::create(&tmp_file)
-        .map_err(|e| format!("Error creando archivo temporal: {e}"))?;
+    let mut file =
+        fs::File::create(&tmp_file).map_err(|e| format!("Error creando archivo temporal: {e}"))?;
 
     let mut downloaded: u64 = 0;
     let mut buffer = [0; 1024 * 64]; // 64KB chunks
@@ -124,7 +122,12 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
 
     drop(file);
 
-    emit_progress(app, "verifying", 100.0, "Verificando integridad del archivo...");
+    emit_progress(
+        app,
+        "verifying",
+        100.0,
+        "Verificando integridad del archivo...",
+    );
     let expected_checksum = fetch_node_checksum().map_err(|error| {
         let _ = fs::remove_file(&tmp_file);
         emit_progress(app, "error", 100.0, &error);
@@ -223,7 +226,9 @@ fn validate_node_runtime(prefix: &std::path::Path) -> Result<(), String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("El Node extraído no pudo informar su versión: {stderr}"));
+        return Err(format!(
+            "El Node extraído no pudo informar su versión: {stderr}"
+        ));
     }
 
     let version = if output.stdout.is_empty() {
@@ -278,24 +283,37 @@ fn extract_zip(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> Result
     let mut archive = ZipArchive::new(file).map_err(|e| format!("Error leyendo ZIP: {e}"))?;
     let mut top_dir = None;
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|e| format!("Error leyendo entrada ZIP: {e}"))?;
-        let enclosed = entry.enclosed_name().ok_or_else(|| format!("Ruta insegura en ZIP: {}", entry.name()))?;
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| format!("Error leyendo entrada ZIP: {e}"))?;
+        let enclosed = entry
+            .enclosed_name()
+            .ok_or_else(|| format!("Ruta insegura en ZIP: {}", entry.name()))?;
         let outpath = dest_dir.join(&enclosed);
         if let Some(first) = enclosed.components().next() {
-            if top_dir.is_none() { top_dir = Some(first.as_os_str().to_owned()); }
+            if top_dir.is_none() {
+                top_dir = Some(first.as_os_str().to_owned());
+            }
         }
         if entry.is_dir() {
             fs::create_dir_all(&outpath).map_err(|e| format!("Error creando directorio: {e}"))?;
         } else {
-            if let Some(parent) = outpath.parent() { fs::create_dir_all(parent).map_err(|e| format!("Error creando directorio padre: {e}"))?; }
-            let mut output = fs::File::create(&outpath).map_err(|e| format!("Error creando archivo: {e}"))?;
-            std::io::copy(&mut entry, &mut output).map_err(|e| format!("Error extrayendo archivo: {e}"))?;
+            if let Some(parent) = outpath.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Error creando directorio padre: {e}"))?;
+            }
+            let mut output =
+                fs::File::create(&outpath).map_err(|e| format!("Error creando archivo: {e}"))?;
+            std::io::copy(&mut entry, &mut output)
+                .map_err(|e| format!("Error extrayendo archivo: {e}"))?;
         }
     }
     if let Some(top) = top_dir {
         let src = dest_dir.join(top);
         let dst = dest_dir.join("node");
-        if src.exists() && src != dst { fs::rename(src, dst).map_err(|e| format!("Error renombrando directorio: {e}"))?; }
+        if src.exists() && src != dst {
+            fs::rename(src, dst).map_err(|e| format!("Error renombrando directorio: {e}"))?;
+        }
     }
     Ok(())
 }
@@ -320,16 +338,22 @@ fn extract_node_tar_gz(
         .map_err(|error| format!("Error leyendo archive Node: {error}"))?;
 
     for entry_result in entries {
-        let mut entry = entry_result
-            .map_err(|error| format!("Error leyendo entrada Node: {error}"))?;
+        let mut entry =
+            entry_result.map_err(|error| format!("Error leyendo entrada Node: {error}"))?;
         let path = entry
             .path()
             .map_err(|error| format!("Error leyendo ruta de entrada Node: {error}"))?
             .into_owned();
 
-        if path.is_absolute() || path.components().any(|component| component == Component::ParentDir)
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|component| component == Component::ParentDir)
         {
-            return Err(format!("Ruta insegura rechazada en archive Node: {}", path.display()));
+            return Err(format!(
+                "Ruta insegura rechazada en archive Node: {}",
+                path.display()
+            ));
         }
 
         if let Some(Component::Normal(root)) = path.components().next() {
@@ -345,7 +369,10 @@ fn extract_node_tar_gz(
             .unpack_in(dest_dir)
             .map_err(|error| format!("Error extrayendo archive Node: {error}"))?;
         if !unpacked {
-            return Err(format!("Ruta insegura rechazada en archive Node: {}", path.display()));
+            return Err(format!(
+                "Ruta insegura rechazada en archive Node: {}",
+                path.display()
+            ));
         }
     }
 
@@ -424,12 +451,10 @@ fn python_asset_from_values(
     assets: &[serde_json::Value],
     filename: &str,
 ) -> Result<Option<PythonStandaloneAsset>, String> {
-    let Some(asset) = assets.iter().find(|asset| {
-        asset
-            .get("name")
-            .and_then(|value| value.as_str())
-            == Some(filename)
-    }) else {
+    let Some(asset) = assets
+        .iter()
+        .find(|asset| asset.get("name").and_then(|value| value.as_str()) == Some(filename))
+    else {
         return Ok(None);
     };
 
@@ -609,13 +634,11 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
         ));
     }
 
-    let version_text = String::from_utf8_lossy(
-        if version_out.stdout.is_empty() {
-            &version_out.stderr
-        } else {
-            &version_out.stdout
-        }
-    );
+    let version_text = String::from_utf8_lossy(if version_out.stdout.is_empty() {
+        &version_out.stderr
+    } else {
+        &version_out.stdout
+    });
 
     if !python_version_text_matches_expected(&version_text) {
         return Err(format!(
@@ -731,8 +754,7 @@ pub fn python_version() -> Option<String> {
 
 pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
     let runtimes_dir = paths::portable_runtimes_dir();
-    fs::create_dir_all(&runtimes_dir)
-        .map_err(|e| format!("Error creando directorio: {e}"))?;
+    fs::create_dir_all(&runtimes_dir).map_err(|e| format!("Error creando directorio: {e}"))?;
 
     emit_python_progress(app, "resolving", 0.0, "Resolviendo asset de Python...");
 
@@ -740,10 +762,15 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
 
     let tmp_archive = runtimes_dir.join(format!(".python-download-{}.tmp", PYTHON_VERSION));
 
-    emit_python_progress(app, "downloading", 5.0, &format!("Descargando {}...", asset.filename));
+    emit_python_progress(
+        app,
+        "downloading",
+        5.0,
+        &format!("Descargando {}...", asset.filename),
+    );
 
-    let mut response = reqwest::blocking::get(&asset.url)
-        .map_err(|e| format!("Error descargando Python: {e}"))?;
+    let mut response =
+        reqwest::blocking::get(&asset.url).map_err(|e| format!("Error descargando Python: {e}"))?;
 
     let total_size = response.content_length().unwrap_or(30_000_000u64);
     let mut file = fs::File::create(&tmp_archive)
@@ -785,11 +812,9 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
 
     let stage_dir = runtimes_dir.join(format!(".python-stage-{}", PYTHON_VERSION));
     if stage_dir.exists() {
-        fs::remove_dir_all(&stage_dir)
-            .map_err(|e| format!("Error limpiando staging: {e}"))?;
+        fs::remove_dir_all(&stage_dir).map_err(|e| format!("Error limpiando staging: {e}"))?;
     }
-    fs::create_dir_all(&stage_dir)
-        .map_err(|e| format!("Error creando staging: {e}"))?;
+    fs::create_dir_all(&stage_dir).map_err(|e| format!("Error creando staging: {e}"))?;
 
     emit_python_progress(app, "extracting", 65.0, "Extrayendo Python...");
     extract_python_tar_gz(&tmp_archive, &stage_dir).map_err(|e| {
@@ -816,11 +841,7 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
     let python_dir = paths::portable_python_prefix();
     let backup_dir = runtimes_dir.join(format!(".python-backup-{}", paths::timestamp()));
 
-    if let Err(error) = activate_staged_python_runtime(
-        &staged_python,
-        &python_dir,
-        &backup_dir,
-    ) {
+    if let Err(error) = activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir) {
         let _ = fs::remove_dir_all(&stage_dir);
         return Err(error);
     }
@@ -853,11 +874,7 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
         return Err("Python portable no está instalado.".to_string());
     }
     let managed_path = managed_python_runtime_path()?;
-    let output = build_managed_pip_install_command(
-        &python_exe,
-        &managed_path,
-        packages,
-    )
+    let output = build_managed_pip_install_command(&python_exe, &managed_path, packages)
         .output()
         .map_err(|e| format!("Error ejecutando pip: {e}"))?;
     if !output.status.success() {
@@ -894,7 +911,10 @@ fn build_managed_pip_install_command(
 
 // ==================== NPM PACKAGES ====================
 
-fn notebooklm_lock_entry<'a>(lock: &'a serde_json::Value, package_name: &str) -> Option<&'a serde_json::Value> {
+fn notebooklm_lock_entry<'a>(
+    lock: &'a serde_json::Value,
+    package_name: &str,
+) -> Option<&'a serde_json::Value> {
     let key = format!("node_modules/{package_name}");
     lock.get("packages")?.get(&key)
 }
@@ -916,10 +936,12 @@ fn notebooklm_package_matches_contract(
         && package.get("version").and_then(|v| v.as_str()) == Some(contract.version.as_str())
         && notebooklm_lock_entry(lock, &contract.package)
             .and_then(|entry| entry.get("version"))
-            .and_then(|v| v.as_str()) == Some(contract.version.as_str())
+            .and_then(|v| v.as_str())
+            == Some(contract.version.as_str())
         && notebooklm_lock_entry(lock, &contract.package)
             .and_then(|entry| entry.get("integrity"))
-            .and_then(|v| v.as_str()) == Some(contract.npm_integrity.as_str())
+            .and_then(|v| v.as_str())
+            == Some(contract.npm_integrity.as_str())
 }
 
 #[derive(Debug, Deserialize)]
@@ -931,42 +953,67 @@ pub struct NotebookLmBrowserStatus {
     executable_path: Option<PathBuf>,
 }
 
-pub fn resolve_notebooklm_mcp_bin_for(package_dir: &std::path::Path, contract: &crate::release::ManagedMcpContract) -> Result<PathBuf, String> {
+pub fn resolve_notebooklm_mcp_bin_for(
+    package_dir: &std::path::Path,
+    contract: &crate::release::ManagedMcpContract,
+) -> Result<PathBuf, String> {
     let package_path = package_dir.join("package.json");
     let package: serde_json::Value = serde_json::from_slice(
-        &fs::read(&package_path).map_err(|e| format!("No se pudo leer package.json del MCP: {e}"))?,
-    ).map_err(|e| format!("package.json del MCP inválido: {e}"))?;
+        &fs::read(&package_path)
+            .map_err(|e| format!("No se pudo leer package.json del MCP: {e}"))?,
+    )
+    .map_err(|e| format!("package.json del MCP inválido: {e}"))?;
     if package.get("name").and_then(|v| v.as_str()) != Some(contract.package.as_str())
         || package.get("version").and_then(|v| v.as_str()) != Some(contract.version.as_str())
     {
         return Err("package.json del MCP no coincide con el contrato aprobado.".to_string());
     }
-    let bin = package.get("bin").and_then(|value| value.as_str().map(str::to_owned).or_else(|| {
-        value.get(contract.package.rsplit('/').next().unwrap_or_default())
-            .and_then(|v| v.as_str()).map(str::to_owned)
-    })).ok_or("El MCP no expone su bin público administrado.")?;
-    if bin.trim().is_empty() || std::path::Path::new(&bin).is_absolute() || bin.split(['/', '\\']).any(|part| part == "..") {
+    let bin = package
+        .get("bin")
+        .and_then(|value| {
+            value.as_str().map(str::to_owned).or_else(|| {
+                value
+                    .get(contract.package.rsplit('/').next().unwrap_or_default())
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            })
+        })
+        .ok_or("El MCP no expone su bin público administrado.")?;
+    if bin.trim().is_empty()
+        || std::path::Path::new(&bin).is_absolute()
+        || bin.split(['/', '\\']).any(|part| part == "..")
+    {
         return Err("El bin público del MCP no es una ruta segura.".to_string());
     }
     let candidate = package_dir.join(bin);
-    let root = fs::canonicalize(package_dir).map_err(|e| format!("No se pudo resolver el paquete MCP: {e}"))?;
-    let resolved = fs::canonicalize(&candidate).map_err(|e| format!("El bin público del MCP no existe: {e}"))?;
+    let root = fs::canonicalize(package_dir)
+        .map_err(|e| format!("No se pudo resolver el paquete MCP: {e}"))?;
+    let resolved = fs::canonicalize(&candidate)
+        .map_err(|e| format!("El bin público del MCP no existe: {e}"))?;
     if !resolved.starts_with(&root) || !resolved.is_file() {
         return Err("El bin público del MCP escapa de su paquete o no es un archivo.".to_string());
     }
     Ok(resolved)
 }
 
-fn validate_browser_status(status: &NotebookLmBrowserStatus, managed_root: &std::path::Path) -> Result<(), String> {
+fn validate_browser_status(
+    status: &NotebookLmBrowserStatus,
+    managed_root: &std::path::Path,
+) -> Result<(), String> {
     if status.browser != "chromium" || !status.installed || !status.hermetic {
         return Err("El MCP no confirmó un Chromium hermético instalado.".to_string());
     }
-    let executable = status.executable_path.as_ref().ok_or("El MCP no devolvió executablePath.")?;
+    let executable = status
+        .executable_path
+        .as_ref()
+        .ok_or("El MCP no devolvió executablePath.")?;
     if !executable.is_file() {
         return Err("El executablePath del Chromium no existe.".to_string());
     }
-    let root = fs::canonicalize(managed_root).map_err(|e| format!("No se pudo resolver el runtime MCP: {e}"))?;
-    let executable = fs::canonicalize(executable).map_err(|e| format!("No se pudo resolver Chromium: {e}"))?;
+    let root = fs::canonicalize(managed_root)
+        .map_err(|e| format!("No se pudo resolver el runtime MCP: {e}"))?;
+    let executable =
+        fs::canonicalize(executable).map_err(|e| format!("No se pudo resolver Chromium: {e}"))?;
     if !executable.starts_with(&root) {
         return Err("El Chromium del MCP está fuera del runtime administrado.".to_string());
     }
@@ -988,18 +1035,32 @@ fn build_managed_notebooklm_browser_command(
     command
 }
 
-fn run_notebooklm_browser_command(node: &std::path::Path, bin: &std::path::Path, action: &str) -> Result<NotebookLmBrowserStatus, String> {
+fn run_notebooklm_browser_command(
+    node: &std::path::Path,
+    bin: &std::path::Path,
+    action: &str,
+) -> Result<NotebookLmBrowserStatus, String> {
     let managed_path = managed_node_runtime_path()?;
     let output = build_managed_notebooklm_browser_command(node, bin, &managed_path, action)
         .output()
         .map_err(|e| format!("No se pudo ejecutar el bin público del MCP: {e}"))?;
     if !output.status.success() {
-        return Err(format!("MCP browser {action} falló: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "MCP browser {action} falló: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
-    serde_json::from_slice(&output.stdout).map_err(|e| format!("Respuesta JSON inválida de MCP browser {action}: {e}"))
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Respuesta JSON inválida de MCP browser {action}: {e}"))
 }
 
-fn validate_notebooklm_browser(node: &std::path::Path, package_dir: &std::path::Path, managed_root: &std::path::Path, action: &str, contract: &crate::release::ManagedMcpContract) -> Result<(), String> {
+fn validate_notebooklm_browser(
+    node: &std::path::Path,
+    package_dir: &std::path::Path,
+    managed_root: &std::path::Path,
+    action: &str,
+    contract: &crate::release::ManagedMcpContract,
+) -> Result<(), String> {
     let bin = resolve_notebooklm_mcp_bin_for(package_dir, contract)?;
     let status = run_notebooklm_browser_command(node, &bin, action)?;
     validate_browser_status(&status, managed_root)
@@ -1017,7 +1078,8 @@ fn build_managed_notebooklm_npm_command(
         .arg(npm_cli)
         .args(args)
         .current_dir(stage)
-        .env("PATH", managed_path);
+        .env("PATH", managed_path)
+        .env_remove("NODE_OPTIONS");
     command
 }
 
@@ -1046,7 +1108,9 @@ where
             }
         }
 
-        return Err(format!("Error activando NotebookLM MCP: {activation_error}"));
+        return Err(format!(
+            "Error activando NotebookLM MCP: {activation_error}"
+        ));
     }
 
     if let Err(validation_error) = validate_active(active) {
@@ -1077,17 +1141,34 @@ where
     Ok(())
 }
 
-pub fn portable_notebooklm_mcp_installed_for(contract: &crate::release::ManagedMcpContract) -> bool {
+pub fn portable_notebooklm_mcp_installed_for(
+    contract: &crate::release::ManagedMcpContract,
+) -> bool {
     let package_dir = portable_notebooklm_mcp_package_dir_for(&contract.package);
     let package = package_dir.join("package.json");
     let lock = paths::portable_notebooklm_mcp_lock();
-    let Ok(package) = fs::read_to_string(package) else { return false; };
-    let Ok(package) = serde_json::from_str::<serde_json::Value>(&package) else { return false; };
-    let Ok(lock) = fs::read_to_string(lock) else { return false; };
-    let Ok(lock) = serde_json::from_str::<serde_json::Value>(&lock) else { return false; };
+    let Ok(package) = fs::read_to_string(package) else {
+        return false;
+    };
+    let Ok(package) = serde_json::from_str::<serde_json::Value>(&package) else {
+        return false;
+    };
+    let Ok(lock) = fs::read_to_string(lock) else {
+        return false;
+    };
+    let Ok(lock) = serde_json::from_str::<serde_json::Value>(&lock) else {
+        return false;
+    };
     notebooklm_package_matches_contract(&package, &lock, contract)
         && resolve_notebooklm_mcp_bin_for(&package_dir, contract).is_ok()
-        && validate_notebooklm_browser(&paths::portable_node_exe(), &package_dir, &paths::portable_notebooklm_mcp_prefix().join("node_modules"), "status", contract).is_ok()
+        && validate_notebooklm_browser(
+            &paths::portable_node_exe(),
+            &package_dir,
+            &paths::portable_notebooklm_mcp_prefix().join("node_modules"),
+            "status",
+            contract,
+        )
+        .is_ok()
 }
 
 pub fn install_notebooklm_mcp() -> Result<(), String> {
@@ -1104,58 +1185,98 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
     let managed_path = managed_node_runtime_path()?;
     let package = serde_json::json!({"private": true, "dependencies": {contract.package.clone(): contract.version.clone()}});
     let result = (|| -> Result<(), String> {
-        fs::write(stage.join("package.json"), serde_json::to_vec_pretty(&package).unwrap()).map_err(|e| e.to_string())?;
+        fs::write(
+            stage.join("package.json"),
+            serde_json::to_vec_pretty(&package).unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
         let run = |args: &[&str]| -> Result<(), String> {
-            let output = build_managed_notebooklm_npm_command(
-                &node,
-                &npm,
-                &stage,
-                &managed_path,
-                args,
-            )
-                .output()
-                .map_err(|e| e.to_string())?;
-            if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).to_string()); }
+            let output =
+                build_managed_notebooklm_npm_command(&node, &npm, &stage, &managed_path, args)
+                    .output()
+                    .map_err(|e| e.to_string())?;
+            if !output.status.success() {
+                return Err(String::from_utf8_lossy(&output.stderr).to_string());
+            }
             Ok(())
         };
-        run(&["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"])?;
-        let lock: serde_json::Value = serde_json::from_slice(&fs::read(stage.join("package-lock.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        let entry = notebooklm_lock_entry(&lock, &contract.package).ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
-        if entry.get("version").and_then(|v| v.as_str()) != Some(contract.version.as_str()) || entry.get("integrity").and_then(|v| v.as_str()) != Some(contract.npm_integrity.as_str()) { return Err("El integrity de NotebookLM MCP no coincide con el contrato administrado de Jintia.".to_string()); }
-        run(&["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"])?;
+        run(&[
+            "install",
+            "--package-lock-only",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+        ])?;
+        let lock: serde_json::Value = serde_json::from_slice(
+            &fs::read(stage.join("package-lock.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let entry = notebooklm_lock_entry(&lock, &contract.package)
+            .ok_or("El lock de NotebookLM MCP no contiene el paquete.")?;
+        if entry.get("version").and_then(|v| v.as_str()) != Some(contract.version.as_str())
+            || entry.get("integrity").and_then(|v| v.as_str())
+                != Some(contract.npm_integrity.as_str())
+        {
+            return Err("El integrity de NotebookLM MCP no coincide con el contrato administrado de Jintia.".to_string());
+        }
+        run(&[
+            "ci",
+            "--omit=dev",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+        ])?;
         let package_dir = notebooklm_package_dir(&stage, &contract.package);
-        validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "install", &contract)?;
-        validate_notebooklm_browser(&node, &package_dir, &stage.join("node_modules"), "status", &contract)?;
+        validate_notebooklm_browser(
+            &node,
+            &package_dir,
+            &stage.join("node_modules"),
+            "install",
+            &contract,
+        )?;
+        validate_notebooklm_browser(
+            &node,
+            &package_dir,
+            &stage.join("node_modules"),
+            "status",
+            &contract,
+        )?;
         let active = paths::portable_notebooklm_mcp_prefix();
         let backup = root.join(format!(".notebooklm-mcp-backup-{}", paths::timestamp()));
-        activate_staged_notebooklm_mcp(
-            &stage,
-            &active,
-            &backup,
-            |active_root| {
-                let active_package = notebooklm_package_dir(active_root, &contract.package);
-                validate_notebooklm_browser(
-                    &node,
-                    &active_package,
-                    &active_root.join("node_modules"),
-                    "status",
-                    &contract,
-                )
-            },
-        )
+        activate_staged_notebooklm_mcp(&stage, &active, &backup, |active_root| {
+            let active_package = notebooklm_package_dir(active_root, &contract.package);
+            validate_notebooklm_browser(
+                &node,
+                &active_package,
+                &active_root.join("node_modules"),
+                "status",
+                &contract,
+            )
+        })
     })();
-    if result.is_err() { let _ = fs::remove_dir_all(&stage); }
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&stage);
+    }
     result
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
-    use crate::paths;
-    #[cfg(target_os = "windows")]
-    use super::extract_zip;
     #[cfg(not(target_os = "windows"))]
     use super::extract_node_tar_gz;
+    #[cfg(target_os = "windows")]
+    use super::extract_zip;
+    use super::{
+        activate_staged_node_runtime, activate_staged_notebooklm_mcp,
+        activate_staged_python_runtime, build_managed_node_cli_version_command,
+        build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command,
+        build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages,
+        install_pip_packages, managed_node_runtime_path, managed_python_runtime_path,
+        node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry,
+        notebooklm_package_matches_contract, python_version_text_matches_expected,
+        resolve_notebooklm_mcp_bin_for, verify_sha256,
+    };
+    use crate::paths;
     use std::fs;
 
     #[test]
@@ -1192,7 +1313,10 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
 
-        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-python"));
+        assert_eq!(
+            command.get_program(),
+            std::ffi::OsStr::new("managed-python")
+        );
         assert_eq!(&args[..5], ["-I", "-m", "pip", "install", "--quiet"]);
     }
 
@@ -1261,8 +1385,7 @@ mod tests {
         );
 
         assert_eq!(
-            node_checksum_from_manifest(&manifest, "node-v22.13.0-darwin-arm64.tar.gz")
-                .unwrap(),
+            node_checksum_from_manifest(&manifest, "node-v22.13.0-darwin-arm64.tar.gz").unwrap(),
             "b".repeat(64)
         );
     }
@@ -1270,8 +1393,8 @@ mod tests {
     #[test]
     fn node_checksum_manifest_rejects_missing_asset() {
         let manifest = format!("{}  node-v22.13.0-win-x64.zip\n", "a".repeat(64));
-        let error = node_checksum_from_manifest(&manifest, "node-v22.13.0-linux-x64.tar.gz")
-            .unwrap_err();
+        let error =
+            node_checksum_from_manifest(&manifest, "node-v22.13.0-linux-x64.tar.gz").unwrap_err();
 
         assert!(error.contains("Checksum no encontrado"));
     }
@@ -1300,8 +1423,8 @@ mod tests {
             "a".repeat(64),
             "b".repeat(64),
         );
-        let error = node_checksum_from_manifest(&manifest, "node-v22.13.0-win-x64.zip")
-            .unwrap_err();
+        let error =
+            node_checksum_from_manifest(&manifest, "node-v22.13.0-win-x64.zip").unwrap_err();
 
         assert!(error.contains("Checksum duplicado"));
     }
@@ -1395,8 +1518,7 @@ mod tests {
         fs::create_dir_all(&node_dir).unwrap();
         fs::write(node_dir.join("marker-old"), "old").unwrap();
 
-        let error = activate_staged_node_runtime(&staged_node, &node_dir, &backup_dir)
-            .unwrap_err();
+        let error = activate_staged_node_runtime(&staged_node, &node_dir, &backup_dir).unwrap_err();
 
         assert!(error.contains("Error activando Node"));
         assert!(node_dir.join("marker-old").is_file());
@@ -1462,8 +1584,8 @@ mod tests {
         fs::create_dir_all(&python_dir).unwrap();
         fs::write(python_dir.join("marker-old"), "old").unwrap();
 
-        let error = activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir)
-            .unwrap_err();
+        let error =
+            activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir).unwrap_err();
 
         assert!(error.contains("Error activando Python"));
         assert!(python_dir.join("marker-old").is_file());
@@ -1529,7 +1651,8 @@ mod tests {
         let backup = root.join("backup");
         fs::create_dir_all(&active).unwrap();
         fs::write(active.join("marker-old"), "old").unwrap();
-        let error = activate_staged_notebooklm_mcp(&stage, &active, &backup, |_active| Ok(())).unwrap_err();
+        let error =
+            activate_staged_notebooklm_mcp(&stage, &active, &backup, |_active| Ok(())).unwrap_err();
         assert!(error.contains("Error activando NotebookLM MCP"));
         assert!(active.join("marker-old").is_file());
         assert!(!backup.exists());
@@ -1666,6 +1789,23 @@ mod tests {
     }
 
     #[test]
+    fn notebooklm_npm_command_removes_node_options() {
+        let command = build_managed_notebooklm_npm_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-stage"),
+            std::ffi::OsStr::new("managed-only-bin"),
+            &["ci"],
+        );
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
+    }
+
+    #[test]
     fn notebooklm_browser_command_uses_managed_node_and_bin() {
         let command = build_managed_notebooklm_browser_command(
             std::path::Path::new("managed-node"),
@@ -1723,12 +1863,15 @@ mod tests {
             "status",
         );
         let args: Vec<_> = command.get_args().collect();
-        assert_eq!(args, [
-            std::ffi::OsStr::new("managed-mcp-bin.js"),
-            std::ffi::OsStr::new("browser"),
-            std::ffi::OsStr::new("status"),
-            std::ffi::OsStr::new("--json"),
-        ]);
+        assert_eq!(
+            args,
+            [
+                std::ffi::OsStr::new("managed-mcp-bin.js"),
+                std::ffi::OsStr::new("browser"),
+                std::ffi::OsStr::new("status"),
+                std::ffi::OsStr::new("--json"),
+            ]
+        );
     }
 
     #[test]
@@ -1740,12 +1883,15 @@ mod tests {
             "install",
         );
         let args: Vec<_> = command.get_args().collect();
-        assert_eq!(args, [
-            std::ffi::OsStr::new("managed-mcp-bin.js"),
-            std::ffi::OsStr::new("browser"),
-            std::ffi::OsStr::new("install"),
-            std::ffi::OsStr::new("--json"),
-        ]);
+        assert_eq!(
+            args,
+            [
+                std::ffi::OsStr::new("managed-mcp-bin.js"),
+                std::ffi::OsStr::new("browser"),
+                std::ffi::OsStr::new("install"),
+                std::ffi::OsStr::new("--json"),
+            ]
+        );
     }
 
     #[test]
@@ -1794,7 +1940,9 @@ mod tests {
     #[test]
     fn python_version_text_rejects_non_exact_version_output() {
         assert!(!python_version_text_matches_expected("Python 3.13.15rc1"));
-        assert!(!python_version_text_matches_expected("Python 3.13.15 custom"));
+        assert!(!python_version_text_matches_expected(
+            "Python 3.13.15 custom"
+        ));
         assert!(!python_version_text_matches_expected("3.13.15"));
     }
 
@@ -1811,15 +1959,18 @@ mod tests {
         );
         assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
         let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
-        assert_eq!(args, vec![
-            std::ffi::OsStr::new("managed-npm-cli.js"),
-            std::ffi::OsStr::new("install"),
-            std::ffi::OsStr::new("--global"),
-            std::ffi::OsStr::new("--prefix"),
-            std::ffi::OsStr::new("managed-prefix"),
-            std::ffi::OsStr::new("pkg-a"),
-            std::ffi::OsStr::new("@scope/pkg-b"),
-        ]);
+        assert_eq!(
+            args,
+            vec![
+                std::ffi::OsStr::new("managed-npm-cli.js"),
+                std::ffi::OsStr::new("install"),
+                std::ffi::OsStr::new("--global"),
+                std::ffi::OsStr::new("--prefix"),
+                std::ffi::OsStr::new("managed-prefix"),
+                std::ffi::OsStr::new("pkg-a"),
+                std::ffi::OsStr::new("@scope/pkg-b"),
+            ]
+        );
     }
 
     #[test]
@@ -1843,7 +1994,10 @@ mod tests {
 
     #[test]
     fn disciplinary_npm_command_preserves_package_arguments() {
-        let packages = vec!["@scope/pkg@1.2.3".to_string(), "plain-package@4.5.6".to_string()];
+        let packages = vec![
+            "@scope/pkg@1.2.3".to_string(),
+            "plain-package@4.5.6".to_string(),
+        ];
         let command = build_managed_npm_install_command(
             std::path::Path::new("managed-node"),
             std::path::Path::new("managed-npm-cli.js"),
@@ -1852,10 +2006,13 @@ mod tests {
             &packages,
         );
         let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
-        assert_eq!(&args[5..], [
-            std::ffi::OsStr::new("@scope/pkg@1.2.3"),
-            std::ffi::OsStr::new("plain-package@4.5.6"),
-        ]);
+        assert_eq!(
+            &args[5..],
+            [
+                std::ffi::OsStr::new("@scope/pkg@1.2.3"),
+                std::ffi::OsStr::new("plain-package@4.5.6"),
+            ]
+        );
         assert_ne!(command.get_program(), std::ffi::OsStr::new("npm"));
         assert_ne!(command.get_program(), std::ffi::OsStr::new("npm.cmd"));
         assert_ne!(command.get_program(), std::ffi::OsStr::new("cmd"));
@@ -1894,10 +2051,13 @@ mod tests {
             &["--version", "--verbose"],
         );
         let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
-        assert_eq!(&args[args.len() - 2..], [
-            std::ffi::OsStr::new("--version"),
-            std::ffi::OsStr::new("--verbose"),
-        ]);
+        assert_eq!(
+            &args[args.len() - 2..],
+            [
+                std::ffi::OsStr::new("--version"),
+                std::ffi::OsStr::new("--verbose"),
+            ]
+        );
     }
 
     #[test]
@@ -1915,10 +2075,13 @@ mod tests {
         let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
         if cfg!(target_os = "windows") {
             assert_eq!(command.get_program(), std::ffi::OsStr::new("cmd"));
-            assert_eq!(&args[..2], [
-                std::ffi::OsStr::new("/C"),
-                std::ffi::OsStr::new("managed-cli.cmd"),
-            ]);
+            assert_eq!(
+                &args[..2],
+                [
+                    std::ffi::OsStr::new("/C"),
+                    std::ffi::OsStr::new("managed-cli.cmd"),
+                ]
+            );
         } else {
             assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
             assert_eq!(&args[..1], [std::ffi::OsStr::new("managed-cli")]);
@@ -1946,26 +2109,40 @@ mod tests {
         assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
         if cfg!(target_os = "windows") {
             assert_eq!(command.get_program(), std::ffi::OsStr::new("cmd"));
-            assert_eq!(&args[..3], [
-                std::ffi::OsStr::new("/C"),
-                std::ffi::OsStr::new("vivliostyle.cmd"),
-                std::ffi::OsStr::new("--version"),
-            ]);
+            assert_eq!(
+                &args[..3],
+                [
+                    std::ffi::OsStr::new("/C"),
+                    std::ffi::OsStr::new("vivliostyle.cmd"),
+                    std::ffi::OsStr::new("--version"),
+                ]
+            );
         } else {
             assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-node"));
-            assert_eq!(&args[..2], [
-                std::ffi::OsStr::new("vivliostyle"),
-                std::ffi::OsStr::new("--version"),
-            ]);
+            assert_eq!(
+                &args[..2],
+                [
+                    std::ffi::OsStr::new("vivliostyle"),
+                    std::ffi::OsStr::new("--version"),
+                ]
+            );
         }
     }
 
     #[cfg(target_os = "windows")]
-    fn zip_fixture(name: &str, entry: &str, bytes: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
+    fn zip_fixture(
+        name: &str,
+        entry: &str,
+        bytes: &[u8],
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("jintia-node-zip-{}-{nonce}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("jintia-node-zip-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let archive_path = root.join(name);
         let file = fs::File::create(&archive_path).unwrap();
@@ -1979,7 +2156,8 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn extract_zip_keeps_node_under_managed_runtime() {
-        let (archive, dest) = zip_fixture("node.zip", "node-v22.13.0-win-x64/bin/node.exe", b"node");
+        let (archive, dest) =
+            zip_fixture("node.zip", "node-v22.13.0-win-x64/bin/node.exe", b"node");
         fs::create_dir_all(&dest).unwrap();
         extract_zip(&archive, &dest).unwrap();
         assert_eq!(fs::read(dest.join("node/bin/node.exe")).unwrap(), b"node");
@@ -2039,10 +2217,8 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn node_tar_gz_extraction_normalizes_single_node_root() {
-        let (archive, dest) = tar_gz_fixture(
-            "normal",
-            &[("node-v22.13.0-test/bin/marker", b"marker")],
-        );
+        let (archive, dest) =
+            tar_gz_fixture("normal", &[("node-v22.13.0-test/bin/marker", b"marker")]);
         fs::create_dir_all(&dest).unwrap();
 
         extract_node_tar_gz(&archive, &dest).unwrap();
@@ -2085,7 +2261,13 @@ mod tests {
     }
 
     fn contract() -> crate::release::ManagedMcpContract {
-        crate::release::ManagedMcpContract { package: "@scope/pkg".into(), version: "2.3.10".into(), node_requirement: ">=22.13.0".into(), npm_integrity: "sha512-AAAA".into(), jintia_version: "11.6.10".into() }
+        crate::release::ManagedMcpContract {
+            package: "@scope/pkg".into(),
+            version: "2.3.10".into(),
+            node_requirement: ">=22.13.0".into(),
+            npm_integrity: "sha512-AAAA".into(),
+            jintia_version: "11.6.10".into(),
+        }
     }
 
     #[test]
@@ -2095,12 +2277,26 @@ mod tests {
         let lock = serde_json::json!({"packages":{"node_modules/@scope/pkg":{"version":"2.3.10","integrity":"sha512-AAAA"}}});
         assert!(notebooklm_package_matches_contract(&package, &lock, &c));
         for (package, lock) in [
-            (serde_json::json!({"name":"other","version":"2.3.10"}), lock.clone()),
-            (serde_json::json!({"name":"@scope/pkg","version":"2.3.9"}), lock.clone()),
+            (
+                serde_json::json!({"name":"other","version":"2.3.10"}),
+                lock.clone(),
+            ),
+            (
+                serde_json::json!({"name":"@scope/pkg","version":"2.3.9"}),
+                lock.clone(),
+            ),
             (package.clone(), serde_json::json!({"packages":{}})),
-            (package.clone(), serde_json::json!({"packages":{"node_modules/@scope/pkg":{"version":"2.3.9","integrity":"sha512-AAAA"}}})),
-            (package.clone(), serde_json::json!({"packages":{"node_modules/@scope/pkg":{"version":"2.3.10","integrity":"sha512-BBBB"}}})),
-        ] { assert!(!notebooklm_package_matches_contract(&package, &lock, &c)); }
+            (
+                package.clone(),
+                serde_json::json!({"packages":{"node_modules/@scope/pkg":{"version":"2.3.9","integrity":"sha512-AAAA"}}}),
+            ),
+            (
+                package.clone(),
+                serde_json::json!({"packages":{"node_modules/@scope/pkg":{"version":"2.3.10","integrity":"sha512-BBBB"}}}),
+            ),
+        ] {
+            assert!(!notebooklm_package_matches_contract(&package, &lock, &c));
+        }
     }
 
     #[test]
@@ -2114,9 +2310,16 @@ mod tests {
                 }
             }
         });
-        let entry = notebooklm_lock_entry(&lock, "@charlie.act7/gemini-notebook-mcp").expect("debe resolver la clave scoped completa");
-        assert_eq!(entry.get("version").and_then(|value| value.as_str()), Some("2.3.3"));
-        assert_eq!(entry.get("integrity").and_then(|value| value.as_str()), Some("sha512-test"));
+        let entry = notebooklm_lock_entry(&lock, "@charlie.act7/gemini-notebook-mcp")
+            .expect("debe resolver la clave scoped completa");
+        assert_eq!(
+            entry.get("version").and_then(|value| value.as_str()),
+            Some("2.3.3")
+        );
+        assert_eq!(
+            entry.get("integrity").and_then(|value| value.as_str()),
+            Some("sha512-test")
+        );
     }
 
     #[test]
@@ -2127,38 +2330,72 @@ mod tests {
 
     #[test]
     fn resolve_notebooklm_mcp_bin_accepts_string_and_scoped_bin_object() {
-        let contract = crate::release::ManagedMcpContract { package: "@charlie.act7/gemini-notebook-mcp".into(), version: "2.3.5".into(), node_requirement: ">=22.13.0".into(), npm_integrity: "sha512-test".into(), jintia_version: "11.6.8".into() };
-        let root = std::env::temp_dir().join(format!("jintia-mcp-bin-test-{}", crate::paths::timestamp()));
+        let contract = crate::release::ManagedMcpContract {
+            package: "@charlie.act7/gemini-notebook-mcp".into(),
+            version: "2.3.5".into(),
+            node_requirement: ">=22.13.0".into(),
+            npm_integrity: "sha512-test".into(),
+            jintia_version: "11.6.8".into(),
+        };
+        let root =
+            std::env::temp_dir().join(format!("jintia-mcp-bin-test-{}", crate::paths::timestamp()));
         let package = root.join("node_modules/@charlie.act7/gemini-notebook-mcp");
         let cli = ["dist", "cli.js"].join("/");
         fs::create_dir_all(package.join("dist")).unwrap();
         fs::write(package.join(&cli), "#!/usr/bin/env node\n").unwrap();
-        fs::write(package.join("package.json"), serde_json::json!({
-            "name": contract.package,
-            "version": contract.version,
-            "bin": { "gemini-notebook-mcp": cli }
-        }).to_string()).unwrap();
-        assert_eq!(resolve_notebooklm_mcp_bin_for(&package, &contract).unwrap(), fs::canonicalize(package.join(&cli)).unwrap());
-        fs::write(package.join("package.json"), serde_json::json!({
-            "name": contract.package,
-            "version": contract.version,
-            "bin": cli
-        }).to_string()).unwrap();
+        fs::write(
+            package.join("package.json"),
+            serde_json::json!({
+                "name": contract.package,
+                "version": contract.version,
+                "bin": { "gemini-notebook-mcp": cli }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_notebooklm_mcp_bin_for(&package, &contract).unwrap(),
+            fs::canonicalize(package.join(&cli)).unwrap()
+        );
+        fs::write(
+            package.join("package.json"),
+            serde_json::json!({
+                "name": contract.package,
+                "version": contract.version,
+                "bin": cli
+            })
+            .to_string(),
+        )
+        .unwrap();
         assert!(resolve_notebooklm_mcp_bin_for(&package, &contract).is_ok());
         fs::remove_dir_all(root).ok();
     }
 
     #[test]
     fn resolve_notebooklm_mcp_bin_rejects_escape_and_missing_bin() {
-        let root = std::env::temp_dir().join(format!("jintia-mcp-bin-invalid-{}", crate::paths::timestamp()));
+        let root = std::env::temp_dir().join(format!(
+            "jintia-mcp-bin-invalid-{}",
+            crate::paths::timestamp()
+        ));
         let package = root.join("package");
         fs::create_dir_all(&package).unwrap();
-        fs::write(package.join("package.json"), serde_json::json!({
-            "name": "@charlie.act7/gemini-notebook-mcp",
-            "version": "2.3.5",
-            "bin": { "other": "../escape.js" }
-        }).to_string()).unwrap();
-        let contract = crate::release::ManagedMcpContract { package: "@charlie.act7/gemini-notebook-mcp".into(), version: "2.3.5".into(), node_requirement: ">=22.13.0".into(), npm_integrity: "sha512-test".into(), jintia_version: "11.6.8".into() };
+        fs::write(
+            package.join("package.json"),
+            serde_json::json!({
+                "name": "@charlie.act7/gemini-notebook-mcp",
+                "version": "2.3.5",
+                "bin": { "other": "../escape.js" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let contract = crate::release::ManagedMcpContract {
+            package: "@charlie.act7/gemini-notebook-mcp".into(),
+            version: "2.3.5".into(),
+            node_requirement: ">=22.13.0".into(),
+            npm_integrity: "sha512-test".into(),
+            jintia_version: "11.6.8".into(),
+        };
         assert!(resolve_notebooklm_mcp_bin_for(&package, &contract).is_err());
         fs::remove_dir_all(root).ok();
     }
@@ -2182,14 +2419,10 @@ pub fn vivliostyle_version() -> Option<String> {
     }
 
     let managed_path = managed_node_runtime_path().ok()?;
-    let output = build_managed_node_cli_version_command(
-        &node,
-        &executable,
-        &managed_path,
-        &["--version"],
-    )
-    .output()
-    .ok()?;
+    let output =
+        build_managed_node_cli_version_command(&node, &executable, &managed_path, &["--version"])
+            .output()
+            .ok()?;
 
     if !output.status.success() {
         return None;
@@ -2216,8 +2449,7 @@ pub fn resolve_node_cli(command: &str) -> Option<PathBuf> {
         command.to_string()
     };
 
-    let portable = paths::portable_node_bin_dir()
-        .join(portable_name);
+    let portable = paths::portable_node_bin_dir().join(portable_name);
 
     if portable.is_file() {
         return Some(portable);
@@ -2226,10 +2458,7 @@ pub fn resolve_node_cli(command: &str) -> Option<PathBuf> {
     None
 }
 
-pub fn node_cli_version(
-    command: &str,
-    args: &[&str],
-) -> Option<String> {
+pub fn node_cli_version(command: &str, args: &[&str]) -> Option<String> {
     let executable = resolve_node_cli(command)?;
 
     let node = paths::portable_node_exe();
@@ -2238,14 +2467,9 @@ pub fn node_cli_version(
     }
 
     let managed_path = managed_node_runtime_path().ok()?;
-    let output = build_managed_node_cli_version_command(
-        &node,
-        &executable,
-        &managed_path,
-        args,
-    )
-    .output()
-    .ok()?;
+    let output = build_managed_node_cli_version_command(&node, &executable, &managed_path, args)
+        .output()
+        .ok()?;
 
     if !output.status.success() {
         return None;
@@ -2257,18 +2481,12 @@ pub fn node_cli_version(
         output.stdout
     };
 
-    String::from_utf8(bytes)
-        .ok()
-        .and_then(|value| {
-            value
-                .lines()
-                .find(|line| {
-                    !line.trim().is_empty()
-                })
-                .map(|line| {
-                    line.trim().to_string()
-                })
-        })
+    String::from_utf8(bytes).ok().and_then(|value| {
+        value
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
+    })
 }
 
 pub(crate) fn managed_node_runtime_path() -> Result<OsString, String> {
@@ -2334,15 +2552,15 @@ pub fn install_vivliostyle() -> Result<(), String> {
     let prefix = paths::portable_node_prefix();
     let managed_path = managed_node_runtime_path()?;
     let output = Command::new(&node)
-            .arg(&npm_cli)
-            .arg("install")
-            .arg("--global")
-            .arg("--prefix")
-            .arg(&prefix)
-            .arg("@vivliostyle/cli")
-            .env("PATH", managed_path)
-            .output()
-    .map_err(|e| format!("No se pudo ejecutar npm con el runtime portable: {e}"))?;
+        .arg(&npm_cli)
+        .arg("install")
+        .arg("--global")
+        .arg("--prefix")
+        .arg(&prefix)
+        .arg("@vivliostyle/cli")
+        .env("PATH", managed_path)
+        .output()
+        .map_err(|e| format!("No se pudo ejecutar npm con el runtime portable: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2377,21 +2595,13 @@ pub fn install_npm_packages(packages: &[String]) -> Result<(), String> {
 
     let prefix = paths::portable_node_prefix();
     let managed_path = managed_node_runtime_path()?;
-    let output = build_managed_npm_install_command(
-        &node,
-        &npm_cli,
-        &prefix,
-        &managed_path,
-        packages,
-    )
-    .output()
-    .map_err(|e| {
-        format!("No se pudo ejecutar npm con el runtime portable: {e}")
-    })?;
+    let output =
+        build_managed_npm_install_command(&node, &npm_cli, &prefix, &managed_path, packages)
+            .output()
+            .map_err(|e| format!("No se pudo ejecutar npm con el runtime portable: {e}"))?;
 
     if !output.status.success() {
-        let stderr =
-            String::from_utf8_lossy(&output.stderr);
+        let stderr = String::from_utf8_lossy(&output.stderr);
 
         return Err(format!(
             "npm install falló para el perfil disciplinar: {stderr}"
@@ -2411,7 +2621,8 @@ fn verify_sha256(file_path: &std::path::Path, expected_hex: &str) -> Result<(), 
     let mut buffer = [0u8; 1024 * 64];
 
     loop {
-        let n = file.read(&mut buffer)
+        let n = file
+            .read(&mut buffer)
             .map_err(|e| format!("Error leyendo para checksum: {e}"))?;
         if n == 0 {
             break;
@@ -2491,7 +2702,11 @@ pub fn resolve_skill() -> Option<String> {
 }
 
 pub fn global_skill_available() -> bool {
-    let checker = if cfg!(target_os = "windows") { "where.exe" } else { "which" };
+    let checker = if cfg!(target_os = "windows") {
+        "where.exe"
+    } else {
+        "which"
+    };
     Command::new(checker)
         .arg("jintia")
         .output()
@@ -2525,20 +2740,20 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
     emit_skill_progress(app, "installing", 5.0, "Instalando Jintia desde npm...");
 
     let output = Command::new(&node)
-            .arg(&npm_cli)
-            .arg("install")
-            .arg("--global")
-            .arg("--prefix")
-            .arg(&stage)
-            .arg("@charlie.act7/jintia@latest")
-            .arg("--no-audit")
-            .arg("--no-fund")
-            .env("PATH", &managed_path)
-            .output()
-    .map_err(|e| {
-        let _ = fs::remove_dir_all(&stage);
-        format!("No se pudo ejecutar npm: {e}")
-    })?;
+        .arg(&npm_cli)
+        .arg("install")
+        .arg("--global")
+        .arg("--prefix")
+        .arg(&stage)
+        .arg("@charlie.act7/jintia@latest")
+        .arg("--no-audit")
+        .arg("--no-fund")
+        .env("PATH", &managed_path)
+        .output()
+        .map_err(|e| {
+            let _ = fs::remove_dir_all(&stage);
+            format!("No se pudo ejecutar npm: {e}")
+        })?;
 
     if !output.status.success() {
         let _ = fs::remove_dir_all(&stage);
@@ -2564,10 +2779,7 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
     }
     if !skill_md.is_file() {
         let _ = fs::remove_dir_all(&stage);
-        return Err(format!(
-            "SKILL.md no encontrado en {}",
-            pkg_dir.display()
-        ));
+        return Err(format!("SKILL.md no encontrado en {}", pkg_dir.display()));
     }
     if !skill_js.is_file() {
         let _ = fs::remove_dir_all(&stage);
@@ -2623,8 +2835,12 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
         format!("La prueba de humo devolvió JSON inválido: {e}")
     })?;
 
-    crate::release::managed_mcp_contract_from(&pkg_dir, env!("CARGO_PKG_VERSION"))
-        .map_err(|error| { let _ = fs::remove_dir_all(&stage); error })?;
+    crate::release::managed_mcp_contract_from(&pkg_dir, env!("CARGO_PKG_VERSION")).map_err(
+        |error| {
+            let _ = fs::remove_dir_all(&stage);
+            error
+        },
+    )?;
 
     emit_skill_progress(app, "activating", 92.0, "Activando instalación...");
 
@@ -2660,9 +2876,7 @@ pub fn visual_install_profiles() -> Result<serde_json::Value, String> {
         .join("config")
         .join("visual-install-profiles.json");
 
-    let bytes = fs::read(&path).map_err(|e| {
-        format!("No se pudo leer {}: {e}", path.display())
-    })?;
+    let bytes = fs::read(&path).map_err(|e| format!("No se pudo leer {}: {e}", path.display()))?;
 
     let value = serde_json::from_slice::<serde_json::Value>(&bytes)
         .map_err(|e| format!("Contrato visual inválido: {e}"))?;
@@ -2685,11 +2899,13 @@ pub fn visual_install_profiles() -> Result<serde_json::Value, String> {
 
     let required_ids = ["minimum", "core", "full"];
     for id in required_ids {
-        let found = profiles.iter().any(|p| {
-            p.get("id").and_then(|v| v.as_str()) == Some(id)
-        });
+        let found = profiles
+            .iter()
+            .any(|p| p.get("id").and_then(|v| v.as_str()) == Some(id));
         if !found {
-            return Err(format!("Perfil requerido '{id}' ausente en el contrato visual"));
+            return Err(format!(
+                "Perfil requerido '{id}' ausente en el contrato visual"
+            ));
         }
     }
 

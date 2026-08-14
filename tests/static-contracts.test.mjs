@@ -338,7 +338,7 @@ test('el plugin ChatGPT Codex delega instalación y estado a Jintia', async () =
   for (const marker of ['plugin', 'status', 'install', '--yes', '--json', 'resolve_skill', 'run_jintia', 'tool', 'command', 'exitCode', 'marketplaceConfigured', 'target', 'data', 'operation', 'installed', 'current', 'errors', 'message']) assert.match(toolchain, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(toolchain, /ActionResult::error\(result\.stderr\)/);
   assert.match(toolchain, /plugin_report_error[\s\S]*status[^\n]*failed/);
-  assert.match(toolchain, /plugin_command_failure_message\(&result\.stdout,\s*"plugin install"\)/);
+  assert.match(toolchain, /plugin_command_failure_message\([\s\S]*?&result\.stdout,[\s\S]*?"plugin install"\)/);
   assert.match(config, /toolchain::openai_plugin_status/);
   assert.doesNotMatch(config, /openai_plugin_is_installed\(|openai_plugin_is_current\(|openai_plugin_path\(\)/);
   assert.match(lib, /spawn_blocking\(toolchain::install_openai_plugin\)/);
@@ -2110,6 +2110,33 @@ test('NotebookLM MCP construye su staging npm sólo con Node y PATH administrado
   assert.ok(installer.indexOf('"ci"') < installer.indexOf('activate_staged_notebooklm_mcp'));
   assert.doesNotMatch(installer, /Command::new\(&node\)\s*\.arg\(&npm\)/s);
   assert.doesNotMatch(installer, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|Command::new\("(?:node|npm|npm\.cmd|npx)"\)|env_clear|powershell|sh\s+-c|bash\s+-c/);
+});
+
+test('NotebookLM MCP staging npm no hereda NODE_OPTIONS del host', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const builderStart = runtimes.indexOf('fn build_managed_notebooklm_npm_command');
+  const activateStart = runtimes.indexOf('\nfn activate_staged_notebooklm_mcp', builderStart);
+  assert.ok(builderStart >= 0 && activateStart > builderStart);
+  const builder = runtimes.slice(builderStart, activateStart);
+
+  const installerStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
+  const installerEnd = runtimes.indexOf('\n#[cfg(test)]', installerStart);
+  assert.ok(installerStart >= 0 && installerEnd > installerStart);
+  const installer = runtimes.slice(installerStart, installerEnd);
+
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /\.arg\(npm_cli\)/);
+  assert.match(builder, /\.args\(args\)/);
+  assert.match(builder, /\.current_dir\(stage\)/);
+  assert.match(builder, /\.env\("PATH", managed_path\)/);
+  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
+  assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|NODE_PATH|var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|Command::new\("(?:node|npm|npm\.cmd|npx)"\)|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
+
+  assert.doesNotMatch(installer, /env_remove\("NODE_OPTIONS"\)/);
 });
 
 test('NotebookLM MCP ejecuta browser install y status sólo con Node y PATH administrados', async () => {
