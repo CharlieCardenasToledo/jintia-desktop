@@ -3975,3 +3975,49 @@ test('engine entrega a Jintia un PATH compuesto sólo por runtimes administrados
   assert.doesNotMatch(`${helper}\n${run}`, /where\.exe|\bwhich\b|Command::new\("(?:node|npm|npx|python|python3|jintia)"\)/);
   assert.doesNotMatch(`${helper}\n${run}`, /env_clear/);
 });
+
+test('Git manual en macOS y Linux no recomienda instalar runtimes ajenos', async () => {
+  const course = await readFile(new URL('src-tauri/src/course.rs', root), 'utf8');
+
+  // install_dependency debe despachar Node.js, Python y Git explícitamente
+  const installStart = course.indexOf('pub fn install_dependency');
+  const installEnd = course.indexOf('\nfn slug_component', installStart);
+  assert.ok(installStart >= 0 && installEnd > installStart, 'install_dependency no encontrada');
+  const installFn = course.slice(installStart, installEnd);
+  assert.match(installFn, /Node\.js/, 'falta rama Node.js');
+  assert.match(installFn, /Python/, 'falta rama Python');
+  assert.match(installFn, /"Git"/, 'falta rama Git');
+  assert.match(installFn, /Dependencia desconocida/, 'falta rechazo de dependencia desconocida');
+
+  // El helper manual_git_installation_instructions debe existir
+  const helperStart = course.indexOf('fn manual_git_installation_instructions');
+  const helperEnd = course.indexOf('\npub fn install_dependency', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'helper manual_git_installation_instructions no encontrado');
+  const helper = course.slice(helperStart, helperEnd);
+
+  // El helper debe guiar a instalar Git correctamente
+  assert.match(helper, /brew install git/, 'falta instrucción macOS brew install git');
+  assert.match(helper, /sudo apt install git/, 'falta ejemplo Linux sudo apt install git');
+  assert.match(helper, /Debian\/Ubuntu/, 'falta referencia a Debian/Ubuntu en el ejemplo Linux');
+
+  // El helper NO debe recomendar instalación global de Node o Python
+  assert.doesNotMatch(helper, /brew install node/, 'helper no debe recomendar brew install node');
+  assert.doesNotMatch(helper, /brew install node python/, 'helper no debe recomendar brew install node python');
+  assert.doesNotMatch(helper, /apt install nodejs/, 'helper no debe recomendar apt install nodejs');
+  assert.doesNotMatch(helper, /apt install npm/, 'helper no debe recomendar apt install npm');
+  assert.doesNotMatch(helper, /apt install python/, 'helper no debe recomendar apt install python');
+  assert.doesNotMatch(helper, /apt install python3/, 'helper no debe recomendar apt install python3');
+
+  // El fallback no-Windows usa manual_git_installation_instructions y no el texto antiguo
+  assert.doesNotMatch(installFn, /brew install node python/, 'install_dependency no debe recomendar brew install node python');
+  assert.doesNotMatch(installFn, /apt install nodejs npm python3/, 'install_dependency no debe recomendar apt install nodejs npm python3');
+
+  // Windows conserva Git.Git y winget
+  assert.match(installFn, /Git\.Git/, 'falta Git.Git en rama Windows');
+  assert.match(installFn, /winget\.exe/, 'falta winget.exe en rama Windows');
+
+  // Node.js portable branch intacta
+  assert.match(installFn, /Descargar Node\.js portable/, 'falta botón Node.js portable');
+  // Python portable branch intacta
+  assert.match(installFn, /Descargar Python portable/, 'falta botón Python portable');
+});

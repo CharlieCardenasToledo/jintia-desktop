@@ -272,6 +272,15 @@ pub fn check_dependencies_cached() -> Vec<DependencyStatus> {
     check_dependencies()
 }
 
+#[cfg(not(target_os = "windows"))]
+fn manual_git_installation_instructions() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "En macOS: instala Git con Homebrew (`brew install git`) o con Xcode Command Line Tools (`xcode-select --install`). Reinicia la app y vuelve a verificar."
+    } else {
+        "En Linux: instala Git con el gestor de paquetes de tu distribución (por ejemplo `sudo apt install git` en Debian/Ubuntu). Reinicia la app y vuelve a verificar."
+    }
+}
+
 pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
     // Una instalación puede cambiar el estado del entorno. La siguiente
     // verificación debe inspeccionarlo de nuevo.
@@ -334,13 +343,12 @@ pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = _confirmed;
-        let instructions = if cfg!(target_os = "macos") {
-            "En macOS: instala Node.js y Python con Homebrew (`brew install node python`). Reinicia la app y vuelve a verificar."
-        } else {
-            "En Linux: instala Node.js, npm y Python con el gestor de paquetes de tu distribución (por ejemplo `sudo apt install nodejs npm python3`). Reinicia la app y vuelve a verificar."
-        };
+        if name != "Git" {
+            return ActionResult::error(format!("Dependencia desconocida: {name}"));
+        }
         ActionResult::error(format!(
-            "La instalación automática de {name} está disponible solo en Windows. {instructions}"
+            "La instalación automática de Git está disponible solo en Windows. {}",
+            manual_git_installation_instructions()
         ))
     }
 }
@@ -942,6 +950,37 @@ mod tests {
     fn course_folder_slug_rejects_empty_identifiers() {
         assert!(course_folder_name("", "Base de datos").is_err());
         assert!(course_folder_name("IFT200", "###").is_err());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn non_windows_git_install_guidance_mentions_only_git() {
+        let result = install_dependency("Git".to_string(), false);
+        assert!(!result.success);
+        assert!(result.message.contains("Git"));
+        assert!(!result.message.contains("Node.js"));
+        assert!(!result.message.contains("Python"));
+        assert!(!result.message.contains("brew install node"));
+        assert!(!result.message.contains("apt install nodejs"));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(result.message.contains("brew install git"));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert!(result.message.contains("sudo apt install git"));
+            assert!(result.message.contains("Debian/Ubuntu"));
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn non_windows_unknown_dependency_is_rejected() {
+        let result = install_dependency("Herramienta desconocida".to_string(), false);
+        assert!(!result.success);
+        assert_eq!(result.message, "Dependencia desconocida: Herramienta desconocida");
+        assert!(!result.message.contains("brew install git"));
+        assert!(!result.message.contains("apt install git"));
     }
 
     #[test]
