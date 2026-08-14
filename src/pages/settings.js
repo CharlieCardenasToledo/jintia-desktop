@@ -1036,7 +1036,7 @@ async function loadDeps() {
           }
         });
 
-        const result = await window.__TAURI__.tauri.invoke("download_node_runtime");
+        const result = await downloadNodeRuntime();
         if (result.success) {
           toast(result.message, "success", 5000);
           loadDeps();
@@ -1073,7 +1073,7 @@ async function loadDeps() {
           }
         });
 
-        const result = await window.__TAURI__.tauri.invoke("download_python_runtime");
+        const result = await downloadPythonRuntime();
         if (result.success) {
           toast(result.message, "success", 5000);
           loadDeps();
@@ -1110,7 +1110,7 @@ async function loadDeps() {
           }
         });
 
-        const result = await window.__TAURI__.tauri.invoke("download_skill_runtime");
+        const result = await downloadSkillRuntime();
         if (result.success) {
           toast(result.message, "success", 5000);
           loadDeps();

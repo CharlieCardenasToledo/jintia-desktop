@@ -4445,3 +4445,76 @@ test('El bulk respeta Node como prerrequisito sin bloquear Python independiente'
   assert.match(bulkListener, /loadDeps\(\)/, 'bulk: falta loadDeps tras el loop');
   assert.match(bulkListener, /loadSetupStatus\(\)/, 'bulk: falta loadSetupStatus tras el loop');
 });
+
+test('Configuración descarga runtimes individuales exclusivamente mediante api.js', async () => {
+  const [settings, api] = await Promise.all([
+    readFile(new URL('src/pages/settings.js', root), 'utf8'),
+    readFile(new URL('src/api.js', root), 'utf8'),
+  ]);
+
+  // api.js declara los tres wrappers con sus comandos Tauri
+  assert.match(api, /export async function downloadNodeRuntime/, 'api: falta export downloadNodeRuntime');
+  assert.match(api, /invoke\(["']download_node_runtime["']\)/, 'api: falta invoke download_node_runtime');
+  assert.match(api, /export async function downloadPythonRuntime/, 'api: falta export downloadPythonRuntime');
+  assert.match(api, /invoke\(["']download_python_runtime["']\)/, 'api: falta invoke download_python_runtime');
+  assert.match(api, /export async function downloadSkillRuntime/, 'api: falta export downloadSkillRuntime');
+  assert.match(api, /invoke\(["']download_skill_runtime["']\)/, 'api: falta invoke download_skill_runtime');
+
+  // settings.js importa los tres wrappers (sin importar invoke directamente)
+  assert.match(settings, /downloadNodeRuntime/, 'settings: falta referencia a downloadNodeRuntime');
+  assert.match(settings, /downloadPythonRuntime/, 'settings: falta referencia a downloadPythonRuntime');
+  assert.match(settings, /downloadSkillRuntime/, 'settings: falta referencia a downloadSkillRuntime');
+  assert.doesNotMatch(settings, /@tauri-apps\/api\/core/, 'settings: no debe importar @tauri-apps/api/core directamente');
+
+  // Listener Node individual: usa wrapper, conserva evento de progreso y refresh
+  const nodeListenerStart = settings.indexOf('"[data-download-node]"');
+  assert.ok(nodeListenerStart >= 0, 'settings: falta listener data-download-node');
+  const nodeListenerEnd = settings.indexOf('"[data-download-python]"', nodeListenerStart);
+  const nodeListener = settings.slice(nodeListenerStart, nodeListenerEnd > nodeListenerStart ? nodeListenerEnd : settings.length);
+
+  assert.match(nodeListener, /downloadNodeRuntime\(\)/, 'node listener: debe usar downloadNodeRuntime()');
+  assert.match(nodeListener, /node-download-progress/, 'node listener: falta node-download-progress');
+  assert.match(nodeListener, /result\.success/, 'node listener: falta result.success');
+  assert.match(nodeListener, /loadDeps\(\)/, 'node listener: falta loadDeps');
+  assert.match(nodeListener, /loadSetupStatus\(\)/, 'node listener: falta loadSetupStatus');
+  assert.doesNotMatch(nodeListener, /\.tauri\.invoke/, 'node listener: no debe usar .tauri.invoke');
+  assert.doesNotMatch(nodeListener, /download_node_runtime/, 'node listener: nombre de comando no debe aparecer en settings');
+
+  // Listener Python individual: usa wrapper, conserva evento de progreso y refresh
+  const pythonListenerStart = settings.indexOf('"[data-download-python]"');
+  assert.ok(pythonListenerStart >= 0, 'settings: falta listener data-download-python');
+  const pythonListenerEnd = settings.indexOf('"[data-download-skill]"', pythonListenerStart);
+  const pythonListener = settings.slice(pythonListenerStart, pythonListenerEnd > pythonListenerStart ? pythonListenerEnd : settings.length);
+
+  assert.match(pythonListener, /downloadPythonRuntime\(\)/, 'python listener: debe usar downloadPythonRuntime()');
+  assert.match(pythonListener, /python-download-progress/, 'python listener: falta python-download-progress');
+  assert.match(pythonListener, /result\.success/, 'python listener: falta result.success');
+  assert.doesNotMatch(pythonListener, /\.tauri\.invoke/, 'python listener: no debe usar .tauri.invoke');
+  assert.doesNotMatch(pythonListener, /download_python_runtime/, 'python listener: nombre de comando no debe aparecer en settings');
+
+  // Listener Skill individual: usa wrapper, conserva evento de progreso y refresh
+  const skillListenerStart = settings.indexOf('"[data-download-skill]"');
+  assert.ok(skillListenerStart >= 0, 'settings: falta listener data-download-skill');
+  const skillListenerEnd = settings.indexOf('"#visual-install-profile"', skillListenerStart);
+  const skillListener = settings.slice(skillListenerStart, skillListenerEnd > skillListenerStart ? skillListenerEnd : settings.length);
+
+  assert.match(skillListener, /downloadSkillRuntime\(\)/, 'skill listener: debe usar downloadSkillRuntime()');
+  assert.match(skillListener, /skill-download-progress/, 'skill listener: falta skill-download-progress');
+  assert.match(skillListener, /result\.success/, 'skill listener: falta result.success');
+  assert.doesNotMatch(skillListener, /\.tauri\.invoke/, 'skill listener: no debe usar .tauri.invoke');
+  assert.doesNotMatch(skillListener, /download_skill_runtime/, 'skill listener: nombre de comando no debe aparecer en settings');
+
+  // Cero invokes directos en todo settings.js
+  assert.doesNotMatch(settings, /window\.__TAURI__\.tauri\.invoke/, 'settings: no debe contener window.__TAURI__.tauri.invoke');
+
+  // Bulk también usa los wrappers (PLAN 95/96 intactos)
+  const bulkListenerStart = settings.indexOf('"#btn-install-all-deps"');
+  assert.ok(bulkListenerStart >= 0, 'settings: falta listener #btn-install-all-deps');
+  const bulkListenerEnd = settings.indexOf('\n    });', bulkListenerStart);
+  const bulkListener = settings.slice(bulkListenerStart, bulkListenerEnd > bulkListenerStart ? bulkListenerEnd + 8 : settings.length);
+
+  assert.match(bulkListener, /downloadNodeRuntime\(\)/, 'bulk: falta downloadNodeRuntime');
+  assert.match(bulkListener, /downloadPythonRuntime\(\)/, 'bulk: falta downloadPythonRuntime');
+  assert.match(bulkListener, /downloadSkillRuntime\(\)/, 'bulk: falta downloadSkillRuntime');
+  assert.match(bulkListener, /installVivliostyleCli\(\)/, 'bulk: falta installVivliostyleCli');
+});
