@@ -93,7 +93,7 @@ pub fn node_version() -> Option<String> {
 static NODE_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 static PYTHON_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 static SKILL_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
-static NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+static NOTEBOOKLM_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
 fn try_runtime_mutation_lock<'a>(
     lock: &'a Mutex<()>,
@@ -1151,7 +1151,7 @@ pub fn portable_notebooklm_mcp_installed_for(contract: &crate::release::ManagedM
 }
 
 pub fn install_notebooklm_mcp() -> Result<(), String> {
-    let _mcp_guard = try_runtime_mutation_lock(&NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK, "el runtime NotebookLM MCP administrado")?;
+    let _mcp_guard = try_runtime_mutation_lock(&NOTEBOOKLM_RUNTIME_MUTATION_LOCK, "el runtime NotebookLM MCP administrado")?;
     let _node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")?;
     let contract = crate::release::managed_mcp_contract()?;
     let node = paths::portable_node_exe();
@@ -1212,7 +1212,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_portable_python_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_command, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, try_runtime_mutation_lock, verify_sha256, NODE_RUNTIME_MUTATION_LOCK, NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK, PYTHON_RUNTIME_MUTATION_LOCK, SKILL_RUNTIME_MUTATION_LOCK};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_portable_python_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_command, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, try_runtime_mutation_lock, verify_sha256, NODE_RUNTIME_MUTATION_LOCK, NOTEBOOKLM_RUNTIME_MUTATION_LOCK, PYTHON_RUNTIME_MUTATION_LOCK, SKILL_RUNTIME_MUTATION_LOCK};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1317,7 +1317,7 @@ mod tests {
     fn skill_and_notebooklm_runtime_mutation_locks_are_independent() {
         let skill_guard = try_runtime_mutation_lock(&SKILL_RUNTIME_MUTATION_LOCK, "el runtime Jintia administrado")
             .expect("lock Skill debe estar libre");
-        let mcp_guard = try_runtime_mutation_lock(&NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK, "el runtime NotebookLM MCP administrado")
+        let mcp_guard = try_runtime_mutation_lock(&NOTEBOOKLM_RUNTIME_MUTATION_LOCK, "el runtime NotebookLM MCP administrado")
             .expect("lock NotebookLM MCP debe estar libre mientras Skill está ocupado");
         drop(skill_guard);
         drop(mcp_guard);

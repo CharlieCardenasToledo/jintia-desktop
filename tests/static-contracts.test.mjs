@@ -199,9 +199,7 @@ test('la configuración y el curso consumen el contrato MCP dinámico', async ()
   assert.doesNotMatch(course, /NOTEBOOKLM_MCP_/);
   assert.doesNotMatch(course, /portable_notebooklm_mcp_installed\(\)[\s\S]*portable_notebooklm_mcp_installed\(\)/);
   assert.doesNotMatch(mcp, /NOTEBOOKLM_MCP_/);
-  // Solo el lock de mutación de runtimes (NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK) puede aparecer en runtimes.rs;
-  // ninguna otra referencia MCP pertenece aquí.
-  assert.doesNotMatch(runtimes, /NOTEBOOKLM_MCP_(?!RUNTIME_MUTATION_LOCK)/);
+  assert.doesNotMatch(runtimes, /NOTEBOOKLM_MCP_/);
   const installStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
   const installEnd = runtimes.indexOf('\n#[cfg(test)]', installStart);
   const install = runtimes.slice(installStart, installEnd < 0 ? runtimes.length : installEnd);
@@ -4460,8 +4458,9 @@ test('Toda mutación de runtimes administrados usa locks por recurso', async () 
   assert.match(earlyProd, /static NODE_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta NODE_RUNTIME_MUTATION_LOCK');
   assert.match(earlyProd, /static PYTHON_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta PYTHON_RUNTIME_MUTATION_LOCK');
   assert.match(earlyProd, /static SKILL_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta SKILL_RUNTIME_MUTATION_LOCK');
-  assert.match(earlyProd, /static NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK');
+  assert.match(earlyProd, /static NOTEBOOKLM_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta NOTEBOOKLM_RUNTIME_MUTATION_LOCK');
   assert.doesNotMatch(earlyProd, /static RUNTIME_MUTATION_LOCK[^_]/, 'no debe existir un lock global único');
+  assert.doesNotMatch(earlyProd, /NOTEBOOKLM_MCP_/, 'el lock NotebookLM no debe estar en el namespace MCP legacy');
 
   // Helper: try_lock, mensajes por recurso, sin bloqueo ni side effects
   const helperStart = earlyProd.indexOf('fn try_runtime_mutation_lock');
@@ -4514,9 +4513,9 @@ test('Toda mutación de runtimes administrados usa locks por recurso', async () 
   assert.ok(mcpStart >= 0, 'falta pub fn install_notebooklm_mcp');
   const mcpEnd = earlyProd.indexOf('\n#[cfg(test)]', mcpStart);
   const mcpFn = earlyProd.slice(mcpStart, mcpEnd > mcpStart ? mcpEnd : mcpStart + 800);
-  assert.match(mcpFn, /NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK/, 'install_notebooklm_mcp: falta NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK');
+  assert.match(mcpFn, /NOTEBOOKLM_RUNTIME_MUTATION_LOCK/, 'install_notebooklm_mcp: falta NOTEBOOKLM_RUNTIME_MUTATION_LOCK');
   assert.match(mcpFn, /NODE_RUNTIME_MUTATION_LOCK/, 'install_notebooklm_mcp: falta NODE_RUNTIME_MUTATION_LOCK');
-  const mcpLockIdx = mcpFn.indexOf('NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK');
+  const mcpLockIdx = mcpFn.indexOf('NOTEBOOKLM_RUNTIME_MUTATION_LOCK');
   const mcpNodeLockIdx = mcpFn.indexOf('NODE_RUNTIME_MUTATION_LOCK');
   const mcpContractIdx = mcpFn.indexOf('managed_mcp_contract');
   assert.ok(mcpLockIdx < mcpNodeLockIdx, 'install_notebooklm_mcp: MCP lock debe preceder a NODE lock');
