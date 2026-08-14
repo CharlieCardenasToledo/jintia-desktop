@@ -58,10 +58,17 @@ pub fn portable_node_installed() -> bool {
     paths::portable_node_exe().is_file()
 }
 
+fn build_portable_node_version_command(node: &std::path::Path) -> Command {
+    let mut command = Command::new(node);
+    command
+        .arg("--version")
+        .env_remove("NODE_OPTIONS");
+    command
+}
+
 pub fn node_version() -> Option<String> {
     resolve_node().and_then(|node_bin| {
-        Command::new(&node_bin)
-            .arg("--version")
+        build_portable_node_version_command(std::path::Path::new(&node_bin))
             .output()
             .ok()
             .and_then(|output| {
@@ -1158,7 +1165,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1830,6 +1837,49 @@ mod tests {
             command.get_args().next(),
             Some(std::ffi::OsStr::new("--version"))
         );
+    }
+
+    #[test]
+    fn portable_node_version_command_uses_exact_node_and_version_argument() {
+        let command = build_portable_node_version_command(
+            std::path::Path::new("portable-node"),
+        );
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("portable-node"));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, vec![std::ffi::OsStr::new("--version")]);
+    }
+
+    #[test]
+    fn portable_node_version_command_removes_node_options() {
+        let command = build_portable_node_version_command(
+            std::path::Path::new("portable-node"),
+        );
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn portable_node_version_command_has_only_version_argument() {
+        let command = build_portable_node_version_command(
+            std::path::Path::new("portable-node"),
+        );
+        assert_eq!(command.get_args().count(), 1);
+        assert_eq!(
+            command.get_args().next(),
+            Some(std::ffi::OsStr::new("--version"))
+        );
+    }
+
+    #[test]
+    fn portable_node_version_command_does_not_override_current_dir() {
+        let command = build_portable_node_version_command(
+            std::path::Path::new("portable-node"),
+        );
+        assert_eq!(command.get_current_dir(), None);
     }
 
     #[test]

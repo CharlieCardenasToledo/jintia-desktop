@@ -1954,6 +1954,55 @@ test('Node portable valida el staging sin heredar NODE_OPTIONS del host', async 
   assert.ok(validator.indexOf('output.status.success()') < validator.indexOf('node_version_text_matches_expected'));
 });
 
+test('Node portable informa su versión sin heredar NODE_OPTIONS del host', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const builderStart = runtimes.indexOf('fn build_portable_node_version_command');
+  const versionerStart = runtimes.indexOf('pub fn node_version', builderStart);
+  const downloaderStart = runtimes.indexOf('pub fn download_portable_node', versionerStart);
+  assert.ok(builderStart >= 0 && versionerStart > builderStart && downloaderStart > versionerStart);
+  const builder = runtimes.slice(builderStart, versionerStart);
+  const versioner = runtimes.slice(versionerStart, downloaderStart);
+
+  // builder — positivos
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /"--version"/);
+  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
+
+  // builder — negativos
+  assert.doesNotMatch(builder, /\.output\(|\.spawn\(|\.status\(|env_clear|current_dir|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|NODE_PATH|split_paths|Command::new\("(?:node|npm|npx|sh|bash|powershell|cmd)"\)/);
+
+  // versioner — positivos
+  assert.match(versioner, /resolve_node\(\)/);
+  assert.match(versioner, /build_portable_node_version_command/);
+  assert.match(versioner, /\.output\(\)/);
+  assert.match(versioner, /\.ok\(\)/);
+  assert.match(versioner, /output\.status\.success\(\)/);
+  assert.match(versioner, /String::from_utf8\(output\.stdout\)/);
+  assert.match(versioner, /\.trim\(\)/);
+
+  // versioner — negativo: no Command directo
+  assert.doesNotMatch(versioner, /Command::new\(&node_bin\)/);
+
+  // orden en versioner
+  assert.ok(versioner.indexOf('resolve_node()') < versioner.indexOf('build_portable_node_version_command'));
+  assert.ok(versioner.indexOf('build_portable_node_version_command') < versioner.indexOf('.output()'));
+  assert.ok(versioner.indexOf('.output()') < versioner.indexOf('output.status.success()'));
+  assert.ok(versioner.indexOf('output.status.success()') < versioner.indexOf('String::from_utf8'));
+
+  // resolve_node usa portable_node_exe y is_file — sin fallback global
+  const resolverStart = runtimes.indexOf('pub fn resolve_node()');
+  const resolverEnd = runtimes.indexOf('\npub fn portable_node_installed', resolverStart);
+  assert.ok(resolverStart >= 0 && resolverEnd > resolverStart);
+  const resolver = runtimes.slice(resolverStart, resolverEnd);
+  assert.match(resolver, /paths::portable_node_exe\(\)/);
+  assert.match(resolver, /\.is_file\(\)/);
+  assert.doesNotMatch(resolver, /Command::new\("node"\)|which|where\.exe|nvm|fnm|volta|homebrew|scoop|chocolatey/i);
+});
+
 test('Node portable extrae tar.gz sin depender del tar anfitrión', async () => {
   const runtimes = await readFile(
     new URL('src-tauri/src/runtimes.rs', root),
