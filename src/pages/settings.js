@@ -1,6 +1,6 @@
 import {
   applyInstitutionConfig, checkDependencies, getVisualInstallProfiles, installDependency,
-  downloadNodeRuntime, downloadPythonRuntime, downloadSkillRuntime,
+  downloadNodeRuntime, downloadPythonRuntime, downloadSkillRuntime, installVivliostyleCli,
   configureMcp, configureCodexMcp, getSetupStatus, checkNotebookLMAuth, runNotebookLMAuth,
   installSkill, installOpenAIPlugin,
   resetOnboarding, getSkillPath, extractSitePalette, runSkillTool, detectHarnesses, manageHarnesses
@@ -1007,7 +1007,12 @@ async function loadDeps() {
         if (!await confirm(`Vamos a instalar ${name} en tu sistema. ¿Continuar?`)) return;
         toast(`Instalando ${name}…`, "loading", 30000);
         try {
-          const r = await installDependency(name, true);
+          let r;
+          if (name === "Vivliostyle CLI") {
+            r = await installVivliostyleCli();
+          } else {
+            r = await installDependency(name, true);
+          }
           toast(r.message, r.success ? "success" : "error", 6000);
           if (r.success) { loadDeps(); loadSetupStatus(); }
         } catch (e) { toast(`Error: ${e}`, "error"); }

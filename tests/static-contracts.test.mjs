@@ -4223,3 +4223,64 @@ test('Node y Python rechazan instalaciones concurrentes antes de tocar staging',
   assert.ok(pyHttpIdx < pyStageIdx, 'Python: HTTP antes de stage');
   assert.ok(pyStageIdx < pyActivateIdx, 'Python: stage antes de activation');
 });
+
+test('Configuración instala Vivliostyle con su instalador administrado existente', async () => {
+  const [settings, api, lib, runtimes, course] = await Promise.all([
+    readFile(new URL('src/pages/settings.js', root), 'utf8'),
+    readFile(new URL('src/api.js', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+  ]);
+
+  // course.rs declara Vivliostyle como dependencia required e installable
+  assert.match(course, /name:.*"Vivliostyle CLI"/, 'course: falta declaración Vivliostyle CLI');
+  assert.match(course, /required.*true/, 'course: Vivliostyle debe ser required');
+  assert.match(course, /installable.*true/, 'course: Vivliostyle debe ser installable');
+
+  // course.rs no debe tener rama Vivliostyle en install_dependency (no duplicar autoridad)
+  const installDepStart = course.indexOf('pub fn install_dependency(');
+  const installDepEnd = course.indexOf('\nfn slug_component', installDepStart);
+  const installDep = course.slice(installDepStart, installDepEnd);
+  assert.doesNotMatch(installDep, /"Vivliostyle CLI"/, 'install_dependency no debe contener rama Vivliostyle');
+
+  // api.js exporta installVivliostyleCli que invoca install_vivliostyle_cli
+  assert.match(api, /export async function installVivliostyleCli/, 'api: falta export installVivliostyleCli');
+  assert.match(api, /invoke\(["']install_vivliostyle_cli["']\)/, 'api: falta invoke install_vivliostyle_cli');
+
+  // lib.rs registra el comando y delega en runtimes::install_vivliostyle
+  assert.match(lib, /async fn install_vivliostyle_cli/, 'lib: falta comando install_vivliostyle_cli');
+  assert.match(lib, /runtimes::install_vivliostyle\(\)/, 'lib: falta delegación a runtimes::install_vivliostyle');
+  assert.match(lib, /install_vivliostyle_cli/, 'lib: falta en generate_handler');
+
+  // runtimes.rs tiene el instalador con los elementos clave
+  const installVStart = runtimes.indexOf('pub fn install_vivliostyle(');
+  assert.ok(installVStart >= 0, 'runtimes: falta pub fn install_vivliostyle');
+  const installVEnd = runtimes.indexOf('\npub fn ', installVStart + 1);
+  const installV = runtimes.slice(installVStart, installVEnd > installVStart ? installVEnd : installVStart + 500);
+  assert.match(installV, /@vivliostyle\/cli/, 'runtimes: falta @vivliostyle/cli');
+  assert.match(installV, /portable_node_exe|portable_npm_cli|portable_vivliostyle_bin/, 'runtimes: falta uso de runtimes administrados');
+
+  // settings.js importa installVivliostyleCli desde api.js
+  assert.match(settings, /installVivliostyleCli/, 'settings: falta import de installVivliostyleCli');
+  assert.doesNotMatch(settings, /invoke\(["']install_vivliostyle_cli["']\)/, 'settings: no debe llamar invoke directamente');
+
+  // settings.js tiene la rama Vivliostyle antes del fallback genérico en el listener
+  const listenerStart = settings.indexOf('querySelectorAll("[data-dep-name]")');
+  assert.ok(listenerStart >= 0, 'settings: falta listener data-dep-name');
+  const listenerEnd = settings.indexOf('[data-download-node]', listenerStart);
+  const listener = settings.slice(listenerStart, listenerEnd > listenerStart ? listenerEnd : settings.length);
+
+  assert.match(listener, /name\s*===\s*["']Vivliostyle CLI["']/, 'settings: falta branch Vivliostyle CLI');
+  assert.match(listener, /installVivliostyleCli\(\)/, 'settings: falta llamada a installVivliostyleCli');
+  assert.match(listener, /installDependency\(name,\s*true\)/, 'settings: falta fallback installDependency');
+
+  const vivliostyleBranchIdx = listener.indexOf('Vivliostyle CLI');
+  const genericFallbackIdx = listener.indexOf('installDependency(name');
+  assert.ok(vivliostyleBranchIdx < genericFallbackIdx, 'settings: rama Vivliostyle debe preceder al fallback genérico');
+
+  // El listener refresca estado tras éxito
+  assert.match(listener, /if.*r\.success/, 'settings: falta comprobación de éxito');
+  assert.match(listener, /loadDeps\(\)/, 'settings: falta loadDeps tras éxito');
+  assert.match(listener, /loadSetupStatus\(\)/, 'settings: falta loadSetupStatus tras éxito');
+});
