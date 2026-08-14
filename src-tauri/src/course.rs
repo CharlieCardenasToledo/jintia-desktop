@@ -18,6 +18,7 @@ static SYLLABUS_WRITE_OPERATION: Mutex<()> = Mutex::new(());
 const COURSE_CODE_SLUG_MAX: usize = 24;
 const COURSE_NAME_SLUG_MAX: usize = 48;
 
+
 fn dependency_cache() -> &'static Mutex<Option<(Instant, Vec<DependencyStatus>)>> {
     DEPENDENCY_CACHE.get_or_init(|| Mutex::new(None))
 }
@@ -90,6 +91,7 @@ fn version(command: &str, args: &[&str]) -> Option<String> {
 }
 
 pub fn check_dependencies() -> Vec<DependencyStatus> {
+
     let node_bin = crate::runtimes::resolve_node();
     let node = node_bin.is_some();
     let portable_node = crate::runtimes::portable_node_installed();
@@ -144,8 +146,7 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             note: if crate::runtimes::portable_skill_installed() {
                 "Usando Jintia portable de esta app.".to_string()
             } else {
-                "Motor editorial para renderizar guías. Descárgalo desde Configuración > Entorno."
-                    .to_string()
+                "Motor editorial para renderizar guías. Descárgalo desde Configuración > Entorno.".to_string()
             },
             command: "jintia contract".to_string(),
         },
@@ -172,9 +173,7 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         .as_ref()
         .is_some_and(crate::runtimes::portable_notebooklm_mcp_installed_for);
     let mcp_version = if mcp_installed {
-        mcp_contract
-            .as_ref()
-            .map(|contract| contract.version.clone())
+        mcp_contract.as_ref().map(|contract| contract.version.clone())
     } else {
         None
     };
@@ -195,48 +194,17 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         version: version("pdflatex", &["--version"]),
         required: false,
         installable: true,
-        note: "Opcional: plantillas LaTeX avanzadas. La skill usa HTML/Vivliostyle por defecto."
-            .to_string(),
+        note: "Opcional: plantillas LaTeX avanzadas. La skill usa HTML/Vivliostyle por defecto.".to_string(),
         command: "pdflatex --version".to_string(),
     });
 
     let optional_visual_tools = [
-        (
-            "Graphviz",
-            "dot",
-            &["-V"][..],
-            "Redes, mapas conceptuales y grafos.",
-        ),
-        (
-            "PlantUML",
-            "plantuml",
-            &["-version"][..],
-            "UML y diagramas técnicos formales.",
-        ),
-        (
-            "D2",
-            "d2",
-            &["--version"][..],
-            "Diagramas declarativos y cronologías.",
-        ),
-        (
-            "Vega-Lite CLI",
-            "vl2svg",
-            &["--version"][..],
-            "Gráficos cuantitativos reproducibles.",
-        ),
-        (
-            "WaveDrom",
-            "wavedrom-cli",
-            &["--version"][..],
-            "Señales digitales.",
-        ),
-        (
-            "Inkscape",
-            "inkscape",
-            &["--version"][..],
-            "Conversión SVG, PDF y previsualizaciones.",
-        ),
+        ("Graphviz", "dot", &["-V"][..], "Redes, mapas conceptuales y grafos."),
+        ("PlantUML", "plantuml", &["-version"][..], "UML y diagramas técnicos formales."),
+        ("D2", "d2", &["--version"][..], "Diagramas declarativos y cronologías."),
+        ("Vega-Lite CLI", "vl2svg", &["--version"][..], "Gráficos cuantitativos reproducibles."),
+        ("WaveDrom", "wavedrom-cli", &["--version"][..], "Señales digitales."),
+        ("Inkscape", "inkscape", &["--version"][..], "Conversión SVG, PDF y previsualizaciones."),
     ];
     dependencies.extend(optional_visual_tools.into_iter().map(
         |(name, command, version_args, note)| DependencyStatus {
@@ -250,7 +218,8 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         },
     ));
 
-    let mermaid = crate::runtimes::resolve_node_cli("mmdc");
+    let mermaid =
+        crate::runtimes::resolve_node_cli("mmdc");
 
     dependencies.push(DependencyStatus {
         name: "Mermaid CLI".to_string(),
@@ -310,30 +279,22 @@ pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
 
     // LaTeX es opcional. No se ofrece instalación automática.
     if name == "Compilador LaTeX" {
-        return ActionResult::error(
-            "LaTeX es opcional. Instálalo manualmente según tu SO si lo necesitas.",
-        );
+        return ActionResult::error("LaTeX es opcional. Instálalo manualmente según tu SO si lo necesitas.");
     }
 
     // Node.js se descarga como portable via comando Tauri
     if name == "Node.js" {
-        return ActionResult::error(
-            "Usa el botón 'Descargar Node.js portable' en el panel de dependencias.",
-        );
+        return ActionResult::error("Usa el botón 'Descargar Node.js portable' en el panel de dependencias.");
     }
 
     // Python se descarga como portable via comando Tauri (solo Windows)
     if name == "Python" {
-        return ActionResult::error(
-            "Usa el botón 'Descargar Python portable' en el panel de dependencias.",
-        );
+        return ActionResult::error("Usa el botón 'Descargar Python portable' en el panel de dependencias.");
     }
 
     // Jintia Skill se descarga como portable via comando Tauri
     if name == "Jintia Skill" {
-        return ActionResult::error(
-            "Usa el botón 'Descargar Jintia Skill' en el panel de dependencias.",
-        );
+        return ActionResult::error("Usa el botón 'Descargar Jintia Skill' en el panel de dependencias.");
     }
     if name == "NotebookLM MCP" {
         return crate::runtimes::install_notebooklm_mcp()
@@ -497,11 +458,7 @@ pub fn create_course_structure(
 
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => {
-            return ActionResult::error(
-                "Jintia Skill no está instalada. Ve a Configuración > Entorno.",
-            )
-        }
+        None => return ActionResult::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
     };
     let course_path_str = course.to_string_lossy().to_string();
     let args = [
@@ -523,7 +480,10 @@ pub fn create_course_structure(
                 ))
                 .with_path(crate::paths::path_text(&course))
             } else {
-                ActionResult::error(format!("Error al crear el proyecto:\n{}", result.stderr))
+                ActionResult::error(format!(
+                    "Error al crear el proyecto:\n{}",
+                    result.stderr
+                ))
             }
         }
         Err(error) => ActionResult::error(error),
@@ -533,9 +493,7 @@ pub fn create_course_structure(
 pub fn run_self_test() -> serde_json::Value {
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => {
-            return serde_json::json!({ "ok": false, "error": "Jintia Skill no está disponible." })
-        }
+        None => return serde_json::json!({ "ok": false, "error": "Jintia Skill no está disponible." }),
     };
     crate::engine::run_jintia_json::<serde_json::Value>(
         Path::new(&skill_path),
@@ -1019,7 +977,9 @@ mod tests {
     }
 }
 
-pub fn check_migration_needed(course_path: String) -> crate::models::MigrationStatus {
+pub fn check_migration_needed(
+    course_path: String,
+) -> crate::models::MigrationStatus {
     let root = PathBuf::from(course_path.trim());
     if !root.is_dir() {
         return crate::models::MigrationStatus {
@@ -1044,8 +1004,7 @@ pub fn check_migration_needed(course_path: String) -> crate::models::MigrationSt
                     latex_dirs += 1;
                     if let Ok(tex_entries) = std::fs::read_dir(&latex_path) {
                         for tex_entry in tex_entries.flatten() {
-                            if tex_entry.path().extension().and_then(|s| s.to_str()) == Some("tex")
-                            {
+                            if tex_entry.path().extension().and_then(|s| s.to_str()) == Some("tex") {
                                 tex_files += 1;
                             }
                         }
@@ -1099,11 +1058,7 @@ pub fn run_migration(course_path: String) -> ActionResult {
 
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => {
-            return ActionResult::error(
-                "Jintia Skill no está instalada. Ve a Configuración > Entorno.",
-            )
-        }
+        None => return ActionResult::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
     };
     let course_path_str = root.to_string_lossy().to_string();
     let args = ["migrate", &course_path_str, "--json"];

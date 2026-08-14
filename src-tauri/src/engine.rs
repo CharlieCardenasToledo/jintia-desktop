@@ -180,13 +180,7 @@ mod tests {
         let joined = managed_runtime_path(Some(&python)).unwrap();
         let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
 
-        assert_eq!(
-            dirs,
-            vec![
-                crate::paths::portable_node_bin_dir(),
-                python.parent().unwrap().to_path_buf()
-            ]
-        );
+        assert_eq!(dirs, vec![crate::paths::portable_node_bin_dir(), python.parent().unwrap().to_path_buf()]);
     }
 
     #[test]

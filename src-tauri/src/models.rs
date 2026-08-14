@@ -25,15 +25,7 @@ pub struct ToolchainReport {
 
 impl ToolchainReport {
     pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            success: false,
-            message: message.into(),
-            operation: String::new(),
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: None,
-            report: None,
-        }
+        Self { success: false, message: message.into(), operation: String::new(), stdout: String::new(), stderr: String::new(), exit_code: None, report: None }
     }
 }
 
@@ -188,7 +180,8 @@ pub struct NotebookLmEntry {
     pub description: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Default)]
 pub struct SetupStatus {
     pub skill_installed: bool,
     pub skill_current: bool,

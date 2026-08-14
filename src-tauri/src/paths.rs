@@ -26,9 +26,10 @@ pub fn app_config_dir() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| home_dir().ok().map(|p| p.join(".config")));
 
-    base.map(|path| path.join(APP_DIR_NAME)).ok_or_else(|| {
-        "No se pudo resolver la carpeta de configuración de la aplicación.".to_string()
-    })
+    base.map(|path| path.join(APP_DIR_NAME))
+        .ok_or_else(|| {
+            "No se pudo resolver la carpeta de configuración de la aplicación.".to_string()
+        })
 }
 
 pub fn migrate_app_dir_if_needed() {
@@ -361,18 +362,9 @@ pub fn portable_skill_source_dir() -> PathBuf {
 pub fn portable_npm_cli() -> PathBuf {
     let prefix = portable_node_prefix();
     if cfg!(target_os = "windows") {
-        prefix
-            .join("node_modules")
-            .join("npm")
-            .join("bin")
-            .join("npm-cli.js")
+        prefix.join("node_modules").join("npm").join("bin").join("npm-cli.js")
     } else {
-        prefix
-            .join("lib")
-            .join("node_modules")
-            .join("npm")
-            .join("bin")
-            .join("npm-cli.js")
+        prefix.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js")
     }
 }
 
