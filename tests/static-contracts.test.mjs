@@ -1908,8 +1908,7 @@ test('Node portable valida staging y restaura el runtime anterior si falla la ac
   const validator = runtimes.slice(validatorStart, activationStart);
   const activation = runtimes.slice(activationStart, extractionStart);
   assert.match(validator, /node_exe/);
-  assert.match(validator, /Command::new\(&node_exe\)/);
-  assert.match(validator, /--version/);
+  assert.match(validator, /build_staged_node_version_command\(&node_exe\)/);
   assert.match(validator, /node_version_text_matches_expected/);
   assert.match(runtimes, /const NODE_VERSION:\s*&str\s*=\s*"22\.13\.0"/);
   assert.doesNotMatch(
@@ -1923,6 +1922,36 @@ test('Node portable valida staging y restaura el runtime anterior si falla la ac
     activation,
     /extract_|reqwest|verify_sha256|Command::new/
   );
+});
+
+test('Node portable valida el staging sin heredar NODE_OPTIONS del host', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const builderStart = runtimes.indexOf('fn build_staged_node_version_command');
+  const validatorStart = runtimes.indexOf('fn validate_node_runtime', builderStart);
+  const activationStart = runtimes.indexOf('fn activate_staged_node_runtime', validatorStart);
+  assert.ok(builderStart >= 0 && validatorStart > builderStart && activationStart > validatorStart);
+  const builder = runtimes.slice(builderStart, validatorStart);
+  const validator = runtimes.slice(validatorStart, activationStart);
+
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /"--version"/);
+  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
+  assert.doesNotMatch(builder, /\.output\(|\.spawn\(|\.status\(|env_clear|current_dir|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|NODE_PATH|split_paths|Command::new\("(?:node|npm|npx|sh|bash|powershell|cmd)"\)/);
+
+  assert.match(validator, /node_exe\.is_file\(\)/);
+  assert.match(validator, /build_staged_node_version_command\(&node_exe\)/);
+  assert.match(validator, /\.output\(\)/);
+  assert.match(validator, /output\.status\.success\(\)/);
+  assert.match(validator, /node_version_text_matches_expected/);
+  assert.doesNotMatch(validator, /Command::new\(&node_exe\)/);
+  assert.ok(validator.indexOf('node_exe.is_file()') < validator.indexOf('build_staged_node_version_command'));
+  assert.ok(validator.indexOf('build_staged_node_version_command') < validator.indexOf('.output()'));
+  assert.ok(validator.indexOf('.output()') < validator.indexOf('output.status.success()'));
+  assert.ok(validator.indexOf('output.status.success()') < validator.indexOf('node_version_text_matches_expected'));
 });
 
 test('Node portable extrae tar.gz sin depender del tar anfitrión', async () => {

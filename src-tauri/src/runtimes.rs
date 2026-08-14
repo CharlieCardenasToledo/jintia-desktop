@@ -202,6 +202,14 @@ fn node_version_text_matches_expected(text: &str) -> bool {
     text.trim() == format!("v{NODE_VERSION}")
 }
 
+fn build_staged_node_version_command(node: &std::path::Path) -> Command {
+    let mut command = Command::new(node);
+    command
+        .arg("--version")
+        .env_remove("NODE_OPTIONS");
+    command
+}
+
 fn validate_node_runtime(prefix: &std::path::Path) -> Result<(), String> {
     let node_exe = if cfg!(target_os = "windows") {
         prefix.join("node.exe")
@@ -216,8 +224,7 @@ fn validate_node_runtime(prefix: &std::path::Path) -> Result<(), String> {
         ));
     }
 
-    let output = Command::new(&node_exe)
-        .arg("--version")
+    let output = build_staged_node_version_command(&node_exe)
         .output()
         .map_err(|error| format!("No se pudo ejecutar el Node extraído: {error}"))?;
 
@@ -1151,7 +1158,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1788,6 +1795,41 @@ mod tests {
         assert!(!node_version_text_matches_expected("v21.0.0"));
         assert!(!node_version_text_matches_expected("v22.13.1"));
         assert!(!node_version_text_matches_expected("22.13.0"));
+    }
+
+    #[test]
+    fn staged_node_version_command_uses_exact_node_and_version_argument() {
+        let command = build_staged_node_version_command(
+            std::path::Path::new("staged-node"),
+        );
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("staged-node"));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, vec![std::ffi::OsStr::new("--version")]);
+    }
+
+    #[test]
+    fn staged_node_version_command_removes_node_options() {
+        let command = build_staged_node_version_command(
+            std::path::Path::new("staged-node"),
+        );
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn staged_node_version_command_has_only_version_argument() {
+        let command = build_staged_node_version_command(
+            std::path::Path::new("staged-node"),
+        );
+        assert_eq!(command.get_args().count(), 1);
+        assert_eq!(
+            command.get_args().next(),
+            Some(std::ffi::OsStr::new("--version"))
+        );
     }
 
     #[test]
