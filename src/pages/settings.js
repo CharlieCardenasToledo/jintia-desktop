@@ -15,7 +15,7 @@ import { ui, cx, liquidForBackground } from "../uiClasses.js";
 
 // "Instalar herramientas necesarias" solo cubre los runtimes portables necesarios
 // para ejecutar la Skill; Git queda fuera aunque aparezca en la lista de abajo.
-const BULK_INSTALL_TARGETS = new Set(["Node.js", "Python", "Jintia Skill"]);
+const BULK_INSTALL_TARGETS = new Set(["Node.js", "Python", "Jintia Skill", "Vivliostyle CLI"]);
 let _settingsSection = "inst-profile";
 const _busySettingsOps = new Set();
 
@@ -1148,6 +1148,7 @@ async function loadDeps() {
           if (dep.name === "Node.js") r = await downloadNodeRuntime();
           else if (dep.name === "Python") r = await downloadPythonRuntime();
           else if (dep.name === "Jintia Skill") r = await downloadSkillRuntime();
+          else if (dep.name === "Vivliostyle CLI") r = await installVivliostyleCli();
           else r = await installDependency(dep.name, true);
           toast(r.message, r.success ? "success" : "error", 4000);
         } catch (e) { toast(`Error en ${dep.name}: ${e}`, "error"); }

@@ -4284,3 +4284,73 @@ test('Configuración instala Vivliostyle con su instalador administrado existent
   assert.match(listener, /loadDeps\(\)/, 'settings: falta loadDeps tras éxito');
   assert.match(listener, /loadSetupStatus\(\)/, 'settings: falta loadSetupStatus tras éxito');
 });
+
+test('Instalar herramientas necesarias incluye el renderer Vivliostyle administrado', async () => {
+  const [settings, course] = await Promise.all([
+    readFile(new URL('src/pages/settings.js', root), 'utf8'),
+    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+  ]);
+
+  // course.rs declara Vivliostyle como renderer obligatorio
+  const vivliostyleBlock = (() => {
+    const nameIdx = course.indexOf('"Vivliostyle CLI"');
+    assert.ok(nameIdx >= 0, 'course: falta declaración Vivliostyle CLI');
+    return course.slice(nameIdx, nameIdx + 400);
+  })();
+  assert.match(vivliostyleBlock, /required.*true/, 'course: Vivliostyle CLI debe ser required: true');
+  assert.match(vivliostyleBlock, /installable.*true/, 'course: Vivliostyle CLI debe ser installable: true');
+
+  // BULK_INSTALL_TARGETS contiene exactamente cuatro targets obligatorios
+  const bulkSetStart = settings.indexOf('const BULK_INSTALL_TARGETS');
+  assert.ok(bulkSetStart >= 0, 'settings: falta BULK_INSTALL_TARGETS');
+  const bulkSetEnd = settings.indexOf(';', bulkSetStart);
+  const bulkSetSrc = settings.slice(bulkSetStart, bulkSetEnd + 1);
+
+  assert.match(bulkSetSrc, /"Node\.js"/, 'bulk: falta Node.js');
+  assert.match(bulkSetSrc, /"Python"/, 'bulk: falta Python');
+  assert.match(bulkSetSrc, /"Jintia Skill"/, 'bulk: falta Jintia Skill');
+  assert.match(bulkSetSrc, /"Vivliostyle CLI"/, 'bulk: falta Vivliostyle CLI');
+
+  const bulkLiterals = [...bulkSetSrc.matchAll(/"([^"]+)"/g)].map(m => m[1]);
+  assert.strictEqual(bulkLiterals.length, 4, `bulk: debe tener exactamente 4 targets, tiene ${bulkLiterals.length}: ${bulkLiterals.join(', ')}`);
+
+  // Targets opcionales no deben aparecer en el Set
+  const forbidden = ['Git', 'NotebookLM MCP', 'Compilador LaTeX', 'Graphviz', 'PlantUML', 'D2', 'Vega-Lite CLI', 'WaveDrom', 'Inkscape', 'Mermaid CLI', 'Google Chrome'];
+  for (const f of forbidden) {
+    assert.doesNotMatch(bulkSetSrc, new RegExp(`"${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`), `bulk: "${f}" no debe pertenecer a BULK_INSTALL_TARGETS`);
+  }
+
+  // Listener bulk: filtrado correcto
+  const bulkListenerStart = settings.indexOf('"#btn-install-all-deps"');
+  assert.ok(bulkListenerStart >= 0, 'settings: falta listener #btn-install-all-deps');
+  const bulkListenerEnd = settings.indexOf('\n    });', bulkListenerStart);
+  const bulkListener = settings.slice(bulkListenerStart, bulkListenerEnd > bulkListenerStart ? bulkListenerEnd + 8 : settings.length);
+
+  assert.match(bulkListener, /!d\.installed/, 'bulk: debe filtrar dependencias no instaladas');
+  assert.match(bulkListener, /BULK_INSTALL_TARGETS\.has\(d\.name\)/, 'bulk: debe filtrar por BULK_INSTALL_TARGETS');
+  assert.match(bulkListener, /for\s*\(const dep of targets\)/, 'bulk: debe usar bucle secuencial for-of');
+
+  // Dispatch: runtimes conocidos usan sus instaladores dedicados
+  assert.match(bulkListener, /downloadNodeRuntime\(\)/, 'bulk: falta downloadNodeRuntime');
+  assert.match(bulkListener, /downloadPythonRuntime\(\)/, 'bulk: falta downloadPythonRuntime');
+  assert.match(bulkListener, /downloadSkillRuntime\(\)/, 'bulk: falta downloadSkillRuntime');
+
+  // Vivliostyle usa su instalador administrado y precede al fallback genérico
+  assert.match(bulkListener, /dep\.name\s*===\s*["']Vivliostyle CLI["']/, 'bulk: falta rama dep.name === "Vivliostyle CLI"');
+  assert.match(bulkListener, /installVivliostyleCli\(\)/, 'bulk: falta llamada a installVivliostyleCli');
+  assert.match(bulkListener, /installDependency\(dep\.name,\s*true\)/, 'bulk: falta fallback genérico installDependency');
+
+  const vivliostyleBranchIdx = bulkListener.indexOf('"Vivliostyle CLI"');
+  const installVivIdx = bulkListener.indexOf('installVivliostyleCli()');
+  const genericFallbackIdx = bulkListener.indexOf('installDependency(dep.name');
+  assert.ok(vivliostyleBranchIdx < installVivIdx, 'bulk: rama Vivliostyle debe preceder a installVivliostyleCli');
+  assert.ok(installVivIdx < genericFallbackIdx, 'bulk: installVivliostyleCli debe preceder al fallback genérico');
+
+  // Sin paralelismo ni invoke directo
+  assert.doesNotMatch(bulkListener, /Promise\.all|Promise\.allSettled/, 'bulk: no debe paralelizar instalaciones');
+  assert.doesNotMatch(settings, /invoke\(["']install_vivliostyle_cli["']\)/, 'settings: no debe invocar install_vivliostyle_cli directamente');
+
+  // Refresh final del estado tras el loop
+  assert.match(bulkListener, /loadDeps\(\)/, 'bulk: falta loadDeps tras el loop');
+  assert.match(bulkListener, /loadSetupStatus\(\)/, 'bulk: falta loadSetupStatus tras el loop');
+});
