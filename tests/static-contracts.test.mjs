@@ -1615,8 +1615,8 @@ test('los paquetes pip disciplinares usan exclusivamente Python y PATH administr
     );
   }
 
-  assert.match(builder, /Command::new\(python\)/);
-  assert.match(builder, /\.args\(\["-I",\s*"-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
+  assert.match(builder, /managed_python_command\(python\)/);
+  assert.match(builder, /\.args\(\["-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
   assert.match(builder, /\.args\(packages\)/);
   assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
   assert.match(managedPath, /portable_python_prefix\(\)/);
@@ -1651,15 +1651,19 @@ test('Python administrado usa modo aislado en validación e instalación pip', a
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
   const builder = runtimes.slice(builderStart, builderEnd);
 
-  assert.match(validator, /Command::new\(&python_exe\)[\s\S]*\.args\(\["-I",\s*"--version"\]\)/);
-  assert.match(validator, /Command::new\(&python_exe\)[\s\S]*\.args\(\["-I",\s*"-m",\s*"pip",\s*"--version"\]\)/);
-  assert.match(builder, /\.args\(\["-I",\s*"-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
+  assert.match(validator, /managed_python_command\(&python_exe\)/);
+  assert.match(validator, /\.arg\("--version"\)/);
+  assert.match(validator, /\.args\(\["-m",\s*"pip",\s*"--version"\]\)/);
+  assert.doesNotMatch(validator, /Command::new\(&python_exe\)/);
+  assert.doesNotMatch(validator, /"-I"/);
+
+  assert.match(builder, /managed_python_command\(python\)/);
+  assert.match(builder, /\.args\(\["-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
   assert.match(builder, /\.args\(packages\)/);
   assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
+  assert.doesNotMatch(builder, /Command::new\(python\)/);
+  assert.doesNotMatch(builder, /"-I"/);
 
-  assert.ok(validator.indexOf('"-I"') < validator.indexOf('"--version"'));
-  assert.ok(validator.indexOf('"-I"') < validator.indexOf('"-m"'));
-  assert.ok(builder.indexOf('"-I"') < builder.indexOf('"-m"'));
   assert.doesNotMatch(runtimes.slice(validatorStart, validatorEnd), /env_clear|set_var|remove_var/);
 });
 
@@ -2795,11 +2799,11 @@ test('Python staged exige exactamente la versión administrada antes de activars
   const helper = runtimes.slice(helperStart, helperEnd);
 
   for (const required of [
-    'Command::new(&python_exe)',
+    'managed_python_command(&python_exe)',
     '"--version"',
     'version_out.status.success()',
     'python_version_text_matches_expected',
-    '"-I", "-m", "pip", "--version"',
+    '["-m", "pip", "--version"]',
     'pip_out.status.success()',
   ]) {
     assert.match(
@@ -2821,7 +2825,7 @@ test('Python staged exige exactamente la versión administrada antes de activars
       validator.indexOf('python_version_text_matches_expected')
   );
   const pipProbeIndex = validator.indexOf(
-    '.args(["-I", "-m", "pip", "--version"])'
+    '.args(["-m", "pip", "--version"])'
   );
   assert.ok(pipProbeIndex >= 0);
   assert.ok(
@@ -4020,4 +4024,70 @@ test('Git manual en macOS y Linux no recomienda instalar runtimes ajenos', async
   assert.match(installFn, /Descargar Node\.js portable/, 'falta botón Node.js portable');
   // Python portable branch intacta
   assert.match(installFn, /Descargar Python portable/, 'falta botón Python portable');
+});
+
+test('Todo subprocess Python administrado de Desktop usa la política central de modo aislado', async () => {
+  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+
+  // Separar producción de tests
+  const testCfgIdx = runtimes.indexOf('#[cfg(test)]');
+  const production = testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : runtimes;
+
+  // El helper central debe existir con la política -I
+  const helperStart = production.indexOf('pub(crate) fn managed_python_command(');
+  const helperEnd = production.indexOf('\nfn build_portable_python_version_command', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'managed_python_command no encontrado');
+  const helper = production.slice(helperStart, helperEnd);
+  assert.match(helper, /Command::new\(python\)/, 'helper debe crear Command con el python recibido');
+  assert.match(helper, /\.arg\("-I"\)/, 'helper debe añadir -I');
+  assert.doesNotMatch(helper, /\.output\(|\.spawn\(|\.status\(/, 'helper no debe ejecutar subprocess');
+  assert.doesNotMatch(helper, /\.current_dir\(/, 'helper no debe definir cwd');
+  assert.doesNotMatch(helper, /\.env\(|\.env_remove\(|env_clear/, 'helper no debe modificar environment');
+  assert.doesNotMatch(helper, /PATH|PYTHON/, 'helper no debe referenciar variables de entorno');
+  assert.doesNotMatch(helper, /pip|--version|install/, 'helper no debe añadir argumentos de consumer');
+
+  // El builder de versión portable debe existir y delegar al helper
+  const versionBuilderStart = production.indexOf('fn build_portable_python_version_command(');
+  const versionBuilderEnd = production.indexOf('\npub fn python_version', versionBuilderStart);
+  assert.ok(versionBuilderStart >= 0 && versionBuilderEnd > versionBuilderStart, 'build_portable_python_version_command no encontrado');
+  const versionBuilder = production.slice(versionBuilderStart, versionBuilderEnd);
+  assert.match(versionBuilder, /managed_python_command\(python\)/, 'version builder debe usar helper central');
+  assert.match(versionBuilder, /"--version"/, 'version builder debe añadir --version');
+  assert.doesNotMatch(versionBuilder, /Command::new\(python\)/, 'version builder no debe crear Command directamente');
+  assert.doesNotMatch(versionBuilder, /"-I"/, 'version builder no debe duplicar -I localmente');
+
+  // python_version debe delegar al builder
+  const pvStart = production.indexOf('pub fn python_version(');
+  assert.ok(pvStart >= 0, 'python_version no encontrada');
+  const pvEnd = production.indexOf('\npub fn download_portable_python', pvStart);
+  const pv = production.slice(pvStart, pvEnd);
+  assert.match(pv, /build_portable_python_version_command/, 'python_version debe usar el builder');
+  assert.doesNotMatch(pv, /Command::new\(&python_bin\)/, 'python_version no debe construir Command directamente');
+  assert.doesNotMatch(pv, /"-I"/, 'python_version no debe duplicar -I');
+
+  // validate_python_runtime debe usar el helper central (mínimo 2 veces)
+  const validatorStart = production.indexOf('fn validate_python_runtime(');
+  const validatorEnd = production.indexOf('\nfn python_version_text_matches_expected', validatorStart);
+  assert.ok(validatorStart >= 0 && validatorEnd > validatorStart);
+  const validator = production.slice(validatorStart, validatorEnd);
+  const validatorHelperUses = (validator.match(/managed_python_command\(&python_exe\)/g) || []).length;
+  assert.ok(validatorHelperUses >= 2, `validate_python_runtime debe usar managed_python_command al menos 2 veces, encontrado: ${validatorHelperUses}`);
+  assert.doesNotMatch(validator, /Command::new\(&python_exe\)/, 'validator no debe construir Command directamente');
+  assert.doesNotMatch(validator, /"-I"/, 'validator no debe duplicar -I localmente');
+
+  // build_managed_pip_install_command debe usar el helper central
+  const pipStart = production.indexOf('fn build_managed_pip_install_command(');
+  const pipEnd = production.indexOf('\n// ==================== NPM PACKAGES ====================', pipStart);
+  assert.ok(pipStart >= 0 && pipEnd > pipStart);
+  const pip = production.slice(pipStart, pipEnd);
+  assert.match(pip, /managed_python_command\(python\)/, 'pip builder debe usar helper central');
+  assert.match(pip, /\.args\(\["-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/, 'pip builder debe añadir args pip');
+  assert.match(pip, /\.args\(packages\)/);
+  assert.match(pip, /\.env\("PATH",\s*managed_path\)/);
+  assert.doesNotMatch(pip, /Command::new\(python\)/, 'pip builder no debe construir Command directamente');
+  assert.doesNotMatch(pip, /"-I"/, 'pip builder no debe duplicar -I localmente');
+
+  // En producción, "-I" como política Python aparece exactamente una vez: en el helper
+  const isolatedModeMatches = (production.match(/\.arg\("-I"\)/g) || []).length;
+  assert.equal(isolatedModeMatches, 1, `"-I" como política Python debe aparecer exactamente 1 vez en producción, encontrado: ${isolatedModeMatches}`);
 });

@@ -614,8 +614,8 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
         ));
     }
 
-    let version_out = Command::new(&python_exe)
-        .args(["-I", "--version"])
+    let version_out = managed_python_command(&python_exe)
+        .arg("--version")
         .output()
         .map_err(|e| format!("No se pudo ejecutar python --version: {e}"))?;
 
@@ -642,8 +642,8 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
         ));
     }
 
-    let pip_out = Command::new(&python_exe)
-        .args(["-I", "-m", "pip", "--version"])
+    let pip_out = managed_python_command(&python_exe)
+        .args(["-m", "pip", "--version"])
         .output()
         .map_err(|e| format!("No se pudo ejecutar python -m pip --version: {e}"))?;
 
@@ -729,10 +729,21 @@ pub fn portable_python_installed() -> bool {
     paths::portable_python_exe().is_file()
 }
 
+pub(crate) fn managed_python_command(python: &std::path::Path) -> Command {
+    let mut command = Command::new(python);
+    command.arg("-I");
+    command
+}
+
+fn build_portable_python_version_command(python: &std::path::Path) -> Command {
+    let mut command = managed_python_command(python);
+    command.arg("--version");
+    command
+}
+
 pub fn python_version() -> Option<String> {
     resolve_python().and_then(|python_bin| {
-        Command::new(&python_bin)
-            .arg("--version")
+        build_portable_python_version_command(std::path::Path::new(&python_bin))
             .output()
             .ok()
             .and_then(|output| {
@@ -902,9 +913,9 @@ fn build_managed_pip_install_command(
     managed_path: &std::ffi::OsStr,
     packages: &[String],
 ) -> Command {
-    let mut command = Command::new(python);
+    let mut command = managed_python_command(python);
     command
-        .args(["-I", "-m", "pip", "install", "--quiet"])
+        .args(["-m", "pip", "install", "--quiet"])
         .args(packages)
         .env("PATH", managed_path);
     command
@@ -1167,7 +1178,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_portable_python_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_command, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1202,6 +1213,36 @@ mod tests {
     fn managed_node_command_does_not_override_current_dir() {
         let command = managed_node_command(std::path::Path::new("managed-program"));
         assert_eq!(command.get_current_dir(), None);
+    }
+
+    #[test]
+    fn managed_python_command_uses_exact_program() {
+        let command = managed_python_command(std::path::Path::new("managed-python"));
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-python"));
+    }
+
+    #[test]
+    fn managed_python_command_starts_with_only_isolated_mode_argument() {
+        let command = managed_python_command(std::path::Path::new("managed-python"));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, vec![std::ffi::OsStr::new("-I")]);
+    }
+
+    #[test]
+    fn managed_python_command_does_not_override_current_dir() {
+        let command = managed_python_command(std::path::Path::new("managed-python"));
+        assert_eq!(command.get_current_dir(), None);
+    }
+
+    #[test]
+    fn portable_python_version_command_uses_isolated_mode_and_version_argument() {
+        let command = build_portable_python_version_command(std::path::Path::new("managed-python"));
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-python"));
+        let args: Vec<_> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["-I", "--version"]);
     }
 
     #[test]
