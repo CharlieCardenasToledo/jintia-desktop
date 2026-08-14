@@ -4091,3 +4091,62 @@ test('Todo subprocess Python administrado de Desktop usa la política central de
   const isolatedModeMatches = (production.match(/\.arg\("-I"\)/g) || []).length;
   assert.equal(isolatedModeMatches, 1, `"-I" como política Python debe aparecer exactamente 1 vez en producción, encontrado: ${isolatedModeMatches}`);
 });
+
+test('Las descargas de runtimes rechazan HTTP de error antes de escribir artefactos', async () => {
+  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+
+  // ── Node ────────────────────────────────────────────────────────────────────
+  const nodeStart = runtimes.indexOf('pub fn download_portable_node(');
+  const nodeEnd = runtimes.indexOf('\nfn node_version_text_matches_expected', nodeStart);
+  assert.ok(nodeStart >= 0 && nodeEnd > nodeStart, 'download_portable_node no encontrada');
+  const nodeDownloader = runtimes.slice(nodeStart, nodeEnd);
+
+  const nodeGet = nodeDownloader.indexOf('reqwest::blocking::get(url)');
+  const nodeStatus = nodeDownloader.indexOf('error_for_status()');
+  const nodeLength = nodeDownloader.indexOf('content_length()');
+  const nodeCreate = nodeDownloader.indexOf('fs::File::create(&tmp_file)');
+
+  assert.ok(nodeGet >= 0, 'Node: falta reqwest::blocking::get(url)');
+  assert.ok(nodeStatus >= 0, 'Node: falta error_for_status()');
+  assert.ok(nodeLength >= 0, 'Node: falta content_length()');
+  assert.ok(nodeCreate >= 0, 'Node: falta fs::File::create(&tmp_file)');
+  assert.ok(nodeGet < nodeStatus, 'Node: get debe preceder a error_for_status');
+  assert.ok(nodeStatus < nodeLength, 'Node: error_for_status debe preceder a content_length');
+  assert.ok(nodeLength < nodeCreate, 'Node: content_length debe preceder a File::create');
+
+  assert.match(nodeDownloader, /Error descargando Node\.js/, 'Node: mensaje de error de descarga ausente');
+  assert.doesNotMatch(nodeDownloader, /status\(\)\.is_success\(\)|status\(\)\.as_u16\(\)|StatusCode::/, 'Node: no debe usar status manual');
+
+  // ── Python ──────────────────────────────────────────────────────────────────
+  const pyStart = runtimes.indexOf('pub fn download_portable_python(');
+  const pyEnd = runtimes.indexOf('\nfn emit_python_progress', pyStart);
+  assert.ok(pyStart >= 0 && pyEnd > pyStart, 'download_portable_python no encontrada');
+  const pyDownloader = runtimes.slice(pyStart, pyEnd);
+
+  const pyGet = pyDownloader.indexOf('reqwest::blocking::get(&asset.url)');
+  const pyStatus = pyDownloader.indexOf('error_for_status()');
+  const pyLength = pyDownloader.indexOf('content_length()');
+  const pyCreate = pyDownloader.indexOf('fs::File::create(&tmp_archive)');
+
+  assert.ok(pyGet >= 0, 'Python: falta reqwest::blocking::get(&asset.url)');
+  assert.ok(pyStatus >= 0, 'Python: falta error_for_status()');
+  assert.ok(pyLength >= 0, 'Python: falta content_length()');
+  assert.ok(pyCreate >= 0, 'Python: falta fs::File::create(&tmp_archive)');
+  assert.ok(pyGet < pyStatus, 'Python: get debe preceder a error_for_status');
+  assert.ok(pyStatus < pyLength, 'Python: error_for_status debe preceder a content_length');
+  assert.ok(pyLength < pyCreate, 'Python: content_length debe preceder a File::create');
+
+  assert.match(pyDownloader, /Error descargando Python/, 'Python: mensaje de error de descarga ausente');
+  assert.doesNotMatch(pyDownloader, /status\(\)\.is_success\(\)|status\(\)\.as_u16\(\)|StatusCode::/, 'Python: no debe usar status manual');
+
+  // ── Precedentes existentes deben conservarse ─────────────────────────────
+  const resolveAsset = runtimes.indexOf('fn resolve_python_asset(');
+  assert.ok(resolveAsset >= 0, 'resolve_python_asset no encontrada');
+  const resolveSlice = runtimes.slice(resolveAsset, runtimes.indexOf('\nfn extract_python_tar_gz', resolveAsset));
+  assert.match(resolveSlice, /error_for_status\(\)/, 'resolve_python_asset debe conservar error_for_status');
+
+  const checksumFn = runtimes.indexOf('fn fetch_node_checksum(');
+  assert.ok(checksumFn >= 0, 'fetch_node_checksum no encontrada');
+  const checksumSlice = runtimes.slice(checksumFn, runtimes.indexOf('\n}', checksumFn) + 2);
+  assert.match(checksumSlice, /error_for_status\(\)/, 'fetch_node_checksum debe conservar error_for_status');
+});

@@ -100,6 +100,8 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
 
     let url = node_download_url();
     let mut response = reqwest::blocking::get(url)
+        .map_err(|e| format!("Error descargando Node.js: {e}"))?
+        .error_for_status()
         .map_err(|e| format!("Error descargando Node.js: {e}"))?;
 
     let total_size = response
@@ -772,6 +774,8 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
     emit_python_progress(app, "downloading", 5.0, &format!("Descargando {}...", asset.filename));
 
     let mut response = reqwest::blocking::get(&asset.url)
+        .map_err(|e| format!("Error descargando Python: {e}"))?
+        .error_for_status()
         .map_err(|e| format!("Error descargando Python: {e}"))?;
 
     let total_size = response.content_length().unwrap_or(30_000_000u64);
