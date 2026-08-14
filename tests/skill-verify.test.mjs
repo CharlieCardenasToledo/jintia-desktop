@@ -50,7 +50,7 @@ test("skill:verify protege la autoridad npm administrada de Jintia", async () =>
   for (const forbidden of ["Command::new(\"jintia\")", "Command::new(\"npx\")", "Command::new(\"npx.cmd\")", "legacy_skill_dir", "instructional-designer-skill", "github.com", "api.github.com", "releases/download", "zipball", "tarball"]) {
     assert.doesNotMatch(resolveSkill, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `resolve_skill no debe usar ${forbidden}`);
   }
-  for (const required of ["portable_node_exe", "portable_npm_cli", "managed_node_runtime_path", "Command::new(&node)", "npm_cli", "install", "--global", "--prefix", "@charlie.act7/jintia@latest", "portable_skill_npm_package_dir_for", "package.json", "@charlie.act7/jintia", "skill_md", "skill_js", "capabilities", "profiles", "managed_mcp_contract_from"]) {
+  for (const required of ["portable_node_exe", "portable_npm_cli", "managed_node_runtime_path", "managed_node_command(&node)", "npm_cli", "install", "--global", "--prefix", "@charlie.act7/jintia@latest", "portable_skill_npm_package_dir_for", "package.json", "@charlie.act7/jintia", "skill_md", "skill_js", "capabilities", "profiles", "managed_mcp_contract_from"]) {
     assert.match(installSkill, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `falta ${required}`);
   }
   for (const forbidden of ["npm_exe()", "var_os(\"PATH\")", "split_paths", "base_path", "patched_path", "Command::new(\"cmd\")", "Command::new(\"node\")", "Command::new(\"npm\")", "Command::new(\"npx\")", "jintia-skill-", "github.com", "api.github.com", "releases/download", "zipball", "tarball", "browser_download_url", "download_url", "dist.shasum", "SKILL_VERSION", "materialize_payload", "OUT_DIR", "legacy_skill_dir", "instructional-designer-skill"]) {
@@ -61,7 +61,7 @@ test("skill:verify protege la autoridad npm administrada de Jintia", async () =>
   const runJintia = block(engine, "pub fn run_jintia", "pub fn run_jintia_json");
   assert.match(runJintia, /managed_entrypoint/);
   assert.match(runJintia, /resolve_node/);
-  assert.match(runJintia, /Command::new\(&node_bin\)/);
+  assert.match(runJintia, /managed_node_command\(&node_bin\)/);
   assert.doesNotMatch(runJintia, /Command::new\(\"jintia\"\)/);
 
   for (const legacy of ["skill.lock.json", "scripts/check-skill-release.mjs", "src-tauri/resources/jintia-release-manifest.json", "src-tauri/src/payload.rs"]) {
