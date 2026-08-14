@@ -32,10 +32,7 @@ fn detection_payload(report: &Value) -> Result<Value, String> {
     if data.get("projectRoot").and_then(Value::as_str).is_none() {
         return Err("Jintia detect devolvió data sin projectRoot válido.".to_string());
     }
-    if !data
-        .get("providers")
-        .is_some_and(Value::is_array)
-    {
+    if !data.get("providers").is_some_and(Value::is_array) {
         return Err("Jintia detect devolvió data sin providers válido.".to_string());
     }
 
@@ -43,7 +40,11 @@ fn detection_payload(report: &Value) -> Result<Value, String> {
 }
 
 pub fn detect(project_path: String, explicit: Option<Vec<String>>) -> Result<Value, String> {
-    let mut args: Vec<String> = vec!["detect".to_string(), project_path.clone(), "--json".to_string()];
+    let mut args: Vec<String> = vec![
+        "detect".to_string(),
+        project_path.clone(),
+        "--json".to_string(),
+    ];
 
     if let Some(ref providers) = explicit {
         if !providers.is_empty() {
@@ -98,7 +99,10 @@ mod tests {
             serde_json::json!({"status": "failed", "data": valid_data}),
         ];
         for report in cases {
-            assert!(detection_payload(&report).is_err(), "accepted invalid report: {report}");
+            assert!(
+                detection_payload(&report).is_err(),
+                "accepted invalid report: {report}"
+            );
         }
     }
 }

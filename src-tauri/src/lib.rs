@@ -14,8 +14,8 @@ mod runtimes;
 mod toolchain;
 
 use models::{
-    ActionResult, DependencyStatus, GeneratedPdf, InstitutionConfig, MigrationStatus, NotebookEntry,
-    NotebookLmAuthStatus, PdfProjectRoot, SetupStatus, TemplateMeta, WeekData,
+    ActionResult, DependencyStatus, GeneratedPdf, InstitutionConfig, MigrationStatus,
+    NotebookEntry, NotebookLmAuthStatus, PdfProjectRoot, SetupStatus, TemplateMeta, WeekData,
 };
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
@@ -33,7 +33,8 @@ async fn download_node_runtime(app: tauri::AppHandle) -> ActionResult {
         runtimes::download_portable_node(&app)
             .map(|_| ActionResult::ok("Node.js portable instalado correctamente."))
             .unwrap_or_else(|e| ActionResult::error(e))
-    }).await
+    })
+    .await
     .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
 }
 
@@ -53,7 +54,8 @@ async fn download_python_runtime(app: tauri::AppHandle) -> ActionResult {
         runtimes::download_portable_python(&app)
             .map(|_| ActionResult::ok("Python portable instalado correctamente."))
             .unwrap_or_else(|e| ActionResult::error(e))
-    }).await
+    })
+    .await
     .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
 }
 
@@ -73,7 +75,8 @@ async fn download_skill_runtime(app: tauri::AppHandle) -> ActionResult {
         runtimes::download_portable_skill(&app)
             .map(|_| ActionResult::ok("Jintia portable instalada correctamente."))
             .unwrap_or_else(|e| ActionResult::error(e))
-    }).await
+    })
+    .await
     .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
 }
 
@@ -83,7 +86,9 @@ async fn install_notebooklm_mcp_runtime() -> ActionResult {
         runtimes::install_notebooklm_mcp()
             .map(|_| ActionResult::ok("NotebookLM MCP administrado instalado correctamente."))
             .unwrap_or_else(ActionResult::error)
-    }).await.unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar NotebookLM MCP: {e}")))
+    })
+    .await
+    .unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar NotebookLM MCP: {e}")))
 }
 
 #[tauri::command]
@@ -173,12 +178,18 @@ async fn get_skill_path() -> String {
 async fn install_skill() -> ActionResult {
     tauri::async_runtime::spawn_blocking(toolchain::install_global_claude_skill)
         .await
-        .unwrap_or_else(|error| ActionResult::error(format!("No se pudo instalar Jintia Skill: {error}")))
+        .unwrap_or_else(|error| {
+            ActionResult::error(format!("No se pudo instalar Jintia Skill: {error}"))
+        })
 }
 
 #[tauri::command]
 async fn install_openai_plugin() -> ActionResult {
-    tauri::async_runtime::spawn_blocking(toolchain::install_openai_plugin).await.unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar el plugin OpenAI: {e}")))
+    tauri::async_runtime::spawn_blocking(toolchain::install_openai_plugin)
+        .await
+        .unwrap_or_else(|e| {
+            ActionResult::error(format!("No se pudo instalar el plugin OpenAI: {e}"))
+        })
 }
 
 #[tauri::command]
@@ -208,7 +219,9 @@ async fn save_notebooks_config(entries: Vec<NotebookEntry>) -> ActionResult {
 
 #[tauri::command]
 async fn get_setup_status() -> SetupStatus {
-    tauri::async_runtime::spawn_blocking(config::setup_status).await.unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(config::setup_status)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -254,8 +267,8 @@ async fn create_course_structure(
         root_path,
         course_code,
         course_name,
-        0, // weeks no es usado
-        true, // initialize_readme
+        0,     // weeks no es usado
+        true,  // initialize_readme
         false, // include_graded_activities
     )
 }
@@ -298,9 +311,11 @@ async fn get_course_state(project_path: String) -> serde_json::Value {
 
 #[tauri::command]
 async fn check_week_guide_exists(project_path: String, week: u32) -> bool {
-    tauri::async_runtime::spawn_blocking(move || course_state::week_guide_exists(project_path, week))
-        .await
-        .unwrap_or(false)
+    tauri::async_runtime::spawn_blocking(move || {
+        course_state::week_guide_exists(project_path, week)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -308,16 +323,34 @@ async fn detect_harnesses(
     project_path: String,
     explicit_providers: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || harnesses::detect(project_path, explicit_providers))
-        .await
-        .map_err(|error| format!("No se pudieron detectar los harnesses: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        harnesses::detect(project_path, explicit_providers)
+    })
+    .await
+    .map_err(|error| format!("No se pudieron detectar los harnesses: {error}"))?
 }
 
 #[tauri::command]
-async fn manage_harnesses(operation: String, project_path: String, providers: Option<Vec<String>>, scope: String, confirm: bool) -> models::ToolchainReport {
-    tauri::async_runtime::spawn_blocking(move || toolchain::manage_harness(operation, project_path, providers.unwrap_or_default(), scope, confirm))
-        .await
-        .unwrap_or_else(|error| models::ToolchainReport::error(format!("No se pudo gestionar el harness: {error}")))
+async fn manage_harnesses(
+    operation: String,
+    project_path: String,
+    providers: Option<Vec<String>>,
+    scope: String,
+    confirm: bool,
+) -> models::ToolchainReport {
+    tauri::async_runtime::spawn_blocking(move || {
+        toolchain::manage_harness(
+            operation,
+            project_path,
+            providers.unwrap_or_default(),
+            scope,
+            confirm,
+        )
+    })
+    .await
+    .unwrap_or_else(|error| {
+        models::ToolchainReport::error(format!("No se pudo gestionar el harness: {error}"))
+    })
 }
 
 #[tauri::command]
@@ -382,7 +415,6 @@ async fn generate_syllabus(
     )
 }
 
-
 #[tauri::command]
 async fn list_templates() -> Vec<TemplateMeta> {
     config::list_templates()
@@ -407,7 +439,9 @@ async fn run_skill_tool(
 ) -> models::ToolchainReport {
     tauri::async_runtime::spawn_blocking(move || toolchain::run(operation, target, json, strict))
         .await
-        .unwrap_or_else(|error| models::ToolchainReport::error(format!("No se pudo ejecutar la toolchain: {error}")))
+        .unwrap_or_else(|error| {
+            models::ToolchainReport::error(format!("No se pudo ejecutar la toolchain: {error}"))
+        })
 }
 
 #[tauri::command]
@@ -426,7 +460,9 @@ async fn check_migration_needed(project_path: String) -> models::MigrationStatus
 async fn run_migration(project_path: String) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || course::run_migration(project_path))
         .await
-        .unwrap_or_else(|error| ActionResult::error(format!("No se pudo ejecutar la migración: {error}")))
+        .unwrap_or_else(|error| {
+            ActionResult::error(format!("No se pudo ejecutar la migración: {error}"))
+        })
 }
 
 #[tauri::command]

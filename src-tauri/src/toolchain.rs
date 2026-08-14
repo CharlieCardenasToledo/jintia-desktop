@@ -35,33 +35,96 @@ fn claude_status_args() -> [&'static str; 4] {
 }
 
 fn parse_claude_skill_status(stdout: &str) -> Result<ClaudeSkillStatus, String> {
-    let report: Value = serde_json::from_str(stdout).map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
+    let report: Value = serde_json::from_str(stdout)
+        .map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
     if report.get("tool").and_then(Value::as_str) != Some("jintia")
         || report.get("command").and_then(Value::as_str) != Some("status")
         || report.get("status").and_then(Value::as_str) != Some("success")
         || report.get("exitCode").and_then(Value::as_i64) != Some(0)
-    { return Err("Reporte de status Claude incompatible.".into()); }
-    let data = report.get("data").ok_or("data ausente en el status Claude.")?;
-    if data.get("operation").and_then(Value::as_str) != Some("status") { return Err("operation inválida en el status Claude.".into()); }
-    let providers = data.get("providers").and_then(Value::as_array).ok_or("providers inválido en el status Claude.")?;
-    let matches: Vec<&Value> = providers.iter().filter(|p| p.get("id").and_then(Value::as_str) == Some("claude") && p.get("scope").and_then(Value::as_str) == Some("global")).collect();
-    if matches.len() != 1 { return Err("Debe existir exactamente un provider Claude global.".into()); }
+    {
+        return Err("Reporte de status Claude incompatible.".into());
+    }
+    let data = report
+        .get("data")
+        .ok_or("data ausente en el status Claude.")?;
+    if data.get("operation").and_then(Value::as_str) != Some("status") {
+        return Err("operation inválida en el status Claude.".into());
+    }
+    let providers = data
+        .get("providers")
+        .and_then(Value::as_array)
+        .ok_or("providers inválido en el status Claude.")?;
+    let matches: Vec<&Value> = providers
+        .iter()
+        .filter(|p| {
+            p.get("id").and_then(Value::as_str) == Some("claude")
+                && p.get("scope").and_then(Value::as_str) == Some("global")
+        })
+        .collect();
+    if matches.len() != 1 {
+        return Err("Debe existir exactamente un provider Claude global.".into());
+    }
     let provider = matches[0];
-    let target = provider.get("target").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("target inválido en el status Claude.")?;
-    let state = provider.get("state").ok_or("state ausente en el status Claude.")?;
-    let installed = state.get("installed").and_then(Value::as_bool).ok_or("installed inválido en el status Claude.")?;
-    let managed = state.get("managed").and_then(Value::as_bool).ok_or("managed inválido en el status Claude.")?;
-    let available = state.get("availableVersion").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("availableVersion inválido en el status Claude.")?;
-    let status = state.get("status").and_then(Value::as_str).ok_or("status inválido en el status Claude.")?;
-    if !["not-detected", "detected", "repair-needed", "incomplete", "outdated", "installed"].contains(&status) { return Err("status desconocido en el status Claude.".into()); }
-    let version = match state.get("version") { Some(Value::String(v)) if !v.is_empty() => v.clone(), Some(Value::Null) => String::new(), _ => return Err("version inválida en el status Claude.".into()) };
-    Ok(ClaudeSkillStatus { installed, current: installed && managed && status == "installed" && version == available, version, available_version: available.to_owned(), target: target.to_owned() })
+    let target = provider
+        .get("target")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or("target inválido en el status Claude.")?;
+    let state = provider
+        .get("state")
+        .ok_or("state ausente en el status Claude.")?;
+    let installed = state
+        .get("installed")
+        .and_then(Value::as_bool)
+        .ok_or("installed inválido en el status Claude.")?;
+    let managed = state
+        .get("managed")
+        .and_then(Value::as_bool)
+        .ok_or("managed inválido en el status Claude.")?;
+    let available = state
+        .get("availableVersion")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or("availableVersion inválido en el status Claude.")?;
+    let status = state
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or("status inválido en el status Claude.")?;
+    if ![
+        "not-detected",
+        "detected",
+        "repair-needed",
+        "incomplete",
+        "outdated",
+        "installed",
+    ]
+    .contains(&status)
+    {
+        return Err("status desconocido en el status Claude.".into());
+    }
+    let version = match state.get("version") {
+        Some(Value::String(v)) if !v.is_empty() => v.clone(),
+        Some(Value::Null) => String::new(),
+        _ => return Err("version inválida en el status Claude.".into()),
+    };
+    Ok(ClaudeSkillStatus {
+        installed,
+        current: installed && managed && status == "installed" && version == available,
+        version,
+        available_version: available.to_owned(),
+        target: target.to_owned(),
+    })
 }
 
 pub fn claude_skill_status() -> Result<ClaudeSkillStatus, String> {
-    let skill = crate::runtimes::resolve_skill().ok_or("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.")?;
-    let result = engine::run_jintia(Path::new(&skill), &claude_status_args()).map_err(|e| e.to_string())?;
-    if !result.success { return Err(format!("Jintia status Claude falló: {}", result.stderr)); }
+    let skill = crate::runtimes::resolve_skill().ok_or(
+        "Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.",
+    )?;
+    let result =
+        engine::run_jintia(Path::new(&skill), &claude_status_args()).map_err(|e| e.to_string())?;
+    if !result.success {
+        return Err(format!("Jintia status Claude falló: {}", result.stderr));
+    }
     parse_claude_skill_status(&result.stdout)
 }
 
@@ -69,11 +132,14 @@ fn report_data<'a>(report: &'a Value, command: &str, operation: &str) -> Result<
     if report.get("tool").and_then(Value::as_str) != Some("jintia")
         || report.get("command").and_then(Value::as_str) != Some(command)
         || report.get("status").and_then(Value::as_str) != Some("success")
-        || report.get("exitCode").and_then(Value::as_i64) != Some(0) {
+        || report.get("exitCode").and_then(Value::as_i64) != Some(0)
+    {
         return Err("El reporte de Jintia no cumple el contrato esperado.".into());
     }
     let data = report.get("data").ok_or("Jintia no devolvió data.")?;
-    if data.get("operation").and_then(Value::as_str) != Some(operation) { return Err("La operación del reporte Jintia no coincide.".into()); }
+    if data.get("operation").and_then(Value::as_str) != Some(operation) {
+        return Err("La operación del reporte Jintia no coincide.".into());
+    }
     Ok(data)
 }
 
@@ -82,7 +148,10 @@ fn plugin_report_error(stdout: &str, expected_command: &str) -> Option<String> {
     if report.get("tool").and_then(Value::as_str) != Some("jintia")
         || report.get("command").and_then(Value::as_str) != Some(expected_command)
         || report.get("status").and_then(Value::as_str) != Some("failed")
-        || report.get("exitCode").and_then(Value::as_i64).is_none_or(|code| code == 0)
+        || report
+            .get("exitCode")
+            .and_then(Value::as_i64)
+            .is_none_or(|code| code == 0)
     {
         return None;
     }
@@ -103,48 +172,118 @@ fn plugin_command_failure_message(stdout: &str, expected_command: &str) -> Strin
 }
 
 fn parse_openai_plugin_status(stdout: &str) -> Result<OpenAiPluginStatus, String> {
-    let report: Value = serde_json::from_str(stdout).map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
+    let report: Value = serde_json::from_str(stdout)
+        .map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
     let data = report_data(&report, "plugin status", "status")?;
-    let target = data.get("target").and_then(Value::as_str).ok_or("target inválido en el status del plugin.")?;
+    let target = data
+        .get("target")
+        .and_then(Value::as_str)
+        .ok_or("target inválido en el status del plugin.")?;
     if target.is_empty() {
         return Err("target vacío en el status del plugin.".into());
     }
-    let installed = data.get("installed").and_then(Value::as_bool).ok_or("installed inválido en el status del plugin.")?;
-    let current = data.get("current").and_then(Value::as_bool).ok_or("current inválido en el status del plugin.")?;
-    let status = data.get("status").and_then(Value::as_str).ok_or("status inválido en el status del plugin.")?;
-    if !["not-installed", "installed", "outdated", "incomplete", "foreign"].contains(&status) { return Err("estado de plugin desconocido.".into()); }
-    if data.get("marketplaceConfigured").and_then(Value::as_bool).is_none() { return Err("marketplaceConfigured inválido en el status del plugin.".into()); }
-    Ok(OpenAiPluginStatus { installed, current, target: target.to_owned() })
+    let installed = data
+        .get("installed")
+        .and_then(Value::as_bool)
+        .ok_or("installed inválido en el status del plugin.")?;
+    let current = data
+        .get("current")
+        .and_then(Value::as_bool)
+        .ok_or("current inválido en el status del plugin.")?;
+    let status = data
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or("status inválido en el status del plugin.")?;
+    if ![
+        "not-installed",
+        "installed",
+        "outdated",
+        "incomplete",
+        "foreign",
+    ]
+    .contains(&status)
+    {
+        return Err("estado de plugin desconocido.".into());
+    }
+    if data
+        .get("marketplaceConfigured")
+        .and_then(Value::as_bool)
+        .is_none()
+    {
+        return Err("marketplaceConfigured inválido en el status del plugin.".into());
+    }
+    Ok(OpenAiPluginStatus {
+        installed,
+        current,
+        target: target.to_owned(),
+    })
 }
 
 fn parse_openai_plugin_install(stdout: &str) -> Result<(String, String, bool), String> {
-    let report: Value = serde_json::from_str(stdout).map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
+    let report: Value = serde_json::from_str(stdout)
+        .map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
     let data = report_data(&report, "plugin install", "install")?;
-    if data.get("installed").and_then(Value::as_bool) != Some(true) || data.get("current").and_then(Value::as_bool) != Some(true) || data.get("marketplaceConfigured").and_then(Value::as_bool) != Some(true) { return Err("Jintia no confirmó la instalación actual del plugin.".to_string()); }
-    let target = data.get("target").and_then(Value::as_str).ok_or("target vacío en la instalación del plugin.")?;
-    if target.is_empty() { return Err("target vacío en la instalación del plugin.".to_string()); }
-    let version = data.get("version").and_then(Value::as_str).ok_or("version vacía en la instalación del plugin.")?;
-    if version.is_empty() { return Err("version vacía en la instalación del plugin.".to_string()); }
-    let changed = data.get("changed").and_then(Value::as_bool).ok_or("changed inválido en la instalación del plugin.")?;
+    if data.get("installed").and_then(Value::as_bool) != Some(true)
+        || data.get("current").and_then(Value::as_bool) != Some(true)
+        || data.get("marketplaceConfigured").and_then(Value::as_bool) != Some(true)
+    {
+        return Err("Jintia no confirmó la instalación actual del plugin.".to_string());
+    }
+    let target = data
+        .get("target")
+        .and_then(Value::as_str)
+        .ok_or("target vacío en la instalación del plugin.")?;
+    if target.is_empty() {
+        return Err("target vacío en la instalación del plugin.".to_string());
+    }
+    let version = data
+        .get("version")
+        .and_then(Value::as_str)
+        .ok_or("version vacía en la instalación del plugin.")?;
+    if version.is_empty() {
+        return Err("version vacía en la instalación del plugin.".to_string());
+    }
+    let changed = data
+        .get("changed")
+        .and_then(Value::as_bool)
+        .ok_or("changed inválido en la instalación del plugin.")?;
     Ok((target.to_owned(), version.to_owned(), changed))
 }
 
 pub fn openai_plugin_status() -> Result<OpenAiPluginStatus, String> {
-    let skill = crate::runtimes::resolve_skill().ok_or("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.")?;
+    let skill = crate::runtimes::resolve_skill().ok_or(
+        "Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.",
+    )?;
     let args = openai_plugin_status_args();
     let result = engine::run_jintia(Path::new(&skill), &args).map_err(|e| e.to_string())?;
     if !result.success {
-        return Err(plugin_command_failure_message(&result.stdout, "plugin status"));
+        return Err(plugin_command_failure_message(
+            &result.stdout,
+            "plugin status",
+        ));
     }
     parse_openai_plugin_status(&result.stdout)
 }
 
 pub fn install_openai_plugin() -> ActionResult {
-    let skill = match crate::runtimes::resolve_skill() { Some(v) => v, None => return ActionResult::error("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.") };
+    let skill = match crate::runtimes::resolve_skill() {
+        Some(v) => v,
+        None => return ActionResult::error(
+            "Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.",
+        ),
+    };
     let args = openai_plugin_install_args();
     match engine::run_jintia(Path::new(&skill), &args) {
-        Ok(result) if !result.success => ActionResult::error(plugin_command_failure_message(&result.stdout, "plugin install")),
-        Ok(result) => match parse_openai_plugin_install(&result.stdout) { Ok((target, _, _)) => ActionResult::ok("Jintia gestionó el plugin OpenAI.").with_path(target), Err(e) => ActionResult::error(e) },
+        Ok(result) if !result.success => ActionResult::error(plugin_command_failure_message(
+            &result.stdout,
+            "plugin install",
+        )),
+        Ok(result) => match parse_openai_plugin_install(&result.stdout) {
+            Ok((target, _, _)) => {
+                ActionResult::ok("Jintia gestionó el plugin OpenAI.").with_path(target)
+            }
+            Err(e) => ActionResult::error(e),
+        },
         Err(e) => ActionResult::error(e),
     }
 }
@@ -173,10 +312,13 @@ fn installed_target(report: &Value) -> Option<String> {
 }
 
 pub fn install_global_claude_skill() -> ActionResult {
-    let skill_path = match crate::runtimes::resolve_skill() {
-        Some(path) => path,
-        None => return ActionResult::error("Jintia administrado no está instalado. Actualízalo desde Configuración > Entorno."),
-    };
+    let skill_path =
+        match crate::runtimes::resolve_skill() {
+            Some(path) => path,
+            None => return ActionResult::error(
+                "Jintia administrado no está instalado. Actualízalo desde Configuración > Entorno.",
+            ),
+        };
     let help = match engine::run_jintia(Path::new(&skill_path), &["--help"]) {
         Ok(result) if result.success && result.stdout.contains("--adopt-existing") => result,
         Ok(_) => return ActionResult::error("El Jintia administrado instalado no admite adopción segura de instalaciones existentes. Actualízalo desde Configuración > Entorno."),
@@ -186,19 +328,39 @@ pub fn install_global_claude_skill() -> ActionResult {
 
     let args = claude_install_args();
     match engine::run_jintia(Path::new(&skill_path), &args) {
-        Ok(result) if !result.success => ActionResult::error(if result.stderr.trim().is_empty() { result.stdout } else { result.stderr }),
-        Ok(result) => match serde_json::from_str::<Value>(&result.stdout).ok().and_then(|report| installed_target(&report)) {
-            Some(target) => ActionResult::ok("Jintia Skill quedó instalada para Claude Code.").with_path(target),
-            None => ActionResult::error("Jintia devolvió una instalación exitosa sin un target válido."),
+        Ok(result) if !result.success => ActionResult::error(if result.stderr.trim().is_empty() {
+            result.stdout
+        } else {
+            result.stderr
+        }),
+        Ok(result) => match serde_json::from_str::<Value>(&result.stdout)
+            .ok()
+            .and_then(|report| installed_target(&report))
+        {
+            Some(target) => {
+                ActionResult::ok("Jintia Skill quedó instalada para Claude Code.").with_path(target)
+            }
+            None => {
+                ActionResult::error("Jintia devolvió una instalación exitosa sin un target válido.")
+            }
         },
         Err(error) => ActionResult::error(error),
     }
 }
 
-pub fn run(operation: String, target: Option<String>, json: Option<bool>, strict: Option<bool>) -> ToolchainReport {
+pub fn run(
+    operation: String,
+    target: Option<String>,
+    json: Option<bool>,
+    strict: Option<bool>,
+) -> ToolchainReport {
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => return ToolchainReport::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
+        None => {
+            return ToolchainReport::error(
+                "Jintia Skill no está instalada. Ve a Configuración > Entorno.",
+            )
+        }
     };
     let mut args: Vec<&str> = vec![&operation];
 
@@ -256,7 +418,11 @@ pub fn manage_harness(
 
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => return ToolchainReport::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
+        None => {
+            return ToolchainReport::error(
+                "Jintia Skill no está instalada. Ve a Configuración > Entorno.",
+            )
+        }
     };
     let mut args: Vec<String> = vec![
         "harness".to_string(),
@@ -300,26 +466,41 @@ pub fn manage_harness(
 mod tests {
     use super::{
         claude_install_args, claude_status_args, installed_target, openai_plugin_install_args,
-        openai_plugin_status_args, parse_claude_skill_status, parse_openai_plugin_install, parse_openai_plugin_status,
-        plugin_command_failure_message, plugin_report_error, OPENAI_PLUGIN_CAPABILITY_ERROR,
+        openai_plugin_status_args, parse_claude_skill_status, parse_openai_plugin_install,
+        parse_openai_plugin_status, plugin_command_failure_message, plugin_report_error,
+        OPENAI_PLUGIN_CAPABILITY_ERROR,
     };
     use serde_json::{json, Value};
 
     #[test]
     fn claude_status_uses_exact_cli_contract() {
-        assert_eq!(claude_status_args(), ["status", "--providers=claude", "--scope=global", "--json"]);
+        assert_eq!(
+            claude_status_args(),
+            ["status", "--providers=claude", "--scope=global", "--json"]
+        );
     }
 
     #[test]
     fn claude_install_uses_exact_adoption_contract() {
-        assert_eq!(claude_install_args(), [
-            "install", "--providers=claude", "--scope=global", "--yes", "--adopt-existing", "--json"
-        ]);
+        assert_eq!(
+            claude_install_args(),
+            [
+                "install",
+                "--providers=claude",
+                "--scope=global",
+                "--yes",
+                "--adopt-existing",
+                "--json"
+            ]
+        );
     }
 
     #[test]
     fn installed_target_requires_non_empty_string_result() {
-        assert_eq!(installed_target(&json!({"results": [{"target": "/managed/skill"}]})), Some("/managed/skill".to_string()));
+        assert_eq!(
+            installed_target(&json!({"results": [{"target": "/managed/skill"}]})),
+            Some("/managed/skill".to_string())
+        );
         for report in [
             json!({}),
             json!({"results": []}),
@@ -334,7 +515,10 @@ mod tests {
     #[test]
     fn openai_plugin_uses_exact_cli_contract() {
         assert_eq!(openai_plugin_status_args(), ["plugin", "status", "--json"]);
-        assert_eq!(openai_plugin_install_args(), ["plugin", "install", "--yes", "--json"]);
+        assert_eq!(
+            openai_plugin_install_args(),
+            ["plugin", "install", "--yes", "--json"]
+        );
     }
 
     #[test]
@@ -357,7 +541,9 @@ mod tests {
             json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true,"status":42}}),
             json!({"tool":"jintia","command":"plugin status","status":"success","exitCode":0,"data":{"operation":"status","target":"/plugin","installed":true,"current":true,"marketplaceConfigured":true,"status":"unknown"}}),
         ];
-        for report in invalid_reports { assert!(parse_openai_plugin_status(&report.to_string()).is_err()); }
+        for report in invalid_reports {
+            assert!(parse_openai_plugin_status(&report.to_string()).is_err());
+        }
     }
 
     #[test]
@@ -385,25 +571,44 @@ mod tests {
             json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":1,"changed":true}}),
             json!({"tool":"jintia","command":"plugin install","status":"success","exitCode":0,"data":{"operation":"install","installed":true,"current":true,"marketplaceConfigured":true,"target":"/plugin","version":"11.6.13","changed":"yes"}}),
         ];
-        for report in invalid_reports { assert!(parse_openai_plugin_install(&report.to_string()).is_err()); }
+        for report in invalid_reports {
+            assert!(parse_openai_plugin_install(&report.to_string()).is_err());
+        }
     }
 
     fn claude_report(providers: serde_json::Value) -> serde_json::Value {
         json!({"tool":"jintia","command":"status","status":"success","exitCode":0,"data":{"operation":"status","providers":providers}})
     }
 
-    fn claude_provider(scope: &str, installed: bool, managed: bool, version: serde_json::Value, available: &str, status: &str) -> serde_json::Value {
+    fn claude_provider(
+        scope: &str,
+        installed: bool,
+        managed: bool,
+        version: serde_json::Value,
+        available: &str,
+        status: &str,
+    ) -> serde_json::Value {
         json!({"id":"claude","scope":scope,"target":format!("/{scope}/.claude/skills/jintia-skill"),"state":{"installed":installed,"managed":managed,"version":version,"availableVersion":available,"status":status}})
     }
 
     fn global_provider() -> serde_json::Value {
-        claude_provider("global", true, true, json!("11.6.13"), "11.6.13", "installed")
+        claude_provider(
+            "global",
+            true,
+            true,
+            json!("11.6.13"),
+            "11.6.13",
+            "installed",
+        )
     }
 
     #[test]
     fn claude_parser_selects_global_by_id_and_scope_in_any_order() {
         let project = claude_provider("project", false, false, Value::Null, "11.6.13", "detected");
-        for providers in [json!([project.clone(), global_provider()]), json!([global_provider(), project])] {
+        for providers in [
+            json!([project.clone(), global_provider()]),
+            json!([global_provider(), project]),
+        ] {
             let parsed = parse_claude_skill_status(&claude_report(providers).to_string()).unwrap();
             assert!(parsed.installed && parsed.current);
             assert_eq!(parsed.version, "11.6.13");
@@ -416,30 +621,91 @@ mod tests {
 
     #[test]
     fn claude_parser_maps_contractual_states_and_strict_current() {
-        for status in ["not-detected", "detected", "repair-needed", "incomplete", "outdated"] {
+        for status in [
+            "not-detected",
+            "detected",
+            "repair-needed",
+            "incomplete",
+            "outdated",
+        ] {
             let installed = matches!(status, "outdated" | "repair-needed");
-            let report = claude_report(json!([claude_provider("global", installed, true, if installed { json!("11.6.12") } else { Value::Null }, "11.6.13", status)]));
+            let report = claude_report(json!([claude_provider(
+                "global",
+                installed,
+                true,
+                if installed {
+                    json!("11.6.12")
+                } else {
+                    Value::Null
+                },
+                "11.6.13",
+                status
+            )]));
             let parsed = parse_claude_skill_status(&report.to_string()).unwrap();
             assert_eq!(parsed.installed, installed);
             assert!(!parsed.current);
         }
-        let repair_equal = parse_claude_skill_status(&claude_report(json!([claude_provider("global", true, true, json!("11.6.13"), "11.6.13", "repair-needed")])).to_string()).unwrap();
+        let repair_equal = parse_claude_skill_status(
+            &claude_report(json!([claude_provider(
+                "global",
+                true,
+                true,
+                json!("11.6.13"),
+                "11.6.13",
+                "repair-needed"
+            )]))
+            .to_string(),
+        )
+        .unwrap();
         assert!(repair_equal.installed);
         assert!(!repair_equal.current);
         assert_eq!(repair_equal.version, "11.6.13");
         assert_eq!(repair_equal.available_version, "11.6.13");
-        for (managed, version, status, expected) in [(true, json!("11.6.13"), "installed", true), (false, json!("11.6.13"), "installed", false), (true, json!("11.6.12"), "installed", false), (true, Value::Null, "installed", false)] {
-            let parsed = parse_claude_skill_status(&claude_report(json!([claude_provider("global", true, managed, version, "11.6.13", status)])).to_string()).unwrap();
+        for (managed, version, status, expected) in [
+            (true, json!("11.6.13"), "installed", true),
+            (false, json!("11.6.13"), "installed", false),
+            (true, json!("11.6.12"), "installed", false),
+            (true, Value::Null, "installed", false),
+        ] {
+            let parsed = parse_claude_skill_status(
+                &claude_report(json!([claude_provider(
+                    "global", true, managed, version, "11.6.13", status
+                )]))
+                .to_string(),
+            )
+            .unwrap();
             assert_eq!(parsed.current, expected);
         }
-        let not_installed = parse_claude_skill_status(&claude_report(json!([claude_provider("global", false, false, Value::Null, "11.6.13", "not-detected")])).to_string()).unwrap();
+        let not_installed = parse_claude_skill_status(
+            &claude_report(json!([claude_provider(
+                "global",
+                false,
+                false,
+                Value::Null,
+                "11.6.13",
+                "not-detected"
+            )]))
+            .to_string(),
+        )
+        .unwrap();
         assert_eq!(not_installed.version, "");
     }
 
     #[test]
     fn claude_parser_accepts_incomplete_and_detected_without_current() {
         for status in ["detected", "incomplete"] {
-            let parsed = parse_claude_skill_status(&claude_report(json!([claude_provider("global", false, false, Value::Null, "11.6.13", status)])).to_string()).unwrap();
+            let parsed = parse_claude_skill_status(
+                &claude_report(json!([claude_provider(
+                    "global",
+                    false,
+                    false,
+                    Value::Null,
+                    "11.6.13",
+                    status
+                )]))
+                .to_string(),
+            )
+            .unwrap();
             assert!(!parsed.installed && !parsed.current);
         }
     }
@@ -447,47 +713,103 @@ mod tests {
     #[test]
     fn claude_parser_rejects_invalid_outer_report_and_provider() {
         let valid = claude_report(json!([global_provider()]));
-        let invalid = ["{".to_owned(), "not json".to_owned(), r#"{"tool":"jintia""#.to_owned()];
-        for raw in invalid { assert!(parse_claude_skill_status(&raw).is_err()); }
-        let mut invalid = Vec::new();
-        for (key, value) in [("tool", json!("other")), ("command", json!("wrong")), ("status", json!("failed")), ("exitCode", json!(1))] {
-            let mut report = valid.clone(); report[key] = value; invalid.push(report);
+        let invalid = [
+            "{".to_owned(),
+            "not json".to_owned(),
+            r#"{"tool":"jintia""#.to_owned(),
+        ];
+        for raw in invalid {
+            assert!(parse_claude_skill_status(&raw).is_err());
         }
-        let mut missing_data = valid.clone(); missing_data.as_object_mut().unwrap().remove("data"); invalid.push(missing_data);
-        let mut wrong_operation = valid.clone(); wrong_operation["data"]["operation"] = json!("wrong"); invalid.push(wrong_operation);
-        let mut missing_providers = valid.clone(); missing_providers["data"].as_object_mut().unwrap().remove("providers"); invalid.push(missing_providers);
-        let mut non_array = valid.clone(); non_array["data"]["providers"] = json!({}); invalid.push(non_array);
-        for report in invalid { assert!(parse_claude_skill_status(&report.to_string()).is_err()); }
+        let mut invalid = Vec::new();
+        for (key, value) in [
+            ("tool", json!("other")),
+            ("command", json!("wrong")),
+            ("status", json!("failed")),
+            ("exitCode", json!(1)),
+        ] {
+            let mut report = valid.clone();
+            report[key] = value;
+            invalid.push(report);
+        }
+        let mut missing_data = valid.clone();
+        missing_data.as_object_mut().unwrap().remove("data");
+        invalid.push(missing_data);
+        let mut wrong_operation = valid.clone();
+        wrong_operation["data"]["operation"] = json!("wrong");
+        invalid.push(wrong_operation);
+        let mut missing_providers = valid.clone();
+        missing_providers["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("providers");
+        invalid.push(missing_providers);
+        let mut non_array = valid.clone();
+        non_array["data"]["providers"] = json!({});
+        invalid.push(non_array);
+        for report in invalid {
+            assert!(parse_claude_skill_status(&report.to_string()).is_err());
+        }
 
         let malformed = [
             json!([]),
-            json!([claude_provider("project", false, false, Value::Null, "11.6.13", "detected")]),
+            json!([claude_provider(
+                "project",
+                false,
+                false,
+                Value::Null,
+                "11.6.13",
+                "detected"
+            )]),
             json!([global_provider(), global_provider()]),
         ];
-        for providers in malformed { assert!(parse_claude_skill_status(&claude_report(providers).to_string()).is_err()); }
-        for (field, value) in [("target", json!(42)), ("target", json!("")), ("state", Value::Null)] {
-            let mut provider = global_provider(); provider[field] = value; assert!(parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err());
+        for providers in malformed {
+            assert!(parse_claude_skill_status(&claude_report(providers).to_string()).is_err());
+        }
+        for (field, value) in [
+            ("target", json!(42)),
+            ("target", json!("")),
+            ("state", Value::Null),
+        ] {
+            let mut provider = global_provider();
+            provider[field] = value;
+            assert!(
+                parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err()
+            );
         }
         let mut missing_state = global_provider();
         missing_state.as_object_mut().unwrap().remove("state");
-        assert!(parse_claude_skill_status(&claude_report(json!([missing_state])).to_string()).is_err());
+        assert!(
+            parse_claude_skill_status(&claude_report(json!([missing_state])).to_string()).is_err()
+        );
     }
 
     #[test]
     fn claude_parser_rejects_invalid_state_types_and_values() {
         let fields = [
-            ("installed", json!("yes")), ("managed", json!("yes")),
-            ("availableVersion", json!(11613)), ("availableVersion", json!("")),
-            ("version", json!(11613)), ("version", json!(true)), ("version", json!("")),
-            ("status", json!(1)), ("status", json!("foreign")),
+            ("installed", json!("yes")),
+            ("managed", json!("yes")),
+            ("availableVersion", json!(11613)),
+            ("availableVersion", json!("")),
+            ("version", json!(11613)),
+            ("version", json!(true)),
+            ("version", json!("")),
+            ("status", json!(1)),
+            ("status", json!("foreign")),
         ];
         for (field, value) in fields {
-            let mut provider = global_provider(); provider["state"][field] = value;
-            assert!(parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err());
+            let mut provider = global_provider();
+            provider["state"][field] = value;
+            assert!(
+                parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err()
+            );
         }
         for field in ["availableVersion", "version", "status"] {
-            let mut provider = global_provider(); provider["state"].as_object_mut().unwrap().remove(field);
-            assert!(parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err());
+            let mut provider = global_provider();
+            provider["state"].as_object_mut().unwrap().remove(field);
+            assert!(
+                parse_claude_skill_status(&claude_report(json!([provider])).to_string()).is_err()
+            );
         }
     }
 
@@ -495,14 +817,32 @@ mod tests {
     fn openai_plugin_failed_reports_preserve_upstream_message() {
         let install = json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"errors":[{"message":"fallo upstream"}]});
         let status = json!({"tool":"jintia","command":"plugin status","status":"failed","exitCode":2,"errors":[{"message":"status upstream"}]});
-        assert_eq!(plugin_report_error(&install.to_string(), "plugin install").as_deref(), Some("fallo upstream"));
-        assert_eq!(plugin_report_error(&status.to_string(), "plugin status").as_deref(), Some("status upstream"));
-        assert_eq!(plugin_command_failure_message(&install.to_string(), "plugin install"), "fallo upstream");
+        assert_eq!(
+            plugin_report_error(&install.to_string(), "plugin install").as_deref(),
+            Some("fallo upstream")
+        );
+        assert_eq!(
+            plugin_report_error(&status.to_string(), "plugin status").as_deref(),
+            Some("status upstream")
+        );
+        assert_eq!(
+            plugin_command_failure_message(&install.to_string(), "plugin install"),
+            "fallo upstream"
+        );
         let later_install = json!({"tool":"jintia","command":"plugin install","status":"failed","exitCode":1,"errors":[{"message":" "},{"message":"fallo real upstream"}]});
         let later_status = json!({"tool":"jintia","command":"plugin status","status":"failed","exitCode":1,"errors":[{},{"message":42},{"message":""},{"message":"  "},{"message":"mensaje válido"}]});
-        assert_eq!(plugin_report_error(&later_install.to_string(), "plugin install").as_deref(), Some("fallo real upstream"));
-        assert_eq!(plugin_report_error(&later_status.to_string(), "plugin status").as_deref(), Some("mensaje válido"));
-        assert_eq!(plugin_command_failure_message("", "plugin install"), OPENAI_PLUGIN_CAPABILITY_ERROR);
+        assert_eq!(
+            plugin_report_error(&later_install.to_string(), "plugin install").as_deref(),
+            Some("fallo real upstream")
+        );
+        assert_eq!(
+            plugin_report_error(&later_status.to_string(), "plugin status").as_deref(),
+            Some("mensaje válido")
+        );
+        assert_eq!(
+            plugin_command_failure_message("", "plugin install"),
+            OPENAI_PLUGIN_CAPABILITY_ERROR
+        );
         for invalid in [
             "not json".to_owned(),
             json!({"tool":"other","command":"plugin install","status":"failed","exitCode":1,"errors":[{"message":"x"}]}).to_string(),

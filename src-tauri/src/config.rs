@@ -1,7 +1,8 @@
 use crate::models::{ActionResult, InstitutionConfig, NotebookEntry, SetupStatus, TemplateMeta};
 use crate::paths::{
     app_config_dir, atomic_write, atomic_write_if_changed, claude_code_config_path,
-    claude_desktop_config_path, installed_skill_dir, openai_plugin_dir, path_text, portable_skill_source_dir,
+    claude_desktop_config_path, installed_skill_dir, openai_plugin_dir, path_text,
+    portable_skill_source_dir,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -17,7 +18,11 @@ fn sync_user_config_to_install(name: &str, bytes: &[u8]) -> Result<(), String> {
     if target.parent().is_some_and(std::path::Path::exists) {
         atomic_write_if_changed(&target, bytes)?;
     }
-    let openai_target = openai_plugin_dir()?.join("skills").join("jintia-skill").join("config").join(name);
+    let openai_target = openai_plugin_dir()?
+        .join("skills")
+        .join("jintia-skill")
+        .join("config")
+        .join(name);
     if openai_target.parent().is_some_and(std::path::Path::exists) {
         atomic_write_if_changed(&openai_target, bytes)?;
     }
@@ -124,7 +129,6 @@ pub fn active_institution() -> ActiveInstitution {
         ),
     }
 }
-
 
 pub fn apply_institution(config: InstitutionConfig) -> ActionResult {
     let _operation = match CONFIG_WRITE_OPERATION.lock() {
@@ -272,9 +276,7 @@ pub fn list_templates() -> Vec<TemplateMeta> {
     let mut templates = entries
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().ok().is_some_and(|kind| kind.is_dir()))
-        .filter_map(|entry| {
-            fs::read(entry.path().join("meta.json")).ok()
-        })
+        .filter_map(|entry| fs::read(entry.path().join("meta.json")).ok())
         .filter_map(|bytes| serde_json::from_slice::<TemplateMeta>(&bytes).ok())
         .filter(|meta| theme_exists(&meta.id))
         .collect::<Vec<_>>();
