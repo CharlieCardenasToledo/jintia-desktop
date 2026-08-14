@@ -199,7 +199,9 @@ test('la configuración y el curso consumen el contrato MCP dinámico', async ()
   assert.doesNotMatch(course, /NOTEBOOKLM_MCP_/);
   assert.doesNotMatch(course, /portable_notebooklm_mcp_installed\(\)[\s\S]*portable_notebooklm_mcp_installed\(\)/);
   assert.doesNotMatch(mcp, /NOTEBOOKLM_MCP_/);
-  assert.doesNotMatch(runtimes, /NOTEBOOKLM_MCP_/);
+  // Solo el lock de mutación de runtimes (NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK) puede aparecer en runtimes.rs;
+  // ninguna otra referencia MCP pertenece aquí.
+  assert.doesNotMatch(runtimes, /NOTEBOOKLM_MCP_(?!RUNTIME_MUTATION_LOCK)/);
   const installStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
   const installEnd = runtimes.indexOf('\n#[cfg(test)]', installStart);
   const install = runtimes.slice(installStart, installEnd < 0 ? runtimes.length : installEnd);
@@ -4161,20 +4163,20 @@ test('Node y Python rechazan instalaciones concurrentes antes de tocar staging',
   assert.match(production, /MutexGuard/, 'falta MutexGuard');
   assert.match(production, /TryLockError/, 'falta TryLockError');
 
-  // Dos locks separados
-  assert.match(production, /NODE_RUNTIME_INSTALL_LOCK.*Mutex/, 'falta NODE_RUNTIME_INSTALL_LOCK');
-  assert.match(production, /PYTHON_RUNTIME_INSTALL_LOCK.*Mutex/, 'falta PYTHON_RUNTIME_INSTALL_LOCK');
-  assert.doesNotMatch(production, /static RUNTIME_INSTALL_LOCK/, 'no debe existir un lock compartido único');
+  // Locks separados por recurso
+  assert.match(production, /NODE_RUNTIME_MUTATION_LOCK.*Mutex/, 'falta NODE_RUNTIME_MUTATION_LOCK');
+  assert.match(production, /PYTHON_RUNTIME_MUTATION_LOCK.*Mutex/, 'falta PYTHON_RUNTIME_MUTATION_LOCK');
+  assert.doesNotMatch(production, /static RUNTIME_MUTATION_LOCK[^_]/, 'no debe existir un lock compartido único');
 
-  // Helper try_runtime_install_lock
-  const helperStart = production.indexOf('fn try_runtime_install_lock');
-  assert.ok(helperStart >= 0, 'helper try_runtime_install_lock no encontrado');
+  // Helper try_runtime_mutation_lock
+  const helperStart = production.indexOf('fn try_runtime_mutation_lock');
+  assert.ok(helperStart >= 0, 'helper try_runtime_mutation_lock no encontrado');
   const helperEnd = production.indexOf('\npub fn download_portable_node', helperStart);
   const helper = production.slice(helperStart, helperEnd);
   assert.match(helper, /lock\.try_lock\(\)/, 'helper debe usar try_lock');
   assert.match(helper, /TryLockError::WouldBlock/, 'helper debe manejar WouldBlock');
   assert.match(helper, /TryLockError::Poisoned/, 'helper debe manejar Poisoned');
-  assert.match(helper, /Ya hay una instalación de/, 'helper debe producir error WouldBlock claro');
+  assert.match(helper, /Ya hay una operación sobre/, 'helper debe producir error WouldBlock claro');
   assert.doesNotMatch(helper, /lock\.lock\(\)/, 'helper no debe usar lock() bloqueante');
   assert.doesNotMatch(helper, /sleep|loop|into_inner|clear_poison/, 'helper no debe recuperar silenciosamente');
   assert.doesNotMatch(helper, /fs::|reqwest|Command|PATH/, 'helper no debe tener side effects');
@@ -4184,11 +4186,11 @@ test('Node y Python rechazan instalaciones concurrentes antes de tocar staging',
   const nodeEnd = production.indexOf('\nfn node_version_text_matches_expected', nodeStart);
   assert.ok(nodeStart >= 0 && nodeEnd > nodeStart, 'download_portable_node no encontrada');
   const nodeDownloader = production.slice(nodeStart, nodeEnd);
-  assert.match(nodeDownloader, /let _install_guard.*try_runtime_install_lock/, 'Node: guard debe asignarse a variable');
-  assert.match(nodeDownloader, /NODE_RUNTIME_INSTALL_LOCK/, 'Node: debe usar su lock específico');
-  assert.doesNotMatch(nodeDownloader, /PYTHON_RUNTIME_INSTALL_LOCK/, 'Node: no debe usar lock de Python');
+  assert.match(nodeDownloader, /let _node_guard.*try_runtime_mutation_lock/, 'Node: guard debe asignarse a variable');
+  assert.match(nodeDownloader, /NODE_RUNTIME_MUTATION_LOCK/, 'Node: debe usar su lock específico');
+  assert.doesNotMatch(nodeDownloader, /PYTHON_RUNTIME_MUTATION_LOCK/, 'Node: no debe usar lock de Python');
 
-  const nodeLockIdx = nodeDownloader.indexOf('try_runtime_install_lock');
+  const nodeLockIdx = nodeDownloader.indexOf('try_runtime_mutation_lock');
   const nodePathsIdx = nodeDownloader.indexOf('paths::portable_runtimes_dir');
   const nodeCreateDirIdx = nodeDownloader.indexOf('fs::create_dir_all');
   const nodeHttpIdx = nodeDownloader.indexOf('reqwest::blocking::get');
@@ -4205,11 +4207,11 @@ test('Node y Python rechazan instalaciones concurrentes antes de tocar staging',
   const pyEnd = production.indexOf('\nfn emit_python_progress', pyStart);
   assert.ok(pyStart >= 0 && pyEnd > pyStart, 'download_portable_python no encontrada');
   const pyDownloader = production.slice(pyStart, pyEnd);
-  assert.match(pyDownloader, /let _install_guard.*try_runtime_install_lock/, 'Python: guard debe asignarse a variable');
-  assert.match(pyDownloader, /PYTHON_RUNTIME_INSTALL_LOCK/, 'Python: debe usar su lock específico');
-  assert.doesNotMatch(pyDownloader, /NODE_RUNTIME_INSTALL_LOCK/, 'Python: no debe usar lock de Node');
+  assert.match(pyDownloader, /let _python_guard.*try_runtime_mutation_lock/, 'Python: guard debe asignarse a variable');
+  assert.match(pyDownloader, /PYTHON_RUNTIME_MUTATION_LOCK/, 'Python: debe usar su lock específico');
+  assert.doesNotMatch(pyDownloader, /NODE_RUNTIME_MUTATION_LOCK/, 'Python: no debe usar lock de Node');
 
-  const pyLockIdx = pyDownloader.indexOf('try_runtime_install_lock');
+  const pyLockIdx = pyDownloader.indexOf('try_runtime_mutation_lock');
   const pyPathsIdx = pyDownloader.indexOf('paths::portable_runtimes_dir');
   const pyCreateDirIdx = pyDownloader.indexOf('fs::create_dir_all');
   const pyResolveIdx = pyDownloader.indexOf('resolve_python_asset');
@@ -4444,6 +4446,117 @@ test('El bulk respeta Node como prerrequisito sin bloquear Python independiente'
   // Refresh final tras el loop
   assert.match(bulkListener, /loadDeps\(\)/, 'bulk: falta loadDeps tras el loop');
   assert.match(bulkListener, /loadSetupStatus\(\)/, 'bulk: falta loadSetupStatus tras el loop');
+});
+
+test('Toda mutación de runtimes administrados usa locks por recurso', async () => {
+  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  // runtimes.rs tiene código de producción en dos bloques: antes y después del módulo #[cfg(test)].
+  // Para statics y helper usamos el bloque inicial; para funciones que aparecen tras el módulo tests
+  // usamos el archivo completo pero acotamos cada función con delimitadores estables.
+  const testCfgIdx = runtimes.indexOf('#[cfg(test)]');
+  const earlyProd = testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : runtimes;
+
+  // Cuatro locks separados por recurso, todos Mutex<()>
+  assert.match(earlyProd, /static NODE_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta NODE_RUNTIME_MUTATION_LOCK');
+  assert.match(earlyProd, /static PYTHON_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta PYTHON_RUNTIME_MUTATION_LOCK');
+  assert.match(earlyProd, /static SKILL_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta SKILL_RUNTIME_MUTATION_LOCK');
+  assert.match(earlyProd, /static NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK');
+  assert.doesNotMatch(earlyProd, /static RUNTIME_MUTATION_LOCK[^_]/, 'no debe existir un lock global único');
+
+  // Helper: try_lock, mensajes por recurso, sin bloqueo ni side effects
+  const helperStart = earlyProd.indexOf('fn try_runtime_mutation_lock');
+  assert.ok(helperStart >= 0, 'falta fn try_runtime_mutation_lock');
+  const helperEnd = earlyProd.indexOf('\npub fn download_portable_node', helperStart);
+  const helper = earlyProd.slice(helperStart, helperEnd);
+  assert.match(helper, /try_lock\(\)/, 'helper debe usar try_lock');
+  assert.match(helper, /TryLockError::WouldBlock/, 'helper debe manejar WouldBlock');
+  assert.match(helper, /TryLockError::Poisoned/, 'helper debe manejar Poisoned');
+  assert.match(helper, /Ya hay una operación sobre/, 'mensaje WouldBlock debe describir el recurso');
+  assert.match(helper, /bloqueo interno quedó invalidado/, 'mensaje Poisoned debe ser fail-closed');
+  assert.doesNotMatch(helper, /\.lock\(\)/, 'helper no debe usar lock() bloqueante');
+  assert.doesNotMatch(helper, /sleep|loop|into_inner|clear_poison/, 'helper no debe recuperar silenciosamente');
+
+  // download_portable_node: NODE lock antes de paths/HTTP (en bloque inicial)
+  const nodeStart = earlyProd.indexOf('pub fn download_portable_node(');
+  const nodeEnd = earlyProd.indexOf('\nfn node_version_text_matches_expected', nodeStart);
+  const nodeFn = earlyProd.slice(nodeStart, nodeEnd);
+  assert.match(nodeFn, /NODE_RUNTIME_MUTATION_LOCK/, 'download_portable_node: falta NODE_RUNTIME_MUTATION_LOCK');
+  assert.match(nodeFn, /try_runtime_mutation_lock/, 'download_portable_node: falta try_runtime_mutation_lock');
+  const nodeLockIdx = nodeFn.indexOf('NODE_RUNTIME_MUTATION_LOCK');
+  const nodePathsIdx = nodeFn.indexOf('portable_runtimes_dir');
+  assert.ok(nodeLockIdx < nodePathsIdx, 'download_portable_node: lock debe preceder a paths');
+
+  // download_portable_python: PYTHON lock antes de paths/HTTP (en bloque inicial)
+  const pyStart = earlyProd.indexOf('pub fn download_portable_python(');
+  const pyEnd = earlyProd.indexOf('\nfn emit_python_progress', pyStart);
+  const pyFn = earlyProd.slice(pyStart, pyEnd);
+  assert.match(pyFn, /PYTHON_RUNTIME_MUTATION_LOCK/, 'download_portable_python: falta PYTHON_RUNTIME_MUTATION_LOCK');
+  assert.match(pyFn, /try_runtime_mutation_lock/, 'download_portable_python: falta try_runtime_mutation_lock');
+  const pyLockIdx = pyFn.indexOf('PYTHON_RUNTIME_MUTATION_LOCK');
+  const pyPathsIdx = pyFn.indexOf('portable_runtimes_dir');
+  assert.ok(pyLockIdx < pyPathsIdx, 'download_portable_python: lock debe preceder a paths');
+  assert.doesNotMatch(pyFn, /NODE_RUNTIME_MUTATION_LOCK/, 'download_portable_python: no debe usar NODE lock');
+
+  // install_pip_packages: empty check antes del lock, PYTHON lock antes de python exe (en bloque inicial)
+  const pipStart = earlyProd.indexOf('pub fn install_pip_packages(');
+  assert.ok(pipStart >= 0, 'falta pub fn install_pip_packages');
+  const pipEnd = earlyProd.indexOf('\nfn managed_python_runtime_path', pipStart);
+  const pipFn = earlyProd.slice(pipStart, pipEnd > pipStart ? pipEnd : pipStart + 500);
+  assert.match(pipFn, /packages\.is_empty\(\)/, 'install_pip_packages: falta early return si empty');
+  assert.match(pipFn, /PYTHON_RUNTIME_MUTATION_LOCK/, 'install_pip_packages: falta PYTHON_RUNTIME_MUTATION_LOCK');
+  const pipEmptyIdx = pipFn.indexOf('packages.is_empty()');
+  const pipLockIdx = pipFn.indexOf('PYTHON_RUNTIME_MUTATION_LOCK');
+  assert.ok(pipEmptyIdx < pipLockIdx, 'install_pip_packages: early-return empty debe preceder al lock');
+  assert.doesNotMatch(pipFn, /NODE_RUNTIME_MUTATION_LOCK/, 'install_pip_packages: no debe usar NODE lock');
+
+  // install_notebooklm_mcp: MCP lock + NODE lock, en ese orden, antes de managed_mcp_contract (en bloque inicial)
+  const mcpStart = earlyProd.indexOf('pub fn install_notebooklm_mcp(');
+  assert.ok(mcpStart >= 0, 'falta pub fn install_notebooklm_mcp');
+  const mcpEnd = earlyProd.indexOf('\n#[cfg(test)]', mcpStart);
+  const mcpFn = earlyProd.slice(mcpStart, mcpEnd > mcpStart ? mcpEnd : mcpStart + 800);
+  assert.match(mcpFn, /NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK/, 'install_notebooklm_mcp: falta NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK');
+  assert.match(mcpFn, /NODE_RUNTIME_MUTATION_LOCK/, 'install_notebooklm_mcp: falta NODE_RUNTIME_MUTATION_LOCK');
+  const mcpLockIdx = mcpFn.indexOf('NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK');
+  const mcpNodeLockIdx = mcpFn.indexOf('NODE_RUNTIME_MUTATION_LOCK');
+  const mcpContractIdx = mcpFn.indexOf('managed_mcp_contract');
+  assert.ok(mcpLockIdx < mcpNodeLockIdx, 'install_notebooklm_mcp: MCP lock debe preceder a NODE lock');
+  assert.ok(mcpNodeLockIdx < mcpContractIdx, 'install_notebooklm_mcp: NODE lock debe preceder a managed_mcp_contract');
+
+  // Funciones en el bloque posterior al módulo tests (búsqueda en archivo completo)
+  // install_vivliostyle: NODE lock antes de portable_node_exe
+  const vivStart = runtimes.indexOf('pub fn install_vivliostyle(');
+  assert.ok(vivStart >= 0, 'falta pub fn install_vivliostyle');
+  const vivEnd = runtimes.indexOf('\npub fn install_npm_packages(', vivStart);
+  const vivFn = runtimes.slice(vivStart, vivEnd > vivStart ? vivEnd : vivStart + 800);
+  assert.match(vivFn, /NODE_RUNTIME_MUTATION_LOCK/, 'install_vivliostyle: falta NODE_RUNTIME_MUTATION_LOCK');
+  assert.match(vivFn, /try_runtime_mutation_lock/, 'install_vivliostyle: falta try_runtime_mutation_lock');
+  const vivLockIdx = vivFn.indexOf('NODE_RUNTIME_MUTATION_LOCK');
+  const vivNodeIdx = vivFn.indexOf('portable_node_exe');
+  assert.ok(vivLockIdx < vivNodeIdx, 'install_vivliostyle: lock Node debe preceder a portable_node_exe');
+
+  // install_npm_packages: empty check antes del lock, NODE lock antes de node exe
+  const npmStart = runtimes.indexOf('pub fn install_npm_packages(');
+  assert.ok(npmStart >= 0, 'falta pub fn install_npm_packages');
+  const npmEnd = runtimes.indexOf('\n// ==================== CHECKSUM', npmStart);
+  const npmFn = runtimes.slice(npmStart, npmEnd > npmStart ? npmEnd : npmStart + 600);
+  assert.match(npmFn, /packages\.is_empty\(\)/, 'install_npm_packages: falta early return si empty');
+  assert.match(npmFn, /NODE_RUNTIME_MUTATION_LOCK/, 'install_npm_packages: falta NODE_RUNTIME_MUTATION_LOCK');
+  const npmEmptyIdx = npmFn.indexOf('packages.is_empty()');
+  const npmLockIdx = npmFn.indexOf('NODE_RUNTIME_MUTATION_LOCK');
+  assert.ok(npmEmptyIdx < npmLockIdx, 'install_npm_packages: early-return empty debe preceder al lock');
+
+  // download_portable_skill: SKILL lock + NODE lock, en ese orden, antes de portable_node_exe
+  const skillStart = runtimes.indexOf('pub fn download_portable_skill(');
+  assert.ok(skillStart >= 0, 'falta pub fn download_portable_skill');
+  const skillEnd = runtimes.indexOf('\npub fn visual_install_profiles', skillStart);
+  const skillFn = runtimes.slice(skillStart, skillEnd > skillStart ? skillEnd : skillStart + 1000);
+  assert.match(skillFn, /SKILL_RUNTIME_MUTATION_LOCK/, 'download_portable_skill: falta SKILL_RUNTIME_MUTATION_LOCK');
+  assert.match(skillFn, /NODE_RUNTIME_MUTATION_LOCK/, 'download_portable_skill: falta NODE_RUNTIME_MUTATION_LOCK');
+  const skillLockIdx = skillFn.indexOf('SKILL_RUNTIME_MUTATION_LOCK');
+  const skillNodeLockIdx = skillFn.indexOf('NODE_RUNTIME_MUTATION_LOCK');
+  const skillNodeExeIdx = skillFn.indexOf('portable_node_exe');
+  assert.ok(skillLockIdx < skillNodeLockIdx, 'download_portable_skill: SKILL lock debe preceder a NODE lock');
+  assert.ok(skillNodeLockIdx < skillNodeExeIdx, 'download_portable_skill: NODE lock debe preceder a portable_node_exe');
 });
 
 test('Configuración descarga runtimes individuales exclusivamente mediante api.js', async () => {

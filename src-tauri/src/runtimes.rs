@@ -90,20 +90,22 @@ pub fn node_version() -> Option<String> {
     })
 }
 
-static NODE_RUNTIME_INSTALL_LOCK: Mutex<()> = Mutex::new(());
-static PYTHON_RUNTIME_INSTALL_LOCK: Mutex<()> = Mutex::new(());
+static NODE_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+static PYTHON_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+static SKILL_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+static NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
-fn try_runtime_install_lock<'a>(
+fn try_runtime_mutation_lock<'a>(
     lock: &'a Mutex<()>,
-    runtime: &str,
+    resource: &str,
 ) -> Result<MutexGuard<'a, ()>, String> {
     match lock.try_lock() {
         Ok(guard) => Ok(guard),
         Err(TryLockError::WouldBlock) => Err(format!(
-            "Ya hay una instalación de {runtime} en curso."
+            "Ya hay una operación sobre {resource} en curso."
         )),
         Err(TryLockError::Poisoned(_)) => Err(format!(
-            "No se pudo iniciar la instalación de {runtime}: \
+            "No se pudo iniciar una operación sobre {resource}: \
              el bloqueo interno quedó invalidado. \
              Reinicia Jintia Desktop y vuelve a intentarlo."
         )),
@@ -111,7 +113,7 @@ fn try_runtime_install_lock<'a>(
 }
 
 pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
-    let _install_guard = try_runtime_install_lock(&NODE_RUNTIME_INSTALL_LOCK, "Node.js")?;
+    let _node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")?;
 
     let runtimes_dir = paths::portable_runtimes_dir();
     let node_dir = runtimes_dir.join("node");
@@ -784,7 +786,7 @@ pub fn python_version() -> Option<String> {
 }
 
 pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
-    let _install_guard = try_runtime_install_lock(&PYTHON_RUNTIME_INSTALL_LOCK, "Python")?;
+    let _python_guard = try_runtime_mutation_lock(&PYTHON_RUNTIME_MUTATION_LOCK, "el runtime Python administrado")?;
 
     let runtimes_dir = paths::portable_runtimes_dir();
     fs::create_dir_all(&runtimes_dir)
@@ -906,6 +908,7 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
     if packages.is_empty() {
         return Ok(());
     }
+    let _python_guard = try_runtime_mutation_lock(&PYTHON_RUNTIME_MUTATION_LOCK, "el runtime Python administrado")?;
     let python_exe = paths::portable_python_exe();
     if !python_exe.is_file() {
         return Err("Python portable no está instalado.".to_string());
@@ -1148,6 +1151,8 @@ pub fn portable_notebooklm_mcp_installed_for(contract: &crate::release::ManagedM
 }
 
 pub fn install_notebooklm_mcp() -> Result<(), String> {
+    let _mcp_guard = try_runtime_mutation_lock(&NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK, "el runtime NotebookLM MCP administrado")?;
+    let _node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")?;
     let contract = crate::release::managed_mcp_contract()?;
     let node = paths::portable_node_exe();
     let npm = paths::portable_npm_cli();
@@ -1207,7 +1212,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_portable_python_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_command, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, try_runtime_install_lock, verify_sha256, NODE_RUNTIME_INSTALL_LOCK, PYTHON_RUNTIME_INSTALL_LOCK};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_portable_python_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_command, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, try_runtime_mutation_lock, verify_sha256, NODE_RUNTIME_MUTATION_LOCK, NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK, PYTHON_RUNTIME_MUTATION_LOCK, SKILL_RUNTIME_MUTATION_LOCK};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1277,13 +1282,13 @@ mod tests {
     #[test]
     fn runtime_install_lock_rejects_overlapping_operation() {
         let lock = std::sync::Mutex::new(());
-        let guard = try_runtime_install_lock(&lock, "Node.js")
+        let guard = try_runtime_mutation_lock(&lock, "el runtime Node administrado")
             .expect("primera adquisición debe ser Ok");
-        let result = try_runtime_install_lock(&lock, "Node.js");
+        let result = try_runtime_mutation_lock(&lock, "el runtime Node administrado");
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            "Ya hay una instalación de Node.js en curso."
+            "Ya hay una operación sobre el runtime Node administrado en curso."
         );
         drop(guard);
     }
@@ -1291,20 +1296,56 @@ mod tests {
     #[test]
     fn runtime_install_lock_allows_retry_after_guard_drop() {
         let lock = std::sync::Mutex::new(());
-        let guard = try_runtime_install_lock(&lock, "Python")
+        let guard = try_runtime_mutation_lock(&lock, "el runtime Python administrado")
             .expect("primera adquisición debe ser Ok");
         drop(guard);
-        let result = try_runtime_install_lock(&lock, "Python");
+        let result = try_runtime_mutation_lock(&lock, "el runtime Python administrado");
         assert!(result.is_ok());
     }
 
     #[test]
     fn node_and_python_runtime_install_locks_are_independent() {
-        let node_guard = try_runtime_install_lock(&NODE_RUNTIME_INSTALL_LOCK, "Node.js")
+        let node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")
             .expect("lock Node debe estar libre");
-        let python_guard = try_runtime_install_lock(&PYTHON_RUNTIME_INSTALL_LOCK, "Python")
+        let python_guard = try_runtime_mutation_lock(&PYTHON_RUNTIME_MUTATION_LOCK, "el runtime Python administrado")
             .expect("lock Python debe estar libre mientras Node está ocupado");
         drop(node_guard);
+        drop(python_guard);
+    }
+
+    #[test]
+    fn skill_and_notebooklm_runtime_mutation_locks_are_independent() {
+        let skill_guard = try_runtime_mutation_lock(&SKILL_RUNTIME_MUTATION_LOCK, "el runtime Jintia administrado")
+            .expect("lock Skill debe estar libre");
+        let mcp_guard = try_runtime_mutation_lock(&NOTEBOOKLM_MCP_RUNTIME_MUTATION_LOCK, "el runtime NotebookLM MCP administrado")
+            .expect("lock NotebookLM MCP debe estar libre mientras Skill está ocupado");
+        drop(skill_guard);
+        drop(mcp_guard);
+    }
+
+    #[test]
+    fn node_runtime_mutation_lock_is_shared_by_node_dependents() {
+        let node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")
+            .expect("primera adquisición debe ser Ok");
+        let result = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Ya hay una operación sobre el runtime Node administrado en curso."
+        );
+        drop(node_guard);
+    }
+
+    #[test]
+    fn python_runtime_mutation_lock_serializes_prefix_mutations() {
+        let python_guard = try_runtime_mutation_lock(&PYTHON_RUNTIME_MUTATION_LOCK, "el runtime Python administrado")
+            .expect("primera adquisición debe ser Ok");
+        let result = try_runtime_mutation_lock(&PYTHON_RUNTIME_MUTATION_LOCK, "el runtime Python administrado");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Ya hay una operación sobre el runtime Python administrado en curso."
+        );
         drop(python_guard);
     }
 
@@ -2601,6 +2642,7 @@ fn build_managed_npm_install_command(
 }
 
 pub fn install_vivliostyle() -> Result<(), String> {
+    let _node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")?;
     let node = paths::portable_node_exe();
     if !node.is_file() {
         return Err("El ejecutable Node portable no está disponible.".to_string());
@@ -2644,6 +2686,7 @@ pub fn install_npm_packages(packages: &[String]) -> Result<(), String> {
     if packages.is_empty() {
         return Ok(());
     }
+    let _node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")?;
 
     let node = paths::portable_node_exe();
     if !node.is_file() {
@@ -2780,6 +2823,8 @@ pub fn global_skill_available() -> bool {
 }
 
 pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
+    let _skill_guard = try_runtime_mutation_lock(&SKILL_RUNTIME_MUTATION_LOCK, "el runtime Jintia administrado")?;
+    let _node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")?;
     let node = paths::portable_node_exe();
     if !node.is_file() {
         return Err("El ejecutable Node portable no está disponible.".to_string());
