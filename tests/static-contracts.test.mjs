@@ -699,15 +699,14 @@ test('CLIs Node administrados consultan su versión sin heredar NODE_OPTIONS del
 
   // builder — positivos estructurales
   assert.match(builder, /cfg!\(target_os\s*=\s*"windows"\)/);
-  assert.match(builder, /Command::new\("cmd"\)/);
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /managed_node_command\("cmd"\)/);
+  assert.match(builder, /managed_node_command\(node\)/);
   assert.match(builder, /\.arg\(executable\)/);
   assert.match(builder, /\.args\(args\)/);
   assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
-  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
 
-  // builder — negativos de aislamiento (cmd es legítimo y se excluye del patrón negativo)
-  assert.doesNotMatch(builder, /env_clear|current_dir|NODE_PATH|split_paths|std::env::var(?:_os)?\(\s*"(?:NODE_OPTIONS|PATH)"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|which|where\.exe|powershell|bash\s+-c|sh\s+-c/);
+  // builder — negativos de aislamiento
+  assert.doesNotMatch(builder, /env_clear|current_dir|NODE_PATH|split_paths|std::env::var(?:_os)?\(\s*"(?:NODE_OPTIONS|PATH)"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|which|where\.exe|powershell|bash\s+-c|sh\s+-c|Command::new\("(?:node|npm|npx)"\)/);
 
   // la política no debe duplicarse en los consumidores
   const versionerStart = runtimes.indexOf('pub fn node_cli_version(');
@@ -1542,7 +1541,7 @@ test('los paquetes Node disciplinares usan exclusivamente Node npm CLI y PATH ad
 
   assert.match(
     builder,
-    /Command::new\(node\)/
+    /managed_node_command\(node\)/
   );
 
   assert.match(
@@ -1974,9 +1973,8 @@ test('Node portable valida el staging sin heredar NODE_OPTIONS del host', async 
   const builder = runtimes.slice(builderStart, validatorStart);
   const validator = runtimes.slice(validatorStart, activationStart);
 
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /managed_node_command\(node\)/);
   assert.match(builder, /"--version"/);
-  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
   assert.doesNotMatch(builder, /\.output\(|\.spawn\(|\.status\(|env_clear|current_dir|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|NODE_PATH|split_paths|Command::new\("(?:node|npm|npx|sh|bash|powershell|cmd)"\)/);
 
   assert.match(validator, /node_exe\.is_file\(\)/);
@@ -2005,9 +2003,8 @@ test('Node portable informa su versión sin heredar NODE_OPTIONS del host', asyn
   const versioner = runtimes.slice(versionerStart, downloaderStart);
 
   // builder — positivos
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /managed_node_command\(node\)/);
   assert.match(builder, /"--version"/);
-  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
 
   // builder — negativos
   assert.doesNotMatch(builder, /\.output\(|\.spawn\(|\.status\(|env_clear|current_dir|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|NODE_PATH|split_paths|Command::new\("(?:node|npm|npx|sh|bash|powershell|cmd)"\)/);
@@ -2191,7 +2188,7 @@ test('NotebookLM MCP construye su staging npm sólo con Node y PATH administrado
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
   const builder = runtimes.slice(builderStart, builderEnd);
 
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /managed_node_command\(node\)/);
   assert.match(builder, /\.arg\(npm_cli\)/);
   assert.match(builder, /\.args\(args\)/);
   assert.match(builder, /\.current_dir\(stage\)/);
@@ -2243,12 +2240,11 @@ test('NotebookLM MCP staging npm no hereda NODE_OPTIONS del host', async () => {
   assert.ok(installerStart >= 0 && installerEnd > installerStart);
   const installer = runtimes.slice(installerStart, installerEnd);
 
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /managed_node_command\(node\)/);
   assert.match(builder, /\.arg\(npm_cli\)/);
   assert.match(builder, /\.args\(args\)/);
   assert.match(builder, /\.current_dir\(stage\)/);
   assert.match(builder, /\.env\("PATH", managed_path\)/);
-  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
   assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|NODE_PATH|var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|Command::new\("(?:node|npm|npm\.cmd|npx)"\)|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
 
   assert.doesNotMatch(installer, /env_remove\("NODE_OPTIONS"\)/);
@@ -2268,7 +2264,7 @@ test('NotebookLM MCP ejecuta browser install y status sólo con Node y PATH admi
   const runner = runtimes.slice(runnerStart, validatorStart);
   const validator = runtimes.slice(validatorStart, runtimes.indexOf('\npub fn portable_notebooklm_mcp_installed_for', validatorStart));
 
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /managed_node_command\(node\)/);
   assert.match(builder, /\.arg\(bin\)/);
   assert.match(builder, /"browser"/);
   assert.match(builder, /action/);
@@ -2307,13 +2303,12 @@ test('NotebookLM MCP browser install y status no heredan NODE_OPTIONS del host',
   assert.ok(validatorEnd > validatorStart);
   const validator = runtimes.slice(validatorStart, validatorEnd);
 
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /managed_node_command\(node\)/);
   assert.match(builder, /\.arg\(bin\)/);
   assert.match(builder, /"browser"/);
   assert.match(builder, /action/);
   assert.match(builder, /"--json"/);
   assert.match(builder, /\.env\("PATH", managed_path\)/);
-  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
   assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|NODE_PATH|var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|Command::new\("(?:node|npm|npx)"\)|current_dir|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
 
   assert.match(runner, /managed_node_runtime_path\(\)\?/);
@@ -2351,7 +2346,7 @@ test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administra
   const builder = mcp.slice(builderStart, spawnStart);
   const spawn = mcp.slice(spawnStart, testsStart);
 
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /crate::runtimes::managed_node_command\(node\)/);
   assert.match(builder, /\.arg\(bin\)/);
   assert.match(builder, /\.env\("PATH", managed_path\)/);
   assert.doesNotMatch(builder, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|env_clear|current_dir|Command::new\("(?:node|npm|npx)"\)|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
@@ -2386,10 +2381,9 @@ test('NotebookLM MCP persistente no hereda NODE_OPTIONS del host', async () => {
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
   const builder = mcp.slice(builderStart, builderEnd);
 
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /crate::runtimes::managed_node_command\(node\)/);
   assert.match(builder, /\.arg\(bin\)/);
   assert.match(builder, /\.env\("PATH", managed_path\)/);
-  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
   assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|Command::new\("(?:node|npm|npx)"\)|current_dir|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
 
   const spawnStart = mcp.indexOf('fn spawn() -> Result<Self, String>');
@@ -2500,9 +2494,8 @@ test('NotebookLM MCP valida la versión de Node sin heredar NODE_OPTIONS del hos
   const builderEnd = mcp.indexOf('\nfn managed_node_version', builderStart);
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
   const builder = mcp.slice(builderStart, builderEnd);
-  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /crate::runtimes::managed_node_command\(node\)/);
   assert.match(builder, /"--version"/);
-  assert.match(builder, /env_remove\("NODE_OPTIONS"\)/);
   assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|Command::new\("(?:node|npm|npx)"\)|shell|current_dir|PATH/);
 
   const runnerStart = mcp.indexOf('fn managed_node_version');
@@ -3282,7 +3275,7 @@ test('Vivliostyle instala npm con el Node portable de Jintia', async () => {
 
   assert.match(
     installer,
-    /Command::new\(&node\)[\s\S]*\.arg\(&npm_cli\)/
+    /managed_node_command\(&node\)[\s\S]*\.arg\(&npm_cli\)/
   );
 
   assert.match(installer, /is_file\(\)/);
@@ -3312,7 +3305,7 @@ test('download_portable_skill instala y prueba Jintia con PATH administrado', as
   assert.match(helper, /join_paths/);
   for (const required of [
     'portable_node_exe()', 'portable_npm_cli()', 'managed_node_runtime_path()',
-    'Command::new(&node)', '.arg(&npm_cli)', 'install', '--global', '--prefix',
+    'managed_node_command(&node)', '.arg(&npm_cli)', 'install', '--global', '--prefix',
     '@charlie.act7/jintia@latest', '--no-audit', '--no-fund',
     '.env("PATH", &managed_path)', 'portable_skill_npm_package_dir_for',
     'package.json', 'skill/bin/jintia.js', 'capabilities', 'profiles', '--json',
@@ -3637,7 +3630,7 @@ test('Engine Adapter exige el archivo jintia.js resuelto por el runtime', async 
   assert.match(engine, /is_file\(\)/);
   assert.match(engine, /resolve_node/);
   assert.match(engine, /portable_node_bin_dir/);
-  assert.match(engine, /Command::new\(&node_bin\)/);
+  assert.match(engine, /managed_node_command\(&node_bin\)/);
   assert.doesNotMatch(engine, /compatibilidad legacy/);
   assert.doesNotMatch(engine, /skill_path\.join\("bin"\)\.join\("jintia\.js"\)/);
 
@@ -3880,6 +3873,92 @@ test('Plan 61A conserva el corte legacy y la extracción hermética de Node', as
   await assert.rejects(access(new URL('src-tauri/src/payload.rs', root)), error => error?.code === 'ENOENT');
 });
 
+test('Todo subprocess Node administrado de Desktop usa la política central de environment', async () => {
+  const [runtimes, engine, mcp] = await Promise.all([
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/engine.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
+  ]);
+
+  // helper central existe y es la única autoridad productiva
+  const helperStart = runtimes.indexOf('pub(crate) fn managed_node_command(');
+  const helperEnd = runtimes.indexOf('\nfn build_portable_node_version_command', helperStart);
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'managed_node_command debe existir');
+  const helper = runtimes.slice(helperStart, helperEnd);
+  assert.match(helper, /Command::new\(program\)/);
+  assert.match(helper, /env_remove\("NODE_OPTIONS"\)/);
+  assert.doesNotMatch(helper, /env_clear|\.env\("NODE_OPTIONS"|NODE_PATH|\.args\(|current_dir|\.output\(|\.spawn\(|std::env::(?:set_var|remove_var)|std::env::var/);
+
+  // producción de runtimes: exactamente un env_remove (el del helper)
+  const prodRuntimes = runtimes.slice(0, runtimes.indexOf('\n#[cfg(test)]'));
+  const prodMatches = [...prodRuntimes.matchAll(/env_remove\("NODE_OPTIONS"\)/g)];
+  assert.equal(prodMatches.length, 1, `runtimes.rs debe tener exactamente 1 env_remove productivo, encontrado: ${prodMatches.length}`);
+
+  // producción de engine: cero env_remove
+  const engineTestIdx = engine.indexOf('#[cfg(test)]');
+  const prodEngine = engineTestIdx >= 0 ? engine.slice(0, engineTestIdx) : engine;
+  assert.doesNotMatch(prodEngine, /env_remove\("NODE_OPTIONS"\)/, 'engine.rs no debe tener env_remove productivo');
+
+  // producción de mcp: cero env_remove
+  const mcpTestIdx = mcp.indexOf('#[cfg(test)]');
+  const prodMcp = mcpTestIdx >= 0 ? mcp.slice(0, mcpTestIdx) : mcp;
+  assert.doesNotMatch(prodMcp, /env_remove\("NODE_OPTIONS"\)/, 'mcp.rs no debe tener env_remove productivo');
+
+  // consumers de runtimes usan managed_node_command
+  for (const fn of [
+    'fn build_portable_node_version_command',
+    'fn build_staged_node_version_command',
+    'fn build_managed_notebooklm_browser_command',
+    'fn build_managed_notebooklm_npm_command',
+    'fn build_managed_node_cli_version_command',
+    'fn build_managed_npm_install_command',
+  ]) {
+    const idx = runtimes.indexOf(fn);
+    assert.ok(idx >= 0, `${fn} debe existir`);
+    // la función llama a managed_node_command antes de la siguiente función pública/privada
+    const nextFn = runtimes.indexOf('\nfn ', idx + fn.length);
+    const nextPubFn = runtimes.indexOf('\npub fn ', idx + fn.length);
+    const fnEnd = Math.min(...[nextFn, nextPubFn].filter(i => i > idx));
+    const fnBody = runtimes.slice(idx, fnEnd > idx ? fnEnd : idx + 500);
+    assert.match(fnBody, /managed_node_command/, `${fn} debe usar managed_node_command`);
+  }
+
+  // install_vivliostyle y download_portable_skill también usan managed_node_command
+  const vivStart = runtimes.indexOf('pub fn install_vivliostyle()');
+  const skillStart = runtimes.indexOf('pub fn download_portable_skill(');
+  assert.ok(vivStart >= 0, 'install_vivliostyle debe existir');
+  assert.ok(skillStart >= 0, 'download_portable_skill debe existir');
+  const vivEnd = runtimes.indexOf('pub fn install_npm_packages', vivStart);
+  const skillEnd = runtimes.indexOf('pub fn visual_install_profiles', skillStart);
+  const viv = runtimes.slice(vivStart, vivEnd);
+  const skill = runtimes.slice(skillStart, skillEnd);
+  assert.match(viv, /managed_node_command/, 'install_vivliostyle debe usar managed_node_command');
+  const skillMatches = [...skill.matchAll(/managed_node_command/g)];
+  assert.ok(skillMatches.length >= 2, `download_portable_skill debe usar managed_node_command al menos 2 veces (npm install + smoke), encontrado: ${skillMatches.length}`);
+
+  // engine usa managed_node_command en run_jintia
+  const runStart = engine.indexOf('pub fn run_jintia');
+  assert.ok(runStart >= 0, 'run_jintia debe existir');
+  const runEnd = engine.indexOf('\npub fn run_jintia_json', runStart);
+  const run = engine.slice(runStart, runEnd > runStart ? runEnd : runStart + 500);
+  assert.match(run, /crate::runtimes::managed_node_command/, 'run_jintia debe usar managed_node_command');
+  assert.doesNotMatch(run, /Command::new\(&node_bin\)/, 'run_jintia no debe usar Command::new directo');
+
+  // mcp usa managed_node_command en ambos builders
+  assert.match(mcp, /crate::runtimes::managed_node_command/, 'mcp.rs debe usar managed_node_command');
+  const mcpNodeVStart = mcp.indexOf('fn build_managed_node_version_command');
+  const mcpServerStart = mcp.indexOf('fn build_managed_mcp_server_command');
+  assert.ok(mcpNodeVStart >= 0 && mcpServerStart >= 0);
+  const mcpNodeVEnd = mcp.indexOf('\nfn managed_node_version', mcpNodeVStart);
+  const mcpServerEnd = mcp.indexOf('\nimpl McpConnection', mcpServerStart);
+  const mcpNodeV = mcp.slice(mcpNodeVStart, mcpNodeVEnd);
+  const mcpServer = mcp.slice(mcpServerStart, mcpServerEnd);
+  assert.match(mcpNodeV, /crate::runtimes::managed_node_command/);
+  assert.match(mcpServer, /crate::runtimes::managed_node_command/);
+  assert.doesNotMatch(mcpNodeV, /Command::new\(node\)/);
+  assert.doesNotMatch(mcpServer, /Command::new\(node\)/);
+});
+
 test('engine entrega a Jintia un PATH compuesto sólo por runtimes administrados', async () => {
   const source = await readFile(new URL('src-tauri/src/engine.rs', root), 'utf8');
   const start = source.indexOf('fn managed_runtime_path');
@@ -3891,7 +3970,7 @@ test('engine entrega a Jintia un PATH compuesto sólo por runtimes administrados
   assert.ok(start >= 0 && end > start && runStart >= 0 && runEnd > runStart);
   assert.match(helper, /portable_node_bin_dir/); assert.match(`${helper}\n${run}`, /resolve_python/);
   assert.match(helper, /join_paths/);
-  assert.match(run, /managed_entrypoint/); assert.match(run, /resolve_node/); assert.match(run, /Command::new\(&node_bin\)/); assert.match(run, /\.env\("PATH", managed_path\)/);
+  assert.match(run, /managed_entrypoint/); assert.match(run, /resolve_node/); assert.match(run, /managed_node_command\(&node_bin\)/); assert.match(run, /\.env\("PATH", managed_path\)/);
   assert.doesNotMatch(`${helper}\n${run}`, /var_os\("PATH"\)|base_path|split_paths/);
   assert.doesNotMatch(`${helper}\n${run}`, /where\.exe|\bwhich\b|Command::new\("(?:node|npm|npx|python|python3|jintia)"\)/);
   assert.doesNotMatch(`${helper}\n${run}`, /env_clear/);

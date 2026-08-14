@@ -119,8 +119,8 @@ pub(crate) fn server_matches_managed_mcp(server: &Value) -> bool {
 }
 
 fn build_managed_node_version_command(node: &Path) -> Command {
-    let mut command = Command::new(node);
-    command.arg("--version").env_remove("NODE_OPTIONS");
+    let mut command = crate::runtimes::managed_node_command(node);
+    command.arg("--version");
     command
 }
 
@@ -487,11 +487,10 @@ fn build_managed_mcp_server_command(
     bin: &Path,
     managed_path: &std::ffi::OsStr,
 ) -> Command {
-    let mut command = Command::new(node);
+    let mut command = crate::runtimes::managed_node_command(node);
     command
         .arg(bin)
-        .env("PATH", managed_path)
-        .env_remove("NODE_OPTIONS");
+        .env("PATH", managed_path);
     command
 }
 

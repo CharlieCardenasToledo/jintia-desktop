@@ -58,11 +58,17 @@ pub fn portable_node_installed() -> bool {
     paths::portable_node_exe().is_file()
 }
 
-fn build_portable_node_version_command(node: &std::path::Path) -> Command {
-    let mut command = Command::new(node);
+pub(crate) fn managed_node_command(
+    program: impl AsRef<std::ffi::OsStr>,
+) -> Command {
+    let mut command = Command::new(program);
+    command.env_remove("NODE_OPTIONS");
     command
-        .arg("--version")
-        .env_remove("NODE_OPTIONS");
+}
+
+fn build_portable_node_version_command(node: &std::path::Path) -> Command {
+    let mut command = managed_node_command(node);
+    command.arg("--version");
     command
 }
 
@@ -210,10 +216,8 @@ fn node_version_text_matches_expected(text: &str) -> bool {
 }
 
 fn build_staged_node_version_command(node: &std::path::Path) -> Command {
-    let mut command = Command::new(node);
-    command
-        .arg("--version")
-        .env_remove("NODE_OPTIONS");
+    let mut command = managed_node_command(node);
+    command.arg("--version");
     command
 }
 
@@ -993,12 +997,11 @@ fn build_managed_notebooklm_browser_command(
     managed_path: &std::ffi::OsStr,
     action: &str,
 ) -> Command {
-    let mut command = Command::new(node);
+    let mut command = managed_node_command(node);
     command
         .arg(bin)
         .args(["browser", action, "--json"])
-        .env("PATH", managed_path)
-        .env_remove("NODE_OPTIONS");
+        .env("PATH", managed_path);
     command
 }
 
@@ -1026,13 +1029,12 @@ fn build_managed_notebooklm_npm_command(
     managed_path: &std::ffi::OsStr,
     args: &[&str],
 ) -> Command {
-    let mut command = Command::new(node);
+    let mut command = managed_node_command(node);
     command
         .arg(npm_cli)
         .args(args)
         .current_dir(stage)
-        .env("PATH", managed_path)
-        .env_remove("NODE_OPTIONS");
+        .env("PATH", managed_path);
     command
 }
 
@@ -1165,13 +1167,59 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, verify_sha256};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
     #[cfg(not(target_os = "windows"))]
     use super::extract_node_tar_gz;
     use std::fs;
+
+    #[test]
+    fn managed_node_command_uses_exact_program() {
+        let command = managed_node_command(std::path::Path::new("managed-program"));
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("managed-program"));
+    }
+
+    #[test]
+    fn managed_node_command_removes_node_options() {
+        let command = managed_node_command(std::path::Path::new("managed-program"));
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn managed_node_command_starts_without_arguments() {
+        let command = managed_node_command(std::path::Path::new("managed-program"));
+        assert_eq!(command.get_args().count(), 0);
+    }
+
+    #[test]
+    fn managed_node_command_does_not_override_current_dir() {
+        let command = managed_node_command(std::path::Path::new("managed-program"));
+        assert_eq!(command.get_current_dir(), None);
+    }
+
+    #[test]
+    fn managed_npm_install_command_removes_node_options() {
+        let command = build_managed_npm_install_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-npm-cli.js"),
+            std::path::Path::new("managed-prefix"),
+            std::ffi::OsStr::new("managed-only-bin"),
+            &["some-package".to_string()],
+        );
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
+    }
 
     #[test]
     fn managed_node_runtime_path_contains_only_portable_node_bin() {
@@ -2414,19 +2462,18 @@ fn build_managed_node_cli_version_command(
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("cmd"))
     {
-        let mut command = Command::new("cmd");
+        let mut command = managed_node_command("cmd");
         command.arg("/C").arg(executable);
         command
     } else {
-        let mut command = Command::new(node);
+        let mut command = managed_node_command(node);
         command.arg(executable);
         command
     };
 
     command
         .args(args)
-        .env("PATH", managed_path)
-        .env_remove("NODE_OPTIONS");
+        .env("PATH", managed_path);
     command
 }
 
@@ -2437,7 +2484,7 @@ fn build_managed_npm_install_command(
     managed_path: &std::ffi::OsStr,
     packages: &[String],
 ) -> Command {
-    let mut command = Command::new(node);
+    let mut command = managed_node_command(node);
     command
         .arg(npm_cli)
         .arg("install")
@@ -2462,7 +2509,7 @@ pub fn install_vivliostyle() -> Result<(), String> {
 
     let prefix = paths::portable_node_prefix();
     let managed_path = managed_node_runtime_path()?;
-    let output = Command::new(&node)
+    let output = managed_node_command(&node)
             .arg(&npm_cli)
             .arg("install")
             .arg("--global")
@@ -2653,7 +2700,7 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
 
     emit_skill_progress(app, "installing", 5.0, "Instalando Jintia desde npm...");
 
-    let output = Command::new(&node)
+    let output = managed_node_command(&node)
             .arg(&npm_cli)
             .arg("install")
             .arg("--global")
@@ -2728,7 +2775,7 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
         &format!("Probando Jintia {version}..."),
     );
 
-    let smoke_output = Command::new(&node)
+    let smoke_output = managed_node_command(&node)
         .arg(&skill_js)
         .arg("capabilities")
         .arg("profiles")

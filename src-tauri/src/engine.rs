@@ -1,7 +1,6 @@
 use serde::de::DeserializeOwned;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Resultado de ejecutar un comando Jintia.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -54,7 +53,7 @@ pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, Stri
     let python = crate::runtimes::resolve_python().map(PathBuf::from);
     let managed_path = managed_runtime_path(python.as_deref())?;
 
-    match Command::new(&node_bin)
+    match crate::runtimes::managed_node_command(&node_bin)
         .args(&cmd_args)
         .env("PATH", managed_path)
         .output()
