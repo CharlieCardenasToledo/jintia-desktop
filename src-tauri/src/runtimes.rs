@@ -983,7 +983,8 @@ fn build_managed_notebooklm_browser_command(
     command
         .arg(bin)
         .args(["browser", action, "--json"])
-        .env("PATH", managed_path);
+        .env("PATH", managed_path)
+        .env_remove("NODE_OPTIONS");
     command
 }
 
@@ -1695,6 +1696,22 @@ mod tests {
             .expect("PATH administrado");
         assert_eq!(path, std::ffi::OsStr::new("managed-only-bin"));
         assert!(!path.to_string_lossy().contains("host-only-bin"));
+    }
+
+    #[test]
+    fn notebooklm_browser_command_removes_node_options() {
+        let command = build_managed_notebooklm_browser_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-mcp-bin.js"),
+            std::ffi::OsStr::new("managed-only-bin"),
+            "status",
+        );
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
     }
 
     #[test]
