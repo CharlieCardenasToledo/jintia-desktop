@@ -4150,3 +4150,76 @@ test('Las descargas de runtimes rechazan HTTP de error antes de escribir artefac
   const checksumSlice = runtimes.slice(checksumFn, runtimes.indexOf('\n}', checksumFn) + 2);
   assert.match(checksumSlice, /error_for_status\(\)/, 'fetch_node_checksum debe conservar error_for_status');
 });
+
+test('Node y Python rechazan instalaciones concurrentes antes de tocar staging', async () => {
+  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const testCfgIdx = runtimes.indexOf('#[cfg(test)]');
+  const production = testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : runtimes;
+
+  // Imports requeridos
+  assert.match(production, /use std::sync::\{[^}]*Mutex[^}]*\}/, 'falta import Mutex');
+  assert.match(production, /MutexGuard/, 'falta MutexGuard');
+  assert.match(production, /TryLockError/, 'falta TryLockError');
+
+  // Dos locks separados
+  assert.match(production, /NODE_RUNTIME_INSTALL_LOCK.*Mutex/, 'falta NODE_RUNTIME_INSTALL_LOCK');
+  assert.match(production, /PYTHON_RUNTIME_INSTALL_LOCK.*Mutex/, 'falta PYTHON_RUNTIME_INSTALL_LOCK');
+  assert.doesNotMatch(production, /static RUNTIME_INSTALL_LOCK/, 'no debe existir un lock compartido único');
+
+  // Helper try_runtime_install_lock
+  const helperStart = production.indexOf('fn try_runtime_install_lock');
+  assert.ok(helperStart >= 0, 'helper try_runtime_install_lock no encontrado');
+  const helperEnd = production.indexOf('\npub fn download_portable_node', helperStart);
+  const helper = production.slice(helperStart, helperEnd);
+  assert.match(helper, /lock\.try_lock\(\)/, 'helper debe usar try_lock');
+  assert.match(helper, /TryLockError::WouldBlock/, 'helper debe manejar WouldBlock');
+  assert.match(helper, /TryLockError::Poisoned/, 'helper debe manejar Poisoned');
+  assert.match(helper, /Ya hay una instalación de/, 'helper debe producir error WouldBlock claro');
+  assert.doesNotMatch(helper, /lock\.lock\(\)/, 'helper no debe usar lock() bloqueante');
+  assert.doesNotMatch(helper, /sleep|loop|into_inner|clear_poison/, 'helper no debe recuperar silenciosamente');
+  assert.doesNotMatch(helper, /fs::|reqwest|Command|PATH/, 'helper no debe tener side effects');
+
+  // Node — guard adquirido antes de side effects
+  const nodeStart = production.indexOf('pub fn download_portable_node(');
+  const nodeEnd = production.indexOf('\nfn node_version_text_matches_expected', nodeStart);
+  assert.ok(nodeStart >= 0 && nodeEnd > nodeStart, 'download_portable_node no encontrada');
+  const nodeDownloader = production.slice(nodeStart, nodeEnd);
+  assert.match(nodeDownloader, /let _install_guard.*try_runtime_install_lock/, 'Node: guard debe asignarse a variable');
+  assert.match(nodeDownloader, /NODE_RUNTIME_INSTALL_LOCK/, 'Node: debe usar su lock específico');
+  assert.doesNotMatch(nodeDownloader, /PYTHON_RUNTIME_INSTALL_LOCK/, 'Node: no debe usar lock de Python');
+
+  const nodeLockIdx = nodeDownloader.indexOf('try_runtime_install_lock');
+  const nodePathsIdx = nodeDownloader.indexOf('paths::portable_runtimes_dir');
+  const nodeCreateDirIdx = nodeDownloader.indexOf('fs::create_dir_all');
+  const nodeHttpIdx = nodeDownloader.indexOf('reqwest::blocking::get');
+  const nodeStageIdx = nodeDownloader.indexOf('.node-stage-');
+  const nodeActivateIdx = nodeDownloader.indexOf('activate_staged_node_runtime');
+  assert.ok(nodeLockIdx < nodePathsIdx, 'Node: lock antes de paths');
+  assert.ok(nodePathsIdx < nodeCreateDirIdx, 'Node: paths antes de create_dir_all');
+  assert.ok(nodeCreateDirIdx < nodeHttpIdx, 'Node: create_dir antes de HTTP');
+  assert.ok(nodeHttpIdx < nodeStageIdx, 'Node: HTTP antes de stage');
+  assert.ok(nodeStageIdx < nodeActivateIdx, 'Node: stage antes de activation');
+
+  // Python — guard adquirido antes de side effects
+  const pyStart = production.indexOf('pub fn download_portable_python(');
+  const pyEnd = production.indexOf('\nfn emit_python_progress', pyStart);
+  assert.ok(pyStart >= 0 && pyEnd > pyStart, 'download_portable_python no encontrada');
+  const pyDownloader = production.slice(pyStart, pyEnd);
+  assert.match(pyDownloader, /let _install_guard.*try_runtime_install_lock/, 'Python: guard debe asignarse a variable');
+  assert.match(pyDownloader, /PYTHON_RUNTIME_INSTALL_LOCK/, 'Python: debe usar su lock específico');
+  assert.doesNotMatch(pyDownloader, /NODE_RUNTIME_INSTALL_LOCK/, 'Python: no debe usar lock de Node');
+
+  const pyLockIdx = pyDownloader.indexOf('try_runtime_install_lock');
+  const pyPathsIdx = pyDownloader.indexOf('paths::portable_runtimes_dir');
+  const pyCreateDirIdx = pyDownloader.indexOf('fs::create_dir_all');
+  const pyResolveIdx = pyDownloader.indexOf('resolve_python_asset');
+  const pyHttpIdx = pyDownloader.indexOf('reqwest::blocking::get');
+  const pyStageIdx = pyDownloader.indexOf('.python-stage-');
+  const pyActivateIdx = pyDownloader.indexOf('activate_staged_python_runtime');
+  assert.ok(pyLockIdx < pyPathsIdx, 'Python: lock antes de paths');
+  assert.ok(pyPathsIdx < pyCreateDirIdx, 'Python: paths antes de create_dir_all');
+  assert.ok(pyCreateDirIdx < pyResolveIdx, 'Python: create_dir antes de resolve_python_asset');
+  assert.ok(pyResolveIdx < pyHttpIdx, 'Python: resolve antes de HTTP');
+  assert.ok(pyHttpIdx < pyStageIdx, 'Python: HTTP antes de stage');
+  assert.ok(pyStageIdx < pyActivateIdx, 'Python: stage antes de activation');
+});
