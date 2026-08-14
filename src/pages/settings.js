@@ -16,6 +16,7 @@ import { ui, cx, liquidForBackground } from "../uiClasses.js";
 // "Instalar herramientas necesarias" solo cubre los runtimes portables necesarios
 // para ejecutar la Skill; Git queda fuera aunque aparezca en la lista de abajo.
 const BULK_INSTALL_TARGETS = new Set(["Node.js", "Python", "Jintia Skill", "Vivliostyle CLI"]);
+const NODE_DEPENDENT_BULK_TARGETS = new Set(["Jintia Skill", "Vivliostyle CLI"]);
 let _settingsSection = "inst-profile";
 const _busySettingsOps = new Set();
 
@@ -1141,17 +1142,25 @@ async function loadDeps() {
       }
       const names = targets.map(d => d.name).join(", ");
       if (!await confirm(`Se instalarán las herramientas necesarias para generar tus guías: ${names}. Esto puede tardar varios minutos. ¿Continuar?`)) return;
+      let nodeReady = deps.some(d => d.name === "Node.js" && d.installed);
       for (const dep of targets) {
+        if (NODE_DEPENDENT_BULK_TARGETS.has(dep.name) && !nodeReady) {
+          toast(`No se instaló ${dep.name}: requiere Node.js portable.`, "error", 4000);
+          continue;
+        }
         toast(`Instalando ${dep.name}…`, "loading", 120000);
         try {
           let r;
-          if (dep.name === "Node.js") r = await downloadNodeRuntime();
+          if (dep.name === "Node.js") { r = await downloadNodeRuntime(); nodeReady = r.success === true; }
           else if (dep.name === "Python") r = await downloadPythonRuntime();
           else if (dep.name === "Jintia Skill") r = await downloadSkillRuntime();
           else if (dep.name === "Vivliostyle CLI") r = await installVivliostyleCli();
           else r = await installDependency(dep.name, true);
           toast(r.message, r.success ? "success" : "error", 4000);
-        } catch (e) { toast(`Error en ${dep.name}: ${e}`, "error"); }
+        } catch (e) {
+          if (dep.name === "Node.js") nodeReady = false;
+          toast(`Error en ${dep.name}: ${e}`, "error");
+        }
       }
       loadDeps(); loadSetupStatus();
     });

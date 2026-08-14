@@ -4354,3 +4354,94 @@ test('Instalar herramientas necesarias incluye el renderer Vivliostyle administr
   assert.match(bulkListener, /loadDeps\(\)/, 'bulk: falta loadDeps tras el loop');
   assert.match(bulkListener, /loadSetupStatus\(\)/, 'bulk: falta loadSetupStatus tras el loop');
 });
+
+test('El bulk respeta Node como prerrequisito sin bloquear Python independiente', async () => {
+  const [settings, runtimes] = await Promise.all([
+    readFile(new URL('src/pages/settings.js', root), 'utf8'),
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+  ]);
+
+  // runtimes.rs: download_portable_skill requiere Node portable
+  const skillFnStart = runtimes.indexOf('pub fn download_portable_skill(');
+  assert.ok(skillFnStart >= 0, 'runtimes: falta pub fn download_portable_skill');
+  const skillFnEnd = runtimes.indexOf('\npub fn ', skillFnStart + 1);
+  const skillFn = runtimes.slice(skillFnStart, skillFnEnd > skillFnStart ? skillFnEnd : skillFnStart + 600);
+  assert.match(skillFn, /portable_node_exe/, 'runtimes: download_portable_skill debe requerir portable_node_exe');
+  assert.match(skillFn, /Node portable no está disponible/, 'runtimes: download_portable_skill debe rechazar si Node falta');
+
+  // runtimes.rs: install_vivliostyle requiere Node portable
+  const vivFnStart = runtimes.indexOf('pub fn install_vivliostyle(');
+  assert.ok(vivFnStart >= 0, 'runtimes: falta pub fn install_vivliostyle');
+  const vivFnEnd = runtimes.indexOf('\npub fn ', vivFnStart + 1);
+  const vivFn = runtimes.slice(vivFnStart, vivFnEnd > vivFnStart ? vivFnEnd : vivFnStart + 600);
+  assert.match(vivFn, /portable_node_exe/, 'runtimes: install_vivliostyle debe requerir portable_node_exe');
+  assert.match(vivFn, /Node portable no está disponible/, 'runtimes: install_vivliostyle debe rechazar si Node falta');
+
+  // NODE_DEPENDENT_BULK_TARGETS contiene exactamente Jintia Skill y Vivliostyle CLI
+  const ndbtStart = settings.indexOf('const NODE_DEPENDENT_BULK_TARGETS');
+  assert.ok(ndbtStart >= 0, 'settings: falta NODE_DEPENDENT_BULK_TARGETS');
+  const ndbtEnd = settings.indexOf(';', ndbtStart);
+  const ndbtSrc = settings.slice(ndbtStart, ndbtEnd + 1);
+
+  assert.match(ndbtSrc, /"Jintia Skill"/, 'NODE_DEPENDENT: falta "Jintia Skill"');
+  assert.match(ndbtSrc, /"Vivliostyle CLI"/, 'NODE_DEPENDENT: falta "Vivliostyle CLI"');
+
+  const ndbtLiterals = [...ndbtSrc.matchAll(/"([^"]+)"/g)].map(m => m[1]);
+  assert.strictEqual(ndbtLiterals.length, 2, `NODE_DEPENDENT: debe tener exactamente 2 entradas, tiene ${ndbtLiterals.length}: ${ndbtLiterals.join(', ')}`);
+
+  const forbidden = ['Node.js', 'Python', 'Git', 'NotebookLM MCP', 'Compilador LaTeX'];
+  for (const f of forbidden) {
+    assert.doesNotMatch(ndbtSrc, new RegExp(`"${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`), `NODE_DEPENDENT: "${f}" no debe ser dependiente de Node`);
+  }
+
+  // Listener bulk: nodeReady se deriva del snapshot deps
+  const bulkListenerStart = settings.indexOf('"#btn-install-all-deps"');
+  assert.ok(bulkListenerStart >= 0, 'settings: falta listener #btn-install-all-deps');
+  const bulkListenerEnd = settings.indexOf('\n    });', bulkListenerStart);
+  const bulkListener = settings.slice(bulkListenerStart, bulkListenerEnd > bulkListenerStart ? bulkListenerEnd + 8 : settings.length);
+
+  // nodeReady derivado del snapshot deps (no hardcodeado a false ni true)
+  assert.match(bulkListener, /nodeReady\s*=\s*deps\.some/, 'bulk: nodeReady debe derivarse de deps.some(...)');
+  assert.match(bulkListener, /name\s*===\s*["']Node\.js["'].*installed/, 'bulk: nodeReady debe filtrar por name===Node.js && installed');
+
+  // Guard de prerrequisito: antes de instalar dependientes de Node
+  assert.match(bulkListener, /NODE_DEPENDENT_BULK_TARGETS\.has\(dep\.name\)/, 'bulk: falta guard NODE_DEPENDENT_BULK_TARGETS.has');
+  assert.match(bulkListener, /!nodeReady/, 'bulk: falta !nodeReady en guard');
+  assert.match(bulkListener, /continue/, 'bulk: falta continue en guard');
+  assert.match(bulkListener, /Node\.js portable/, 'bulk: mensaje de omisión debe mencionar Node.js portable');
+
+  // El guard ocurre antes del toast "Instalando…"
+  const guardIdx = bulkListener.indexOf('NODE_DEPENDENT_BULK_TARGETS.has(dep.name)');
+  const installingToastIdx = bulkListener.indexOf('Instalando ${dep.name}');
+  assert.ok(guardIdx < installingToastIdx, 'bulk: el guard debe preceder al toast "Instalando"');
+
+  // Actualización de nodeReady desde el resultado de Node, no incondicional
+  assert.match(bulkListener, /dep\.name\s*===\s*["']Node\.js["'][\s\S]{0,60}nodeReady\s*=\s*r\.success/, 'bulk: nodeReady debe actualizarse desde r.success tras instalar Node');
+  assert.doesNotMatch(bulkListener, /nodeReady\s*=\s*true(?!\s*===)/, 'bulk: nodeReady no debe asignarse true incondicionalmente');
+
+  // Excepción Node: nodeReady=false garantizado en catch
+  assert.match(bulkListener, /dep\.name\s*===\s*["']Node\.js["'][\s\S]{0,30}nodeReady\s*=\s*false/, 'bulk: catch debe fijar nodeReady=false si Node lanza excepción');
+
+  // Python no es dependiente de Node (no aparece en guard ni en condición nodeReady específica)
+  assert.doesNotMatch(ndbtSrc, /"Python"/, 'NODE_DEPENDENT: Python no debe ser dependiente de Node');
+  assert.match(bulkListener, /downloadPythonRuntime\(\)/, 'bulk: falta downloadPythonRuntime');
+
+  // downloadPythonRuntime no está condicionado a nodeReady
+  const pythonBranchIdx = bulkListener.indexOf('downloadPythonRuntime()');
+  const guardEndIdx = bulkListener.indexOf('continue');
+  assert.ok(pythonBranchIdx > guardEndIdx, 'bulk: downloadPythonRuntime debe estar fuera del bloque guard (después del continue)');
+
+  // Jintia y Vivliostyle siguen presentes (se instalan cuando Node está listo)
+  assert.match(bulkListener, /downloadSkillRuntime\(\)/, 'bulk: falta downloadSkillRuntime');
+  assert.match(bulkListener, /installVivliostyleCli\(\)/, 'bulk: falta installVivliostyleCli');
+
+  // Sin abort global: no break por fallo de instalación
+  assert.doesNotMatch(bulkListener, /\bbreak\b/, 'bulk: no debe usar break para abortar el loop');
+
+  // Sin paralelismo
+  assert.doesNotMatch(bulkListener, /Promise\.all|Promise\.allSettled/, 'bulk: no debe paralelizar instalaciones');
+
+  // Refresh final tras el loop
+  assert.match(bulkListener, /loadDeps\(\)/, 'bulk: falta loadDeps tras el loop');
+  assert.match(bulkListener, /loadSetupStatus\(\)/, 'bulk: falta loadSetupStatus tras el loop');
+});
