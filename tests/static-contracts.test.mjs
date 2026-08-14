@@ -686,6 +686,43 @@ test('Vivliostyle consulta su versión únicamente con el runtime Node administr
   );
 });
 
+test('CLIs Node administrados consultan su versión sin heredar NODE_OPTIONS del host', async () => {
+  const runtimes = await readFile(
+    new URL('src-tauri/src/runtimes.rs', root),
+    'utf8'
+  );
+
+  const builderStart = runtimes.indexOf('fn build_managed_node_cli_version_command');
+  const builderEnd = runtimes.indexOf('fn build_managed_npm_install_command', builderStart);
+  assert.ok(builderStart >= 0 && builderEnd > builderStart);
+  const builder = runtimes.slice(builderStart, builderEnd);
+
+  // builder — positivos estructurales
+  assert.match(builder, /cfg!\(target_os\s*=\s*"windows"\)/);
+  assert.match(builder, /Command::new\("cmd"\)/);
+  assert.match(builder, /Command::new\(node\)/);
+  assert.match(builder, /\.arg\(executable\)/);
+  assert.match(builder, /\.args\(args\)/);
+  assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
+  assert.match(builder, /\.env_remove\("NODE_OPTIONS"\)/);
+
+  // builder — negativos de aislamiento (cmd es legítimo y se excluye del patrón negativo)
+  assert.doesNotMatch(builder, /env_clear|current_dir|NODE_PATH|split_paths|std::env::var(?:_os)?\(\s*"(?:NODE_OPTIONS|PATH)"|std::env::(?:set_var|remove_var)|\.env\(\s*"NODE_OPTIONS"|which|where\.exe|powershell|bash\s+-c|sh\s+-c/);
+
+  // la política no debe duplicarse en los consumidores
+  const versionerStart = runtimes.indexOf('pub fn node_cli_version(');
+  const versionerEnd = runtimes.indexOf('fn managed_node_runtime_path', versionerStart);
+  assert.ok(versionerStart >= 0 && versionerEnd > versionerStart);
+  const versioner = runtimes.slice(versionerStart, versionerEnd);
+  assert.doesNotMatch(versioner, /env_remove\("NODE_OPTIONS"\)/);
+
+  const vivliostyleStart = runtimes.indexOf('pub fn vivliostyle_version()');
+  const vivliostyleEnd = runtimes.indexOf('pub fn resolve_node_cli', vivliostyleStart);
+  assert.ok(vivliostyleStart >= 0 && vivliostyleEnd > vivliostyleStart);
+  const vivliostyle = runtimes.slice(vivliostyleStart, vivliostyleEnd);
+  assert.doesNotMatch(vivliostyle, /env_remove\("NODE_OPTIONS"\)/);
+});
+
 test('el onboarding delega la prueba final a jintia self-test --json', async () => {
   const source = await readFile(
     new URL('src/onboarding.js', root),

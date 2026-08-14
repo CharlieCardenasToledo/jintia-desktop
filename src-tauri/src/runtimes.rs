@@ -2070,6 +2070,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn managed_node_cli_version_command_removes_node_options() {
+        let command = build_managed_node_cli_version_command(
+            std::path::Path::new("managed-node"),
+            std::path::Path::new("managed-cli"),
+            std::ffi::OsStr::new("managed-only-bin"),
+            &["--version"],
+        );
+        let value = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("NODE_OPTIONS"))
+            .expect("NODE_OPTIONS debe eliminarse explícitamente")
+            .1;
+        assert!(value.is_none());
+    }
+
     #[cfg(target_os = "windows")]
     fn zip_fixture(name: &str, entry: &str, bytes: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
         use std::io::Write;
@@ -2407,7 +2423,10 @@ fn build_managed_node_cli_version_command(
         command
     };
 
-    command.args(args).env("PATH", managed_path);
+    command
+        .args(args)
+        .env("PATH", managed_path)
+        .env_remove("NODE_OPTIONS");
     command
 }
 
