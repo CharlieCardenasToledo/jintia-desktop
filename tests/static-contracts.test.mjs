@@ -643,12 +643,12 @@ test('Vivliostyle se resuelve únicamente desde el runtime portable administrado
 
   assert.match(
     course,
-    /installed:\s*crate::runtimes::resolve_vivliostyle\(\)\.is_some\(\)/
+    /installed:\s*vivliostyle_ready/
   );
 
   assert.match(
     course,
-    /version:\s*crate::runtimes::vivliostyle_version\(\)/
+    /version:\s*vivliostyle_version,/
   );
 
   assert.doesNotMatch(
@@ -2019,7 +2019,9 @@ test('Node portable informa su versión sin heredar NODE_OPTIONS del host', asyn
   assert.match(versioner, /\.output\(\)/);
   assert.match(versioner, /\.ok\(\)/);
   assert.match(versioner, /output\.status\.success\(\)/);
-  assert.match(versioner, /String::from_utf8\(output\.stdout\)/);
+  assert.match(versioner, /output\.stdout\.is_empty\(\)/);
+  assert.match(versioner, /output\.stderr/);
+  assert.match(versioner, /String::from_utf8\(raw\)/);
   assert.match(versioner, /\.trim\(\)/);
 
   // versioner — negativo: no Command directo
@@ -2633,7 +2635,7 @@ test('Jintia requiere su Node administrado aunque exista un Node global', async 
 
   assert.match(
     course,
-    /let node_bin\s*=\s*crate::runtimes::resolve_node\(\)/
+    /let node_version\s*=\s*crate::runtimes::node_version\(\)/
   );
 
   assert.match(
@@ -3017,12 +3019,12 @@ test('Jintia requiere su Python administrado aunque exista Python global', async
 
   assert.match(
     course,
-    /let python_bin\s*=\s*crate::runtimes::resolve_python\(\)/
+    /let python_version\s*=\s*crate::runtimes::python_version\(\)/
   );
 
   assert.match(
     course,
-    /installed:\s*python/
+    /installed:\s*python_ready/
   );
 });
 
@@ -3194,7 +3196,7 @@ test('Vivliostyle global no satisface el runtime requerido por Jintia', async ()
 
   assert.match(
     course,
-    /name:\s*"Vivliostyle CLI"\.to_string\(\)[\s\S]*installed:\s*crate::runtimes::resolve_vivliostyle\(\)\.is_some\(\)/
+    /name:\s*"Vivliostyle CLI"\.to_string\(\)[\s\S]*installed:\s*vivliostyle_ready/
   );
 
   assert.match(
@@ -4629,4 +4631,84 @@ test('Configuración descarga runtimes individuales exclusivamente mediante api.
   assert.match(bulkListener, /downloadPythonRuntime\(\)/, 'bulk: falta downloadPythonRuntime');
   assert.match(bulkListener, /downloadSkillRuntime\(\)/, 'bulk: falta downloadSkillRuntime');
   assert.match(bulkListener, /installVivliostyleCli\(\)/, 'bulk: falta installVivliostyleCli');
+});
+
+test('Las dependencias administradas sólo están listas si su probe operativo responde', async () => {
+  const [runtimes, course, onboarding, settings] = await Promise.all([
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readFile(new URL('src/pages/settings.js', root), 'utf8'),
+  ]);
+
+  // node_version() usa el matcher administrado, soporta stdout/stderr y no hardcodea la versión
+  const nodeVerStart = runtimes.indexOf('pub fn node_version()');
+  assert.ok(nodeVerStart >= 0, 'falta pub fn node_version()');
+  const nodeVerEnd = runtimes.indexOf('\nstatic NODE_RUNTIME_MUTATION_LOCK', nodeVerStart);
+  const nodeVerFn = runtimes.slice(nodeVerStart, nodeVerEnd > nodeVerStart ? nodeVerEnd : nodeVerStart + 600);
+  assert.match(nodeVerFn, /resolve_node\(\)/, 'node_version: falta resolve_node()');
+  assert.match(nodeVerFn, /build_portable_node_version_command/, 'node_version: falta build_portable_node_version_command');
+  assert.match(nodeVerFn, /output\.status\.success\(\)/, 'node_version: falta output.status.success()');
+  assert.match(nodeVerFn, /output\.stdout\.is_empty\(\)/, 'node_version: falta manejo de stdout vacío');
+  assert.match(nodeVerFn, /output\.stderr/, 'node_version: falta fallback a stderr');
+  assert.match(nodeVerFn, /node_version_text_matches_expected/, 'node_version: falta matcher de versión exacta');
+  assert.doesNotMatch(nodeVerFn, /22\.13\.0/, 'node_version: no debe hardcodear la versión administrada');
+
+  // python_version() usa el matcher administrado, soporta stdout/stderr y no hardcodea la versión
+  const pyVerStart = runtimes.indexOf('pub fn python_version()');
+  assert.ok(pyVerStart >= 0, 'falta pub fn python_version()');
+  const pyVerEnd = runtimes.indexOf('\npub fn download_portable_python', pyVerStart);
+  const pyVerFn = runtimes.slice(pyVerStart, pyVerEnd > pyVerStart ? pyVerEnd : pyVerStart + 600);
+  assert.match(pyVerFn, /resolve_python\(\)/, 'python_version: falta resolve_python()');
+  assert.match(pyVerFn, /build_portable_python_version_command/, 'python_version: falta build_portable_python_version_command');
+  assert.match(pyVerFn, /output\.status\.success\(\)/, 'python_version: falta output.status.success()');
+  assert.match(pyVerFn, /output\.stdout\.is_empty\(\)/, 'python_version: falta manejo de stdout vacío');
+  assert.match(pyVerFn, /output\.stderr/, 'python_version: falta fallback a stderr');
+  assert.match(pyVerFn, /python_version_text_matches_expected/, 'python_version: falta matcher de versión exacta');
+  assert.doesNotMatch(pyVerFn, /3\.13\.15/, 'python_version: no debe hardcodear la versión administrada');
+
+  // check_dependencies() usa exactamente un probe por runtime, derivando installed de readiness
+  const depsStart = course.indexOf('pub fn check_dependencies()');
+  assert.ok(depsStart >= 0, 'falta pub fn check_dependencies()');
+  const depsEnd = course.indexOf('\npub fn check_dependencies_cached', depsStart);
+  const depsFn = course.slice(depsStart, depsEnd > depsStart ? depsEnd : depsStart + 4000);
+
+  // Node: un único probe, readiness, sin presence como autoridad
+  const nodeVersionCalls = (depsFn.match(/crate::runtimes::node_version\(\)/g) || []).length;
+  assert.strictEqual(nodeVersionCalls, 1, 'check_dependencies: exactamente un probe node_version()');
+  assert.match(depsFn, /node_ready\s*=\s*node_version\.is_some\(\)/, 'check_dependencies: node_ready debe derivar de node_version.is_some()');
+  assert.match(depsFn, /installed:\s*node_ready/, 'check_dependencies: Node installed debe ser node_ready');
+  assert.match(depsFn, /version:\s*node_version,/, 'check_dependencies: Node version debe reutilizar el snapshot');
+  assert.doesNotMatch(depsFn, /crate::runtimes::resolve_node\(\)/, 'check_dependencies: no debe usar resolve_node como autoridad de installed');
+
+  // Python: un único probe, readiness, sin presence como autoridad
+  const pyVersionCalls = (depsFn.match(/crate::runtimes::python_version\(\)/g) || []).length;
+  assert.strictEqual(pyVersionCalls, 1, 'check_dependencies: exactamente un probe python_version()');
+  assert.match(depsFn, /python_ready\s*=\s*python_version\.is_some\(\)/, 'check_dependencies: python_ready debe derivar de python_version.is_some()');
+  assert.match(depsFn, /installed:\s*python_ready/, 'check_dependencies: Python installed debe ser python_ready');
+  assert.match(depsFn, /version:\s*python_version,/, 'check_dependencies: Python version debe reutilizar el snapshot');
+  assert.doesNotMatch(depsFn, /crate::runtimes::resolve_python\(\)/, 'check_dependencies: no debe usar resolve_python como autoridad de installed');
+
+  // Vivliostyle: un único probe, readiness, sin presence como autoridad
+  const vivVersionCalls = (depsFn.match(/crate::runtimes::vivliostyle_version\(\)/g) || []).length;
+  assert.strictEqual(vivVersionCalls, 1, 'check_dependencies: exactamente un probe vivliostyle_version()');
+  assert.match(depsFn, /vivliostyle_ready\s*=\s*vivliostyle_version\.is_some\(\)/, 'check_dependencies: vivliostyle_ready debe derivar de vivliostyle_version.is_some()');
+  assert.match(depsFn, /installed:\s*vivliostyle_ready/, 'check_dependencies: Vivliostyle installed debe ser vivliostyle_ready');
+  assert.match(depsFn, /version:\s*vivliostyle_version,/, 'check_dependencies: Vivliostyle version debe reutilizar el snapshot');
+  assert.doesNotMatch(depsFn, /resolve_vivliostyle\(\)\.is_some\(\)/, 'check_dependencies: no debe usar resolve_vivliostyle como autoridad de installed');
+  assert.doesNotMatch(depsFn, /portable_vivliostyle_bin\(\)\.is_file\(\)/, 'check_dependencies: no debe usar is_file como autoridad del note Vivliostyle');
+
+  // Jintia Skill conserva resolve_skill (sin probe de versión en PLAN 99)
+  assert.match(depsFn, /resolve_skill\(\)\.is_some\(\)/, 'check_dependencies: Jintia Skill debe seguir usando resolve_skill');
+
+  // NotebookLM conserva portable_notebooklm_mcp_installed_for
+  assert.match(depsFn, /portable_notebooklm_mcp_installed_for/, 'check_dependencies: NotebookLM debe seguir usando portable_notebooklm_mcp_installed_for');
+
+  // Downstream: onboarding consume installed como autoridad
+  assert.match(onboarding, /dep\.required\s*&&\s*!dep\.installed/, 'onboarding: debe filtrar por required && !installed');
+  assert.match(onboarding, /\.every\([^)]*d\.installed/, 'onboarding: debe exigir d.installed en todos los required');
+
+  // Downstream: bulk Settings consume !installed para selección de reparación
+  assert.match(settings, /!d\.installed/, 'settings: bulk debe seleccionar por !installed');
+  assert.match(settings, /BULK_INSTALL_TARGETS\.has\(d\.name\)/, 'settings: bulk debe filtrar por BULK_INSTALL_TARGETS');
 });

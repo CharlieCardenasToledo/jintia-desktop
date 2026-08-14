@@ -92,23 +92,25 @@ fn version(command: &str, args: &[&str]) -> Option<String> {
 
 pub fn check_dependencies() -> Vec<DependencyStatus> {
 
-    let node_bin = crate::runtimes::resolve_node();
-    let node = node_bin.is_some();
-    let portable_node = crate::runtimes::portable_node_installed();
+    let node_version = crate::runtimes::node_version();
+    let node_ready = node_version.is_some();
 
-    let python_bin = crate::runtimes::resolve_python();
-    let python = python_bin.is_some();
-    let portable_python = crate::runtimes::portable_python_installed();
+    let python_version = crate::runtimes::python_version();
+    let python_ready = python_version.is_some();
+
+    let vivliostyle_version = crate::runtimes::vivliostyle_version();
+    let vivliostyle_ready = vivliostyle_version.is_some();
+
     let git = command_exists("git");
 
     let mut dependencies = vec![
         DependencyStatus {
             name: "Node.js".to_string(),
-            installed: node,
-            version: crate::runtimes::node_version(),
+            installed: node_ready,
+            version: node_version,
             required: true,
             installable: true,
-            note: if portable_node {
+            note: if node_ready {
                 "Usando Node.js portable de Jintia.".to_string()
             } else {
                 "Necesario para que la app funcione correctamente.".to_string()
@@ -126,11 +128,11 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         },
         DependencyStatus {
             name: "Python".to_string(),
-            installed: python,
-            version: crate::runtimes::python_version(),
+            installed: python_ready,
+            version: python_version,
             required: true,
             installable: true,
-            note: if portable_python {
+            note: if python_ready {
                 "Usando Python portable de Jintia.".to_string()
             } else {
                 "Procesa recursos del curso (recortes bibliográficos).".to_string()
@@ -152,11 +154,11 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         },
         DependencyStatus {
             name: "Vivliostyle CLI".to_string(),
-            installed: crate::runtimes::resolve_vivliostyle().is_some(),
-            version: crate::runtimes::vivliostyle_version(),
+            installed: vivliostyle_ready,
+            version: vivliostyle_version,
             required: true,
             installable: true,
-            note: if crate::paths::portable_vivliostyle_bin().is_file() {
+            note: if vivliostyle_ready {
                 "Usando Vivliostyle CLI administrado por Jintia.".to_string()
             } else {
                 "Compilador HTML→PDF requerido por Jintia.".to_string()

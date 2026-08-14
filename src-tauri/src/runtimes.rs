@@ -80,9 +80,11 @@ pub fn node_version() -> Option<String> {
             .ok()
             .and_then(|output| {
                 if output.status.success() {
-                    String::from_utf8(output.stdout)
+                    let raw = if output.stdout.is_empty() { output.stderr } else { output.stdout };
+                    String::from_utf8(raw)
                         .ok()
                         .map(|v| v.trim().to_string())
+                        .filter(|v| node_version_text_matches_expected(v))
                 } else {
                     None
                 }
@@ -775,9 +777,11 @@ pub fn python_version() -> Option<String> {
             .ok()
             .and_then(|output| {
                 if output.status.success() {
-                    String::from_utf8(output.stdout)
+                    let raw = if output.stdout.is_empty() { output.stderr } else { output.stdout };
+                    String::from_utf8(raw)
                         .ok()
                         .map(|v| v.trim().to_string())
+                        .filter(|v| python_version_text_matches_expected(v))
                 } else {
                     None
                 }
