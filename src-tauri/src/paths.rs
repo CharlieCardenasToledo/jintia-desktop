@@ -328,6 +328,17 @@ pub fn portable_python_prefix() -> PathBuf {
     portable_runtimes_dir().join("python")
 }
 
+#[cfg(target_os = "windows")]
+pub fn official_python_user_exe() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Programs")
+        .join("Python")
+        .join("Python313")
+        .join("python.exe")
+}
+
 pub fn portable_skill_prefix() -> PathBuf {
     portable_runtimes_dir().join("jintia")
 }

@@ -425,6 +425,7 @@ fn extract_node_tar_gz(
 }
 
 fn emit_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
+    emit_dependency_progress(app, "Node.js", phase, Some(percent), message);
     let _ = app.emit(
         "node-download-progress",
         serde_json::json!({
@@ -438,14 +439,17 @@ fn emit_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
 // ==================== PYTHON RUNTIME ====================
 
 const PYTHON_VERSION: &str = "3.13.15";
+#[cfg(not(target_os = "windows"))]
 const PYTHON_STANDALONE_RELEASE: &str = "20260807";
+#[cfg(target_os = "windows")]
+const PYTHON_OFFICIAL_ARCHIVE_URL: &str =
+    "https://www.python.org/ftp/python/3.13.15/python-3.13.15-amd64.zip";
+#[cfg(target_os = "windows")]
+const PYTHON_OFFICIAL_ARCHIVE_SHA256: &str =
+    "6479223746cdfb79d25865110d6f524ac98de081324e119af1dc3ae36bddc7a5";
 
+#[cfg(not(target_os = "windows"))]
 fn python_standalone_target() -> Result<&'static str, String> {
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    {
-        return Ok("x86_64-pc-windows-msvc");
-    }
-
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         return Ok("aarch64-apple-darwin");
@@ -461,10 +465,18 @@ fn python_standalone_target() -> Result<&'static str, String> {
 }
 
 fn python_asset_filename() -> Result<String, String> {
-    let target = python_standalone_target()?;
-    Ok(format!(
-        "cpython-{PYTHON_VERSION}+{PYTHON_STANDALONE_RELEASE}-{target}-install_only_stripped.tar.gz"
-    ))
+    #[cfg(target_os = "windows")]
+    {
+        return Ok(format!("python-{PYTHON_VERSION}-amd64.zip"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let target = python_standalone_target()?;
+        Ok(format!(
+            "cpython-{PYTHON_VERSION}+{PYTHON_STANDALONE_RELEASE}-{target}-install_only_stripped.tar.gz"
+        ))
+    }
 }
 
 struct PythonStandaloneAsset {
@@ -473,6 +485,7 @@ struct PythonStandaloneAsset {
     sha256: String,
 }
 
+#[cfg(not(target_os = "windows"))]
 fn python_asset_from_values(
     assets: &[serde_json::Value],
     filename: &str,
@@ -516,61 +529,115 @@ fn python_asset_from_values(
 fn resolve_python_asset() -> Result<PythonStandaloneAsset, String> {
     let filename = python_asset_filename()?;
 
-    let release_url = format!(
-        "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{PYTHON_STANDALONE_RELEASE}"
-    );
-
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("jintia-desktop")
-        .build()
-        .map_err(|e| format!("No se pudo crear cliente HTTP: {e}"))?;
-
-    let release_text = client
-        .get(&release_url)
-        .send()
-        .map_err(|e| format!("Error consultando release de Python: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("GitHub rechazó consulta de release: {e}"))?
-        .text()
-        .map_err(|e| format!("Error leyendo respuesta de GitHub: {e}"))?;
-
-    let release: serde_json::Value = serde_json::from_str(&release_text)
-        .map_err(|e| format!("Error parseando respuesta de GitHub: {e}"))?;
-
-    let assets_url = release
-        .get("assets_url")
-        .and_then(|value| value.as_str())
-        .ok_or("Respuesta de GitHub sin assets_url")?;
-
-    for page in 1..=20 {
-        let page_url = format!("{assets_url}?per_page=100&page={page}");
-
-        let assets_text = client
-            .get(&page_url)
-            .send()
-            .map_err(|e| format!("Error consultando assets de Python: {e}"))?
-            .error_for_status()
-            .map_err(|e| format!("GitHub rechazó la consulta de assets: {e}"))?
-            .text()
-            .map_err(|e| format!("Error leyendo assets de Python: {e}"))?;
-
-        let assets: Vec<serde_json::Value> = serde_json::from_str(&assets_text)
-            .map_err(|e| format!("Error parseando assets de Python: {e}"))?;
-
-        if assets.is_empty() {
-            break;
-        }
-
-        if let Some(asset) = python_asset_from_values(&assets, &filename)? {
-            return Ok(asset);
-        }
+    #[cfg(target_os = "windows")]
+    {
+        return Ok(PythonStandaloneAsset {
+            filename,
+            url: PYTHON_OFFICIAL_ARCHIVE_URL.to_string(),
+            sha256: PYTHON_OFFICIAL_ARCHIVE_SHA256.to_string(),
+        });
     }
 
-    Err(format!(
-        "Asset '{filename}' no encontrado en release {PYTHON_STANDALONE_RELEASE}"
-    ))
+    #[cfg(not(target_os = "windows"))]
+    {
+        let release_url = format!(
+            "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/{PYTHON_STANDALONE_RELEASE}"
+        );
+
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("jintia-desktop")
+            .build()
+            .map_err(|e| format!("No se pudo crear cliente HTTP: {e}"))?;
+
+        let release_text = client
+            .get(&release_url)
+            .send()
+            .map_err(|e| format!("Error consultando release de Python: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("GitHub rechazó consulta de release: {e}"))?
+            .text()
+            .map_err(|e| format!("Error leyendo respuesta de GitHub: {e}"))?;
+
+        let release: serde_json::Value = serde_json::from_str(&release_text)
+            .map_err(|e| format!("Error parseando respuesta de GitHub: {e}"))?;
+
+        let assets_url = release
+            .get("assets_url")
+            .and_then(|value| value.as_str())
+            .ok_or("Respuesta de GitHub sin assets_url")?;
+
+        for page in 1..=20 {
+            let page_url = format!("{assets_url}?per_page=100&page={page}");
+
+            let assets_text = client
+                .get(&page_url)
+                .send()
+                .map_err(|e| format!("Error consultando assets de Python: {e}"))?
+                .error_for_status()
+                .map_err(|e| format!("GitHub rechazó la consulta de assets: {e}"))?
+                .text()
+                .map_err(|e| format!("Error leyendo assets de Python: {e}"))?;
+
+            let assets: Vec<serde_json::Value> = serde_json::from_str(&assets_text)
+                .map_err(|e| format!("Error parseando assets de Python: {e}"))?;
+
+            if assets.is_empty() {
+                break;
+            }
+
+            if let Some(asset) = python_asset_from_values(&assets, &filename)? {
+                return Ok(asset);
+            }
+        }
+
+        Err(format!(
+            "Asset '{filename}' no encontrado en release {PYTHON_STANDALONE_RELEASE}"
+        ))
+    }
 }
 
+#[cfg(target_os = "windows")]
+fn extract_official_python_zip(
+    archive_path: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    let file = fs::File::open(archive_path)
+        .map_err(|error| format!("No se pudo abrir el ZIP oficial de Python: {error}"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|error| format!("No se pudo leer el ZIP oficial de Python: {error}"))?;
+
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("No se pudo crear el staging de Python: {error}"))?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("No se pudo leer una entrada del ZIP de Python: {error}"))?;
+        let enclosed = entry.enclosed_name().ok_or_else(|| {
+            format!("Ruta insegura rechazada en ZIP de Python: {}", entry.name())
+        })?;
+        let output_path = destination.join(enclosed);
+
+        if entry.is_dir() {
+            fs::create_dir_all(&output_path)
+                .map_err(|error| format!("No se pudo crear un directorio de Python: {error}"))?;
+            continue;
+        }
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("No se pudo crear un directorio de Python: {error}"))?;
+        }
+        let mut output = fs::File::create(&output_path)
+            .map_err(|error| format!("No se pudo crear un archivo de Python: {error}"))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|error| format!("No se pudo extraer Python: {error}"))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
 fn extract_python_tar_gz(
     archive_path: &std::path::Path,
     destination: &std::path::Path,
@@ -690,6 +757,38 @@ fn validate_python_runtime(prefix: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+const PYTHON_FINAL_VALIDATION_ATTEMPTS: usize = 4;
+const PYTHON_FINAL_VALIDATION_DELAY_MS: u64 = 1_000;
+
+// Windows Defender y otros antivirus pueden retener brevemente python.exe justo
+// después del rename a su ubicación definitiva. La validación de staging ya
+// demostró que el archive es válido; aquí toleramos únicamente ese bloqueo
+// transitorio antes de decidir que el runtime debe apartarse.
+fn retry_python_runtime_validation(
+    prefix: &std::path::Path,
+    attempts: usize,
+    mut validate: impl FnMut(&std::path::Path) -> Result<(), String>,
+    mut wait: impl FnMut(),
+) -> Result<(), String> {
+    let attempts = attempts.max(1);
+    let mut last_error = String::new();
+
+    for attempt in 1..=attempts {
+        match validate(prefix) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+
+        if attempt < attempts {
+            wait();
+        }
+    }
+
+    Err(format!(
+        "Python no quedó operativo después de {attempts} intentos: {last_error}"
+    ))
+}
+
 fn python_version_text_matches_expected(text: &str) -> bool {
     text.trim() == format!("Python {PYTHON_VERSION}")
 }
@@ -771,25 +870,41 @@ fn activate_staged_python_runtime(
     Ok(())
 }
 
-fn global_python_command() -> Option<String> {
+fn global_python_candidates() -> Vec<std::path::PathBuf> {
     let checker = if cfg!(target_os = "windows") {
         "where.exe"
     } else {
         "which"
     };
 
+    let mut candidates = Vec::new();
+    #[cfg(target_os = "windows")]
+    candidates.push(paths::official_python_user_exe());
+
     for command in ["python3", "python"] {
-        if Command::new(checker)
+        if let Ok(output) = Command::new(checker)
             .arg(command)
             .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
         {
-            return Some(command.to_string());
+            if output.status.success() {
+                for line in String::from_utf8_lossy(&output.stdout).lines() {
+                    let candidate = std::path::PathBuf::from(line.trim());
+                    if candidate.is_file() && !candidates.contains(&candidate) {
+                        candidates.push(candidate);
+                    }
+                }
+            }
         }
     }
 
-    None
+    candidates
+}
+
+fn global_python_command() -> Option<String> {
+    global_python_candidates()
+        .into_iter()
+        .find(|candidate| python_executable_version(candidate).is_some())
+        .map(|candidate| candidate.to_string_lossy().into_owned())
 }
 
 pub fn global_python_available() -> bool {
@@ -798,12 +913,8 @@ pub fn global_python_available() -> bool {
 
 pub fn resolve_python() -> Option<String> {
     let portable = paths::portable_python_exe();
-
-    if portable.is_file() {
-        return Some(portable.to_string_lossy().into_owned());
-    }
-
-    None
+    python_executable_version(&portable)
+        .map(|_| portable.to_string_lossy().into_owned())
 }
 
 pub fn portable_python_installed() -> bool {
@@ -822,6 +933,27 @@ fn build_portable_python_version_command(python: &std::path::Path) -> Command {
     command
 }
 
+fn python_executable_version(python: &std::path::Path) -> Option<String> {
+    build_portable_python_version_command(python)
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                let raw = if output.stdout.is_empty() {
+                    output.stderr
+                } else {
+                    output.stdout
+                };
+                String::from_utf8(raw)
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| python_version_text_matches_expected(value))
+            } else {
+                None
+            }
+        })
+}
+
 pub fn python_version() -> Option<String> {
     resolve_python().and_then(|python_bin| {
         build_portable_python_version_command(std::path::Path::new(&python_bin))
@@ -829,11 +961,15 @@ pub fn python_version() -> Option<String> {
             .ok()
             .and_then(|output| {
                 if output.status.success() {
-                    let raw = if output.stdout.is_empty() { output.stderr } else { output.stdout };
+                    let raw = if output.stdout.is_empty() {
+                        output.stderr
+                    } else {
+                        output.stdout
+                    };
                     String::from_utf8(raw)
                         .ok()
-                        .map(|v| v.trim().to_string())
-                        .filter(|v| python_version_text_matches_expected(v))
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| python_version_text_matches_expected(value))
                 } else {
                     None
                 }
@@ -848,7 +984,7 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
     fs::create_dir_all(&runtimes_dir)
         .map_err(|e| format!("Error creando directorio: {e}"))?;
 
-    emit_python_progress(app, "resolving", 0.0, "Resolviendo asset de Python...");
+    emit_python_progress(app, "resolving", 0.0, "Resolviendo runtime privado de Python...");
 
     let asset = resolve_python_asset()?;
 
@@ -913,8 +1049,19 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
     fs::create_dir_all(&stage_dir)
         .map_err(|e| format!("Error creando staging: {e}"))?;
 
-    emit_python_progress(app, "extracting", 65.0, "Extrayendo Python...");
-    extract_python_tar_gz(&tmp_archive, &stage_dir).map_err(|e| {
+    emit_python_progress(app, "extracting", 65.0, "Extrayendo Python en el entorno privado...");
+    let extraction_result = {
+        #[cfg(target_os = "windows")]
+        {
+            extract_official_python_zip(&tmp_archive, &stage_dir.join("python"))
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            extract_python_tar_gz(&tmp_archive, &stage_dir)
+        }
+    };
+    extraction_result.map_err(|e| {
         let _ = fs::remove_file(&tmp_archive);
         let _ = fs::remove_dir_all(&stage_dir);
         e
@@ -944,7 +1091,18 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
         &staged_python,
         &python_dir,
         &backup_dir,
-        validate_python_runtime,
+        |prefix| {
+            retry_python_runtime_validation(
+                prefix,
+                PYTHON_FINAL_VALIDATION_ATTEMPTS,
+                validate_python_runtime,
+                || {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        PYTHON_FINAL_VALIDATION_DELAY_MS,
+                    ));
+                },
+            )
+        },
         quarantine_python_runtime,
     ) {
         let _ = fs::remove_dir_all(&stage_dir);
@@ -953,11 +1111,12 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
 
     let _ = fs::remove_dir_all(&stage_dir);
 
-    emit_python_progress(app, "done", 100.0, "Python instalado correctamente.");
+    emit_python_progress(app, "done", 100.0, "Python oficial portable instalado correctamente.");
     Ok(())
 }
 
 fn emit_python_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
+    emit_dependency_progress(app, "Python", phase, Some(percent), message);
     let _ = app.emit(
         "python-download-progress",
         serde_json::json!({
@@ -975,11 +1134,10 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let _python_guard = try_runtime_mutation_lock(&PYTHON_RUNTIME_MUTATION_LOCK, "el runtime Python administrado")?;
-    let python_exe = paths::portable_python_exe();
-    if !python_exe.is_file() {
-        return Err("Python portable no está instalado.".to_string());
-    }
-    let managed_path = managed_python_runtime_path()?;
+    let python_exe = resolve_python()
+        .map(std::path::PathBuf::from)
+        .ok_or("Ningún runtime Python administrado está operativo.")?;
+    let managed_path = managed_python_runtime_path(&python_exe)?;
     let output = build_managed_pip_install_command(
         &python_exe,
         &managed_path,
@@ -994,8 +1152,11 @@ pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn managed_python_runtime_path() -> Result<OsString, String> {
-    let prefix = paths::portable_python_prefix();
+fn managed_python_runtime_path(python: &std::path::Path) -> Result<OsString, String> {
+    let prefix = python
+        .parent()
+        .ok_or_else(|| format!("Python no tiene directorio padre: {}", python.display()))?
+        .to_path_buf();
     let entries = if cfg!(target_os = "windows") {
         vec![prefix.clone(), prefix.join("Scripts")]
     } else {
@@ -1281,7 +1442,7 @@ mod tests {
     use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_portable_python_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_command, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, quarantine_python_runtime, resolve_notebooklm_mcp_bin_for, try_runtime_mutation_lock, verify_sha256, NODE_RUNTIME_MUTATION_LOCK, NOTEBOOKLM_RUNTIME_MUTATION_LOCK, PYTHON_RUNTIME_MUTATION_LOCK, SKILL_RUNTIME_MUTATION_LOCK};
     use crate::paths;
     #[cfg(target_os = "windows")]
-    use super::extract_zip;
+    use super::{extract_official_python_zip, extract_zip};
     #[cfg(not(target_os = "windows"))]
     use super::extract_node_tar_gz;
     use std::fs;
@@ -1441,7 +1602,8 @@ mod tests {
 
     #[test]
     fn managed_python_runtime_path_contains_only_portable_python_dirs() {
-        let path = managed_python_runtime_path().unwrap();
+        let python = paths::portable_python_exe();
+        let path = managed_python_runtime_path(&python).unwrap();
         let entries: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
         let prefix = paths::portable_python_prefix();
         let expected = if cfg!(target_os = "windows") {
@@ -2384,6 +2546,26 @@ mod tests {
         fs::remove_dir_all(root).ok();
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn extract_official_python_zip_keeps_flat_runtime_under_managed_prefix() {
+        let (archive, dest) = zip_fixture("python.zip", "python.exe", b"python");
+        extract_official_python_zip(&archive, &dest).unwrap();
+        assert_eq!(fs::read(dest.join("python.exe")).unwrap(), b"python");
+        let root = archive.parent().unwrap();
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn extract_official_python_zip_rejects_path_traversal() {
+        let (archive, dest) = zip_fixture("python-unsafe.zip", "../escape.txt", b"escape");
+        assert!(extract_official_python_zip(&archive, &dest).is_err());
+        assert!(!dest.parent().unwrap().join("escape.txt").exists());
+        let root = archive.parent().unwrap();
+        fs::remove_dir_all(root).ok();
+    }
+
     #[cfg(not(target_os = "windows"))]
     fn tar_gz_fixture(
         name: &str,
@@ -3093,9 +3275,28 @@ pub fn visual_install_profiles() -> Result<serde_json::Value, String> {
 }
 
 fn emit_skill_progress(app: &AppHandle, phase: &str, percent: f32, message: &str) {
+    emit_dependency_progress(app, "Jintia Skill", phase, Some(percent), message);
     let _ = app.emit(
         "skill-download-progress",
         serde_json::json!({
+            "phase": phase,
+            "percent": percent,
+            "message": message,
+        }),
+    );
+}
+
+pub fn emit_dependency_progress(
+    app: &AppHandle,
+    name: &str,
+    phase: &str,
+    percent: Option<f32>,
+    message: &str,
+) {
+    let _ = app.emit(
+        "dependency-install-progress",
+        serde_json::json!({
+            "name": name,
             "phase": phase,
             "percent": percent,
             "message": message,
@@ -3127,6 +3328,64 @@ mod python_activation_tests {
         fs::rename(p, &q).map_err(|e| format!("rename: {e}"))?;
         if let Err(_) = fs::remove_dir_all(&q) {}
         Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn official_python_asset_is_pinned_and_portable() {
+        let asset = resolve_python_asset().expect("resolver asset oficial");
+        assert_eq!(asset.filename, "python-3.13.15-amd64.zip");
+        assert_eq!(asset.url, PYTHON_OFFICIAL_ARCHIVE_URL);
+        assert_eq!(asset.sha256, PYTHON_OFFICIAL_ARCHIVE_SHA256);
+        assert_eq!(asset.sha256.len(), 64);
+    }
+
+    #[test]
+    fn python_final_validation_retries_transient_failures() {
+        let prefix = std::path::Path::new("managed-python");
+        let mut validations = 0;
+        let mut waits = 0;
+
+        let result = retry_python_runtime_validation(
+            prefix,
+            4,
+            |_| {
+                validations += 1;
+                if validations < 3 {
+                    Err("archivo temporalmente bloqueado".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            || waits += 1,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(validations, 3, "debe detenerse en el primer éxito");
+        assert_eq!(waits, 2, "debe esperar solamente entre intentos fallidos");
+    }
+
+    #[test]
+    fn python_final_validation_reports_the_last_failure() {
+        let prefix = std::path::Path::new("managed-python");
+        let mut validations = 0;
+        let mut waits = 0;
+
+        let error = retry_python_runtime_validation(
+            prefix,
+            3,
+            |_| {
+                validations += 1;
+                Err(format!("fallo {validations}"))
+            },
+            || waits += 1,
+        )
+        .unwrap_err();
+
+        assert_eq!(validations, 3);
+        assert_eq!(waits, 2);
+        assert!(error.contains("después de 3 intentos"));
+        assert!(error.contains("fallo 3"), "debe conservar el diagnóstico más reciente");
     }
 
     #[test]

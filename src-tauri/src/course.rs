@@ -146,7 +146,7 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             required: true,
             installable: true,
             note: if python_ready {
-                "Usando Python portable de Jintia.".to_string()
+                "Usando Python oficial portable de Jintia.".to_string()
             } else {
                 "Procesa recursos del curso (recortes bibliográficos).".to_string()
             },
@@ -312,7 +312,7 @@ pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
 
     // Python se descarga como portable via comando Tauri (solo Windows)
     if name == "Python" {
-        return ActionResult::error("Usa el botón 'Descargar Python portable' en el panel de dependencias.");
+        return ActionResult::error("Usa el botón 'Descargar Python oficial portable' en el panel de dependencias.");
     }
 
     // Jintia Skill se descarga como portable via comando Tauri

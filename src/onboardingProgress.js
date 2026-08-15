@@ -4,8 +4,10 @@ export const DEPENDENCY_EVENTS = {
   "Python": "python-download-progress",
   "Jintia Skill": "skill-download-progress",
 };
+export const GENERIC_DEPENDENCY_EVENT = "dependency-install-progress";
 
 const PHASE_LABELS = {
+  resolving: "Comprobando requisitos…",
   downloading: "Descargando…",
   verifying: "Verificando…",
   extracting: "Extrayendo…",
@@ -73,18 +75,18 @@ export function applyDependencyProgressPresentation({ track, barWrap, barFill, m
 // Suscribe el listener ANTES de invocar la operación para no perder el primer evento.
 // Si listen() lanza, la operación sigue con feedback indeterminado.
 // Desuscribe en finally tanto en éxito como en excepción.
-export async function withDependencyProgress(name, listen, operation, reporter) {
-  const eventName = DEPENDENCY_EVENTS[name];
+export async function withDependencyProgress(name, listen, operation, reporter, eventNameOverride = null) {
+  const eventName = eventNameOverride ?? DEPENDENCY_EVENTS[name] ?? GENERIC_DEPENDENCY_EVENT;
+  const usesGenericEvent = eventName === GENERIC_DEPENDENCY_EVENT;
   let unlisten = null;
 
-  if (eventName) {
-    try {
-      unlisten = await listen(eventName, ({ payload }) => {
-        reporter(normalizeProgressPayload(payload));
-      });
-    } catch {
-      // Sigue con feedback indeterminado si el registro del listener falla
-    }
+  try {
+    unlisten = await listen(eventName, ({ payload }) => {
+      if (usesGenericEvent && payload?.name !== name) return;
+      reporter(normalizeProgressPayload(payload));
+    });
+  } catch {
+    // Sigue con feedback indeterminado si el registro del listener falla
   }
 
   try {

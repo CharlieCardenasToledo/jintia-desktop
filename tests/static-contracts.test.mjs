@@ -1444,7 +1444,7 @@ test('el perfil disciplinar se instala después de guardar la disciplina', async
   );
 
   const fnStart = source.indexOf(
-    'async function installDisciplinePackages()'
+    'async function installDisciplinePackages'
   );
 
   const fnEnd = source.indexOf(
@@ -1602,8 +1602,8 @@ test('los paquetes pip disciplinares usan exclusivamente Python y PATH administr
   const managedPath = runtimes.slice(pathStart, pathEnd);
 
   for (const required of [
-    'portable_python_exe()',
-    'managed_python_runtime_path()',
+    'resolve_python()',
+    'managed_python_runtime_path(&python_exe)',
     'build_managed_pip_install_command',
     '.output()',
     'pip install falló',
@@ -1619,7 +1619,7 @@ test('los paquetes pip disciplinares usan exclusivamente Python y PATH administr
   assert.match(builder, /\.args\(\["-m",\s*"pip",\s*"install",\s*"--quiet"\]\)/);
   assert.match(builder, /\.args\(packages\)/);
   assert.match(builder, /\.env\("PATH",\s*managed_path\)/);
-  assert.match(managedPath, /portable_python_prefix\(\)/);
+  assert.match(managedPath, /python[\s\S]*\.parent\(\)/);
   assert.match(managedPath, /std::env::join_paths/);
 
   const forbidden = /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|base_path|path_entries|patched_path|Command::new\("pip(?:3)?"\)|Command::new\("python(?:3)?"\)|Command::new\("cmd"\)|powershell|sh\s*-c|bash\s*-c|zsh\s*-c|\bwhich\b|where\.exe/;
@@ -2099,7 +2099,7 @@ test('Python portable restaura explícitamente el runtime anterior si falla la a
     'fn activate_staged_python_runtime'
   );
   const activationEnd = runtimes.indexOf(
-    'fn global_python_command',
+    'fn global_python_candidates',
     activationStart
   );
   assert.ok(
@@ -2674,7 +2674,7 @@ test('cada invoke() en api.js tiene su handler en generate_handler![] de lib.rs'
   );
 });
 
-test('Python administrado está disponible en Windows y macOS sin instaladores globales', async () => {
+test('Python administrado usa un runtime oficial portable en Windows y standalone en macOS', async () => {
   const [paths, runtimes, cargo] =
     await Promise.all([
       readFile(
@@ -2722,17 +2722,27 @@ test('Python administrado está disponible en Windows y macOS sin instaladores g
 
   assert.match(
     runtimes,
-    /x86_64-pc-windows-msvc/
-  );
-
-  assert.match(
-    runtimes,
     /install_only_stripped\.tar\.gz/
   );
 
   assert.match(
     runtimes,
     /PYTHON_STANDALONE_RELEASE/
+  );
+
+  assert.match(
+    runtimes,
+    /https:\/\/www\.python\.org\/ftp\/python\/3\.13\.15\/python-3\.13\.15-amd64\.zip/
+  );
+
+  assert.match(
+    runtimes,
+    /PYTHON_OFFICIAL_ARCHIVE_SHA256[\s\S]*[a-f0-9]{64}/
+  );
+
+  assert.match(
+    runtimes,
+    /fn extract_official_python_zip/
   );
 
   assert.match(
@@ -2774,6 +2784,22 @@ test('Python administrado está disponible en Windows y macOS sin instaladores g
     cargo,
     /^tar\s*=/m
   );
+});
+
+test('el runtime Python de Windows verifica y extrae el ZIP oficial sin debilitar Defender', async () => {
+  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const downloaderStart = runtimes.indexOf('pub fn download_portable_python(');
+  const downloaderEnd = runtimes.indexOf('\nfn emit_python_progress(', downloaderStart);
+  const downloader = runtimes.slice(downloaderStart, downloaderEnd);
+
+  assert.match(downloader, /resolve_python_asset\(\)/);
+  assert.match(downloader, /verify_sha256\(&tmp_archive,\s*&asset\.sha256\)/);
+  assert.match(downloader, /extract_official_python_zip/);
+  assert.match(downloader, /portable_python_prefix\(\)/);
+  assert.doesNotMatch(downloader, /Command::new|\.status\(\)|PrependPath|InstallAllUsers/);
+  assert.match(runtimes, /enclosed_name\(\)/, 'el extractor debe rechazar path traversal');
+  const forbiddenSecurityBypass = /Add-MpPreference|Set-MpPreference|ExclusionPath|ExclusionProcess|DisableRealtimeMonitoring/i;
+  assert.doesNotMatch(runtimes, forbiddenSecurityBypass, 'la app no debe modificar exclusiones de Defender');
 });
 
 test('Python staged exige exactamente la versión administrada antes de activarse', async () => {
@@ -2915,7 +2941,7 @@ test('el runtime Python pagina los assets de la release fija', async () => {
   );
 });
 
-test('Jintia requiere su Python administrado aunque exista Python global', async () => {
+test('Jintia usa solamente runtimes Python aprobados aunque exista otro Python global', async () => {
   const [runtimes, lib, course] =
     await Promise.all([
       readFile(
@@ -2972,10 +2998,8 @@ test('Jintia requiere su Python administrado aunque exista Python global', async
     /pub fn global_python_available\(\)/
   );
 
-  assert.match(
-    resolver,
-    /portable_python_exe\(\)/
-  );
+  assert.match(resolver, /portable_python_exe\(\)/);
+  assert.match(resolver, /python_executable_version/);
 
   assert.doesNotMatch(
     resolver,
@@ -3077,7 +3101,7 @@ test('Vivliostyle puede repararse desde su propia dependencia', async () => {
 
   assert.match(
     installer,
-    /result\s*=\s*await\s+installVivliostyleCli\(\)/
+    /result\s*=\s*await\s+withDependencyProgress\(name,\s*listen,\s*\(\)\s*=>\s*installVivliostyleCli\(\),\s*reporter\)/
   );
 
   const vivliostyleIndex =
@@ -3108,7 +3132,7 @@ test('Vivliostyle puede repararse desde su propia dependencia', async () => {
 
   assert.match(
     lib,
-    /async fn install_vivliostyle_cli\(\)/
+    /async fn install_vivliostyle_cli\(app:\s*tauri::AppHandle\)/
   );
 
   assert.match(
@@ -3211,7 +3235,7 @@ test('Vivliostyle global no satisface el runtime requerido por Jintia', async ()
 
   assert.match(
     onboarding,
-    /name\s*===\s*"Vivliostyle CLI"[\s\S]*result\s*=\s*await\s+installVivliostyleCli\(\)/
+    /name\s*===\s*"Vivliostyle CLI"[\s\S]*result\s*=\s*await\s+withDependencyProgress\(name,\s*listen,\s*\(\)\s*=>\s*installVivliostyleCli\(\),\s*reporter\)/
   );
 
   assert.match(
@@ -3447,7 +3471,7 @@ test('el onboarding no avanza si falla la instalación del perfil disciplinar', 
   );
 
   const fnStart = source.indexOf(
-    'async function installDisciplinePackages()'
+    'async function installDisciplinePackages'
   );
 
   const fnEnd = source.indexOf(
@@ -3462,7 +3486,7 @@ test('el onboarding no avanza si falla la instalación del perfil disciplinar', 
 
   assert.match(
     installer,
-    /const pipResult\s*=\s*await installProfilePackages\(/,
+    /const pipResult[\s\S]{0,220}installProfilePackages\(/,
     'pip ActionResult debe guardarse'
   );
 
@@ -3474,7 +3498,7 @@ test('el onboarding no avanza si falla la instalación del perfil disciplinar', 
 
   assert.match(
     installer,
-    /const npmResult\s*=\s*await installNpmPackages\(/,
+    /const npmResult[\s\S]{0,220}installNpmPackages\(/,
     'npm ActionResult debe guardarse'
   );
 
@@ -3754,29 +3778,24 @@ test('el estado Claude se resuelve mediante el contrato status de Jintia', async
   const pathBody = statusLib.slice(pathStart, pathEnd > pathStart ? pathEnd : statusLib.length);
   assert.ok(pathStart >= 0); assert.match(pathBody, /spawn_blocking/); assert.match(pathBody, /claude_skill_status/);
 });
-test('la UI consume las fases actuales de instalación npm de Jintia', async () => {
-  const settings = await readFile(
-    new URL('src/pages/settings.js', root),
-    'utf8'
-  );
+test('la UI presenta las fases actuales de instalación npm de Jintia', async () => {
+  const [settings, progress] = await Promise.all([
+    readFile(new URL('src/pages/settings.js', root), 'utf8'),
+    readFile(new URL('src/onboardingProgress.js', root), 'utf8'),
+  ]);
 
-  // Aislar el bloque del listener de skill-download-progress
-  const listenerStart = settings.indexOf('"skill-download-progress"');
-  assert.ok(listenerStart >= 0, 'debe existir el listener skill-download-progress');
-  const listenerEnd = settings.indexOf('});', listenerStart);
-  const listenerBlock = settings.slice(listenerStart, listenerEnd);
-
-  // Fases actuales del backend npm
-  assert.match(listenerBlock, /phase === "installing"/);
-  assert.match(listenerBlock, /phase === "validating"/);
-  assert.match(listenerBlock, /phase === "testing"/);
-  assert.match(listenerBlock, /phase === "activating"/);
-
-  // Fases antiguas del tarball eliminadas
-  assert.doesNotMatch(listenerBlock, /phase === "detecting"/);
-  assert.doesNotMatch(listenerBlock, /phase === "downloading"/);
-  assert.doesNotMatch(listenerBlock, /phase === "extracting"/);
-  assert.doesNotMatch(listenerBlock, /phase === "configuring"/);
+  assert.match(progress, /"Jintia Skill": "skill-download-progress"/);
+  for (const phase of ['installing', 'validating', 'testing', 'activating']) {
+    assert.match(progress, new RegExp(`${phase}:`), `falta presentar la fase ${phase}`);
+  }
+  assert.match(settings, /runDependencyWithSettingsProgress\([\s\S]*?"Jintia Skill"/);
+  assert.match(settings, /data-dependency-detail/);
+  assert.match(settings, /data-dependency-progress/);
+  assert.match(settings, /data-dependency-progress-value/);
+  assert.match(settings, /aria-live="polite"/);
+  assert.match(settings, /state === "success"/);
+  assert.match(settings, /state === "error"/);
+  assert.match(settings, /controls\.forEach\(control => \{ control\.disabled = true; \}\)/);
 
   // Aislar el bloque completo del handler de Jintia Skill
   const skillHandlerStart = settings.indexOf('[data-download-skill]');
@@ -4025,7 +4044,7 @@ test('Git manual en macOS y Linux no recomienda instalar runtimes ajenos', async
   // Node.js portable branch intacta
   assert.match(installFn, /Descargar Node\.js portable/, 'falta botón Node.js portable');
   // Python portable branch intacta
-  assert.match(installFn, /Descargar Python portable/, 'falta botón Python portable');
+  assert.match(installFn, /Descargar Python oficial portable/, 'falta botón Python oficial portable');
 });
 
 test('Todo subprocess Python administrado de Desktop usa la política central de modo aislado', async () => {
@@ -4330,7 +4349,10 @@ test('Instalar herramientas necesarias incluye el renderer Vivliostyle administr
 
   assert.match(bulkListener, /!d\.installed/, 'bulk: debe filtrar dependencias no instaladas');
   assert.match(bulkListener, /BULK_INSTALL_TARGETS\.has\(d\.name\)/, 'bulk: debe filtrar por BULK_INSTALL_TARGETS');
-  assert.match(bulkListener, /for\s*\(const dep of targets\)/, 'bulk: debe usar bucle secuencial for-of');
+  assert.match(bulkListener, /for\s*\(const \[index, dep\] of targets\.entries\(\)\)/, 'bulk: debe usar bucle secuencial for-of con posición visible');
+  assert.match(bulkListener, /bulkButton\.disabled\s*=\s*true/, 'bulk: debe prevenir instalaciones duplicadas');
+  assert.match(bulkListener, /Herramienta \$\{index \+ 1\} de \$\{targets\.length\}/, 'bulk: debe explicar la posición del lote');
+  assert.match(bulkListener, /data-bulk-progress/, 'bulk: debe actualizar un estado persistente');
 
   // Dispatch: runtimes conocidos usan sus instaladores dedicados
   assert.match(bulkListener, /downloadNodeRuntime\(\)/, 'bulk: falta downloadNodeRuntime');
@@ -4412,13 +4434,14 @@ test('El bulk respeta Node como prerrequisito sin bloquear Python independiente'
   assert.match(bulkListener, /continue/, 'bulk: falta continue en guard');
   assert.match(bulkListener, /Node\.js portable/, 'bulk: mensaje de omisión debe mencionar Node.js portable');
 
-  // El guard ocurre antes del toast "Instalando…"
+  // El guard ocurre antes de despachar cualquier instalador. El texto de estado
+  // puede actualizarse antes para cumplir la respuesta perceptiva inmediata.
   const guardIdx = bulkListener.indexOf('NODE_DEPENDENT_BULK_TARGETS.has(dep.name)');
-  const installingToastIdx = bulkListener.indexOf('Instalando ${dep.name}');
-  assert.ok(guardIdx < installingToastIdx, 'bulk: el guard debe preceder al toast "Instalando"');
+  const installerDispatchIdx = bulkListener.indexOf('if (dep.name === "Node.js")');
+  assert.ok(guardIdx < installerDispatchIdx, 'bulk: el guard debe preceder al despacho de instaladores');
 
   // Actualización de nodeReady desde el resultado de Node, no incondicional
-  assert.match(bulkListener, /dep\.name\s*===\s*["']Node\.js["'][\s\S]{0,60}nodeReady\s*=\s*r\.success/, 'bulk: nodeReady debe actualizarse desde r.success tras instalar Node');
+  assert.match(bulkListener, /dep\.name\s*===\s*["']Node\.js["'][\s\S]{0,180}nodeReady\s*=\s*r\.success/, 'bulk: nodeReady debe actualizarse desde r.success tras instalar Node');
   assert.doesNotMatch(bulkListener, /nodeReady\s*=\s*true(?!\s*===)/, 'bulk: nodeReady no debe asignarse true incondicionalmente');
 
   // Excepción Node: nodeReady=false garantizado en catch
@@ -4578,42 +4601,44 @@ test('Configuración descarga runtimes individuales exclusivamente mediante api.
   assert.match(settings, /downloadNodeRuntime/, 'settings: falta referencia a downloadNodeRuntime');
   assert.match(settings, /downloadPythonRuntime/, 'settings: falta referencia a downloadPythonRuntime');
   assert.match(settings, /downloadSkillRuntime/, 'settings: falta referencia a downloadSkillRuntime');
+  assert.match(settings, /import\s*\{\s*listen\s*\}\s*from\s*["']@tauri-apps\/api\/event["']/, 'settings: debe usar el listener modular oficial de Tauri');
+  assert.doesNotMatch(settings, /window\.__TAURI__\.event/, 'settings: no debe depender del global opcional de Tauri');
   assert.doesNotMatch(settings, /@tauri-apps\/api\/core/, 'settings: no debe importar @tauri-apps/api/core directamente');
 
-  // Listener Node individual: usa wrapper, conserva evento de progreso y refresh
+  // Listener Node individual: usa wrapper de API y presenta el progreso persistente
   const nodeListenerStart = settings.indexOf('"[data-download-node]"');
   assert.ok(nodeListenerStart >= 0, 'settings: falta listener data-download-node');
   const nodeListenerEnd = settings.indexOf('"[data-download-python]"', nodeListenerStart);
   const nodeListener = settings.slice(nodeListenerStart, nodeListenerEnd > nodeListenerStart ? nodeListenerEnd : settings.length);
 
   assert.match(nodeListener, /downloadNodeRuntime\(\)/, 'node listener: debe usar downloadNodeRuntime()');
-  assert.match(nodeListener, /node-download-progress/, 'node listener: falta node-download-progress');
+  assert.match(nodeListener, /runDependencyWithSettingsProgress/, 'node listener: falta progreso persistente');
   assert.match(nodeListener, /result\.success/, 'node listener: falta result.success');
   assert.match(nodeListener, /loadDeps\(\)/, 'node listener: falta loadDeps');
   assert.match(nodeListener, /loadSetupStatus\(\)/, 'node listener: falta loadSetupStatus');
   assert.doesNotMatch(nodeListener, /\.tauri\.invoke/, 'node listener: no debe usar .tauri.invoke');
   assert.doesNotMatch(nodeListener, /download_node_runtime/, 'node listener: nombre de comando no debe aparecer en settings');
 
-  // Listener Python individual: usa wrapper, conserva evento de progreso y refresh
+  // Listener Python individual: usa wrapper de API y presenta el progreso persistente
   const pythonListenerStart = settings.indexOf('"[data-download-python]"');
   assert.ok(pythonListenerStart >= 0, 'settings: falta listener data-download-python');
   const pythonListenerEnd = settings.indexOf('"[data-download-skill]"', pythonListenerStart);
   const pythonListener = settings.slice(pythonListenerStart, pythonListenerEnd > pythonListenerStart ? pythonListenerEnd : settings.length);
 
   assert.match(pythonListener, /downloadPythonRuntime\(\)/, 'python listener: debe usar downloadPythonRuntime()');
-  assert.match(pythonListener, /python-download-progress/, 'python listener: falta python-download-progress');
+  assert.match(pythonListener, /runDependencyWithSettingsProgress/, 'python listener: falta progreso persistente');
   assert.match(pythonListener, /result\.success/, 'python listener: falta result.success');
   assert.doesNotMatch(pythonListener, /\.tauri\.invoke/, 'python listener: no debe usar .tauri.invoke');
   assert.doesNotMatch(pythonListener, /download_python_runtime/, 'python listener: nombre de comando no debe aparecer en settings');
 
-  // Listener Skill individual: usa wrapper, conserva evento de progreso y refresh
+  // Listener Skill individual: usa wrapper de API y presenta el progreso persistente
   const skillListenerStart = settings.indexOf('"[data-download-skill]"');
   assert.ok(skillListenerStart >= 0, 'settings: falta listener data-download-skill');
   const skillListenerEnd = settings.indexOf('"#visual-install-profile"', skillListenerStart);
   const skillListener = settings.slice(skillListenerStart, skillListenerEnd > skillListenerStart ? skillListenerEnd : settings.length);
 
   assert.match(skillListener, /downloadSkillRuntime\(\)/, 'skill listener: debe usar downloadSkillRuntime()');
-  assert.match(skillListener, /skill-download-progress/, 'skill listener: falta skill-download-progress');
+  assert.match(skillListener, /runDependencyWithSettingsProgress/, 'skill listener: falta progreso persistente');
   assert.match(skillListener, /result\.success/, 'skill listener: falta result.success');
   assert.doesNotMatch(skillListener, /\.tauri\.invoke/, 'skill listener: no debe usar .tauri.invoke');
   assert.doesNotMatch(skillListener, /download_skill_runtime/, 'skill listener: nombre de comando no debe aparecer en settings');
@@ -4933,7 +4958,7 @@ test('Jintia Skill sólo está lista si contrato instalado y smoke del engine re
 
 // ── Tests del módulo onboardingProgress (importable porque no tiene imports Tauri) ──
 
-import { normalizeProgressPayload, withDependencyProgress, DEPENDENCY_EVENTS, applyDependencyProgressPresentation } from '../src/onboardingProgress.js';
+import { normalizeProgressPayload, withDependencyProgress, DEPENDENCY_EVENTS, GENERIC_DEPENDENCY_EVENT, applyDependencyProgressPresentation } from '../src/onboardingProgress.js';
 
 test('normaliza mensajes y porcentajes del progreso de dependencias', () => {
   // Fases conocidas → etiquetas en español
@@ -4966,11 +4991,12 @@ test('normaliza mensajes y porcentajes del progreso de dependencias', () => {
   assert.equal(normalizeProgressPayload({ message: '   ' }).message, null);
 });
 
-test('DEPENDENCY_EVENTS mapea exactamente Node.js, Python y Jintia Skill', () => {
+test('DEPENDENCY_EVENTS usa eventos específicos y conserva un canal genérico', () => {
   assert.equal(DEPENDENCY_EVENTS['Node.js'], 'node-download-progress');
   assert.equal(DEPENDENCY_EVENTS['Python'], 'python-download-progress');
   assert.equal(DEPENDENCY_EVENTS['Jintia Skill'], 'skill-download-progress');
-  // Vivliostyle y NotebookLM no tienen evento (feedback indeterminado)
+  assert.equal(GENERIC_DEPENDENCY_EVENT, 'dependency-install-progress');
+  // Vivliostyle y NotebookLM usan el canal genérico filtrado por nombre.
   assert.equal(DEPENDENCY_EVENTS['Vivliostyle CLI'], undefined);
   assert.equal(DEPENDENCY_EVENTS['NotebookLM MCP'], undefined);
 });
@@ -5009,14 +5035,25 @@ test('se suscribe antes de instalar y libera el listener al terminar (excepción
   ]);
 });
 
-test('una dependencia sin evento conserva progreso indeterminado', async () => {
-  let subscribed = false;
-  const fakeListen = async () => { subscribed = true; return () => {}; };
-  const fakeOperation = async () => ({ success: true });
+test('una dependencia sin evento específico escucha el canal genérico filtrado por nombre', async () => {
+  let subscribedEvent;
+  let capturedCallback;
+  const received = [];
+  const fakeListen = async (event, callback) => {
+    subscribedEvent = event;
+    capturedCallback = callback;
+    return () => {};
+  };
+  const fakeOperation = async () => {
+    capturedCallback({ payload: { name: 'Python', phase: 'downloading', percent: 20 } });
+    capturedCallback({ payload: { name: 'Vivliostyle CLI', phase: 'installing', percent: 60 } });
+    return { success: true };
+  };
 
-  await withDependencyProgress('Vivliostyle CLI', fakeListen, fakeOperation, () => {});
+  await withDependencyProgress('Vivliostyle CLI', fakeListen, fakeOperation, value => received.push(value));
 
-  assert.equal(subscribed, false, 'no debe suscribirse para dependencias sin evento Tauri');
+  assert.equal(subscribedEvent, GENERIC_DEPENDENCY_EVENT);
+  assert.deepEqual(received, [{ message: 'Instalando…', percent: 60 }]);
 });
 
 test('fallo al suscribirse: la instalación sigue con feedback genérico', async () => {
@@ -5165,7 +5202,8 @@ test('Node cambia a progreso indeterminado antes de instalar Vivliostyle', async
   const vivliostyleIdx = fn.indexOf('installVivliostyleCli');
   assert.ok(reporterCallIdx >= 0, 'debe existir llamada a reporter antes de Vivliostyle');
   assert.ok(reporterCallIdx < vivliostyleIdx, 'reporter(null) debe preceder a installVivliostyleCli');
-  assert.match(fn, /reporter\(\{\s*message:[\s\S]{0,60}?percent:\s*null[\s\S]{0,10}?\}[\s\S]{0,250}?installVivliostyleCli/);
+  assert.match(fn, /reporter\(\{\s*message:[\s\S]{0,60}?percent:\s*null[\s\S]{0,10}?\}[\s\S]{0,450}?installVivliostyleCli/);
+  assert.match(fn, /withDependencyProgress\(\s*"Vivliostyle CLI",\s*listen,[\s\S]{0,100}?installVivliostyleCli\(\)[\s\S]{0,40}?reporter/);
 });
 
 test('Python cambia a progreso indeterminado antes de instalar paquetes del perfil', async () => {
@@ -5256,10 +5294,12 @@ test('performDependencyInstall usa el resultado compuesto antes del toast termin
 
   // Vivliostyle siempre asignado, nunca descartado
   const nodeBlock = fn.slice(fn.indexOf('"Node.js"'), fn.indexOf('"Python"'));
-  assert.match(nodeBlock, /result\s*=\s*await\s*runSecondaryStage[\s\S]{0,100}?installVivliostyleCli/);
+  assert.match(nodeBlock, /result\s*=\s*await\s*runSecondaryStage[\s\S]{0,250}?withDependencyProgress[\s\S]{0,150}?installVivliostyleCli/);
 
   // Paquetes del perfil siempre asignados, nunca descartados
-  const pythonBlock = fn.slice(fn.indexOf('"Python"'), fn.indexOf('"Vivliostyle CLI"'));
+  const pythonStart = fn.indexOf('"Python"');
+  const directVivliostyleStart = fn.indexOf('} else if (name === "Vivliostyle CLI")', pythonStart);
+  const pythonBlock = fn.slice(pythonStart, directVivliostyleStart);
   assert.match(pythonBlock, /result\s*=\s*await\s*runSecondaryStage[\s\S]{0,150}?installDisciplinePackages/);
 });
 

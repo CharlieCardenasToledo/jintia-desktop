@@ -48,7 +48,7 @@ import geminiLogo from "./assets/gemini-icon.svg";
 import googleGLogo from "./assets/google-g.svg";
 import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
-import { withDependencyProgress, applyDependencyProgressPresentation } from "./onboardingProgress.js";
+import { withDependencyProgress, GENERIC_DEPENDENCY_EVENT, applyDependencyProgressPresentation } from "./onboardingProgress.js";
 import { runSecondaryStage, normalizeProfileInstallResult, verifyPythonInstallResult } from "./onboardingInstall.js";
 import { runOperationWithFeedback, awaitPreparationWithCleanup, operationFailureResult } from "./onboardingOperation.js";
 import { runCompletionHandoff } from "./onboardingCompletion.js";
@@ -1691,6 +1691,9 @@ function bindStepEvents(current) {
 }
 
 function dependencyInstallConfirmMessage(name) {
+  if (name === "Python") {
+    return "Jintia instalará Python 3.13 oficial para tu usuario de Windows. No requiere administrador; quedará disponible en la computadora y se añadirá al PATH del usuario. ¿Continuar?";
+  }
   return LARGE_DEPENDENCIES.has(name)
     ? `${name} puede descargar componentes grandes y requiere permisos del sistema. ¿Instalarlo ahora?`
     : `Vamos a instalar ${name} en tu sistema. ¿Continuar?`;
@@ -1758,13 +1761,21 @@ async function performDependencyInstall(name, reporter = () => {}) {
     if (name === "Node.js") {
       result = await withDependencyProgress(name, listen, () => downloadNodeRuntime(), reporter);
       if (result.success) {
-        // Vivliostyle no emite eventos: cambiar a fase indeterminada explícitamente
+        // Hacer visible el cambio de etapa antes de que llegue su primer evento.
         reporter({ message: "Instalando Vivliostyle CLI…", percent: null });
         onboardingBusyMessage = "Instalando Vivliostyle CLI…";
         syncOnboardingBusyState();
         toast("Instalando Vivliostyle CLI…", "loading", 120000);
       }
-      result = await runSecondaryStage(result, () => installVivliostyleCli());
+      result = await runSecondaryStage(
+        result,
+        () => withDependencyProgress(
+          "Vivliostyle CLI",
+          listen,
+          () => installVivliostyleCli(),
+          reporter
+        )
+      );
     } else if (name === "Python") {
       result = await withDependencyProgress(name, listen, () => downloadPythonRuntime(), reporter);
       if (result.success) {
@@ -1772,16 +1783,16 @@ async function performDependencyInstall(name, reporter = () => {}) {
         reporter({ message: "Instalando paquetes del perfil…", percent: null });
       }
       result = await runSecondaryStage(result, async () =>
-        normalizeProfileInstallResult(await installDisciplinePackages())
+        normalizeProfileInstallResult(await installDisciplinePackages(reporter))
       );
     } else if (name === "Vivliostyle CLI") {
-      result = await installVivliostyleCli();
+      result = await withDependencyProgress(name, listen, () => installVivliostyleCli(), reporter);
     } else if (name === "Jintia Skill") {
       result = await withDependencyProgress(name, listen, () => downloadSkillRuntime(), reporter);
     } else if (name === "NotebookLM MCP") {
-      result = await installNotebookLmMcpRuntime();
+      result = await withDependencyProgress(name, listen, () => installNotebookLmMcpRuntime(), reporter);
     } else {
-      result = await installDependency(name, true);
+      result = await withDependencyProgress(name, listen, () => installDependency(name, true), reporter);
     }
   } catch (e) {
     result = operationFailureResult(e);
@@ -1805,7 +1816,7 @@ async function performDependencyInstall(name, reporter = () => {}) {
   renderCurrentStep();
 }
 
-async function installDisciplinePackages() {
+async function installDisciplinePackages(reporter = null) {
   const discipline = state.config.discipline ?? "";
 
   if (!discipline) {
@@ -1835,7 +1846,9 @@ async function installDisciplinePackages() {
         60000
       );
 
-      const pipResult = await installProfilePackages(pipPackages);
+      const pipResult = reporter
+        ? await withDependencyProgress("Python", listen, () => installProfilePackages(pipPackages), reporter, GENERIC_DEPENDENCY_EVENT)
+        : await installProfilePackages(pipPackages);
 
       if (!pipResult?.success) {
         return {
@@ -1856,7 +1869,9 @@ async function installDisciplinePackages() {
         60000
       );
 
-      const npmResult = await installNpmPackages(npmPackages);
+      const npmResult = reporter
+        ? await withDependencyProgress("Paquetes Node del perfil", listen, () => installNpmPackages(npmPackages), reporter)
+        : await installNpmPackages(npmPackages);
 
       if (!npmResult?.success) {
         return {

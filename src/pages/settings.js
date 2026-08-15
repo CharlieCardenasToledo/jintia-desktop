@@ -11,7 +11,9 @@ import { escapeHtml } from "../dom.js";
 import { toast } from "../toast.js";
 import { ic, refreshIcons } from "../icons.js";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { ui, cx, liquidForBackground } from "../uiClasses.js";
+import { withDependencyProgress } from "../onboardingProgress.js";
 
 // "Instalar herramientas necesarias" solo cubre los runtimes portables necesarios
 // para ejecutar la Skill; Git queda fuera aunque aparezca en la lista de abajo.
@@ -43,6 +45,84 @@ async function runSettingsOperation(button, key, busyLabel, operation) {
       button.removeAttribute("aria-busy");
       button.innerHTML = original;
     }
+  }
+}
+
+function settingsDependencyReporter(container, name) {
+  const row = [...container.querySelectorAll("[data-settings-dependency]")]
+    .find(candidate => candidate.dataset.settingsDependency === name);
+  const detail = row?.querySelector("[data-dependency-detail]");
+  const progress = row?.querySelector("[data-dependency-progress]");
+  const fill = row?.querySelector("[data-dependency-progress-fill]");
+  const value = row?.querySelector("[data-dependency-progress-value]");
+
+  return ({ message, percent, state = "running" }) => {
+    if (!row || !detail || !progress || !fill || !value) return;
+    const isRunning = state === "running";
+    row.setAttribute("aria-busy", String(isRunning));
+    row.dataset.progressState = state;
+    row.classList.toggle("ring-1", isRunning);
+    row.classList.toggle("ring-path-400/40", isRunning);
+    progress.classList.remove("hidden");
+    if (message) detail.textContent = message;
+
+    fill.classList.remove("bg-path-500", "bg-green-500", "bg-red-500");
+    fill.classList.add(state === "success" ? "bg-green-500" : state === "error" ? "bg-red-500" : "bg-path-500");
+
+    if (!isRunning) {
+      progress.setAttribute("role", "status");
+      progress.removeAttribute("aria-valuemin");
+      progress.removeAttribute("aria-valuemax");
+      progress.removeAttribute("aria-valuenow");
+      fill.classList.remove("animate-pulse");
+      fill.style.width = "100%";
+      value.textContent = state === "success" ? "Listo" : "Error";
+      progress.setAttribute("aria-label", message || value.textContent);
+      return;
+    }
+
+    if (percent === null) {
+      progress.setAttribute("role", "status");
+      progress.removeAttribute("aria-valuemin");
+      progress.removeAttribute("aria-valuemax");
+      progress.removeAttribute("aria-valuenow");
+      fill.style.width = "35%";
+      fill.classList.add("animate-pulse");
+      value.textContent = "En curso";
+    } else {
+      progress.setAttribute("role", "progressbar");
+      progress.setAttribute("aria-valuemin", "0");
+      progress.setAttribute("aria-valuemax", "100");
+      progress.setAttribute("aria-valuenow", String(percent));
+      fill.classList.remove("animate-pulse");
+      fill.style.width = `${percent}%`;
+      value.textContent = `${Math.round(percent)}%`;
+    }
+    progress.setAttribute("aria-label", message || `Procesando ${name}`);
+  };
+}
+
+async function runDependencyWithSettingsProgress(container, name, operation) {
+  const reporter = settingsDependencyReporter(container, name);
+  const row = [...container.querySelectorAll("[data-settings-dependency]")]
+    .find(candidate => candidate.dataset.settingsDependency === name);
+  const controls = [...(row?.querySelectorAll("button") ?? [])];
+  const previousDisabled = controls.map(control => control.disabled);
+  controls.forEach(control => { control.disabled = true; });
+  reporter({ message: `Preparando ${name}…`, percent: null, state: "running" });
+  try {
+    const result = await withDependencyProgress(name, listen, operation, reporter);
+    reporter({
+      message: result?.message || (result?.success ? `${name} quedó listo.` : `No se pudo instalar ${name}.`),
+      percent: result?.success ? 100 : null,
+      state: result?.success ? "success" : "error",
+    });
+    return result;
+  } catch (error) {
+    reporter({ message: `No se pudo completar: ${String(error)}`, percent: null, state: "error" });
+    throw error;
+  } finally {
+    controls.forEach((control, index) => { control.disabled = previousDisabled[index]; });
   }
 }
 
@@ -977,13 +1057,30 @@ async function loadDeps() {
             ${ic("download", 14)} Instalar herramientas necesarias
         </button>
       </div>
+      <div class="mb-3 hidden rounded-xl border border-path-400/25 bg-path-50/60 px-3 py-2.5" data-bulk-install-progress role="status" aria-live="polite" aria-atomic="true">
+        <div class="flex items-center justify-between gap-3 text-xs">
+          <span class="font-semibold text-app-text" data-bulk-progress-message>Preparando herramientas…</span>
+          <span class="font-semibold tabular-nums text-path-700" data-bulk-progress-value>0 de 0</span>
+        </div>
+        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+          <div class="h-full rounded-full bg-path-500 transition-[width] duration-300" style="width:0%" data-bulk-progress-fill></div>
+        </div>
+      </div>
       ${deps.map(dep => `
-        <div class="${ui.list.item} mb-1.5">
+        <div class="${ui.list.item} mb-1.5" data-settings-dependency="${escapeHtml(dep.name)}">
           <div class="${ui.list.left}">
             <div class="h-2 w-2 shrink-0 rounded-full ${dep.installed ? "bg-green-500 shadow-[0_0_0_3px_var(--green-bg),0_0_8px_rgba(74,222,128,0.4)]" : "bg-red-500 shadow-[0_0_0_3px_var(--red-bg),0_0_8px_rgba(248,113,113,0.4)]"}"></div>
-            <div>
+            <div class="min-w-0 flex-1">
               <div class="${ui.list.label}">${escapeHtml(dep.name)}</div>
-              <div class="${ui.list.sub}">${escapeHtml(dep.version || (dep.installed ? "Instalado" : "No instalado"))}</div>
+              <div class="${ui.list.sub}" data-dependency-detail aria-live="polite" aria-atomic="true">${escapeHtml(dep.version || (dep.installed ? "Instalado" : "No instalado"))}</div>
+              <div class="mt-2 hidden min-w-[220px]" data-dependency-progress aria-live="polite" aria-atomic="true">
+                <div class="flex items-center gap-2">
+                  <div class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200">
+                    <div class="h-full rounded-full bg-path-500 transition-[width] duration-300" style="width:0%" data-dependency-progress-fill></div>
+                  </div>
+                  <span class="w-12 text-right text-[10px] font-semibold tabular-nums text-app-muted" data-dependency-progress-value>0%</span>
+                </div>
+              </div>
             </div>
           </div>
           <div class="${ui.list.right}">
@@ -991,7 +1088,7 @@ async function loadDeps() {
               ? dep.name === "Node.js"
                 ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-node>Descargar Node.js portable</button>`
                 : dep.name === "Python"
-                  ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-python>Descargar Python portable</button>`
+                  ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-python>Descargar Python oficial portable</button>`
                   : dep.name === "Jintia Skill"
                     ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-skill>Instalar Jintia Skill</button>`
                     : `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-dep-name="${escapeHtml(dep.name)}">Instalar</button>`
@@ -1006,17 +1103,23 @@ async function loadDeps() {
       btn.addEventListener("click", async () => {
         const name = btn.dataset.depName;
         if (!await confirm(`Vamos a instalar ${name} en tu sistema. ¿Continuar?`)) return;
-        toast(`Instalando ${name}…`, "loading", 30000);
+        const originalLabel = btn.textContent;
+        btn.textContent = "Instalando…";
         try {
-          let r;
-          if (name === "Vivliostyle CLI") {
-            r = await installVivliostyleCli();
-          } else {
-            r = await installDependency(name, true);
-          }
+          const r = await runDependencyWithSettingsProgress(
+            container,
+            name,
+            () => name === "Vivliostyle CLI"
+              ? installVivliostyleCli()
+              : installDependency(name, true)
+          );
           toast(r.message, r.success ? "success" : "error", 6000);
           if (r.success) { loadDeps(); loadSetupStatus(); }
-        } catch (e) { toast(`Error: ${e}`, "error"); }
+        } catch (e) {
+          toast(`No se pudo instalar ${name}: ${e}`, "error");
+        } finally {
+          btn.textContent = originalLabel;
+        }
       });
     });
 
@@ -1024,19 +1127,12 @@ async function loadDeps() {
       const btn = container.querySelector("[data-download-node]");
       btn.disabled = true;
       btn.textContent = "Descargando…";
-      toast("Descargando Node.js portable…", "loading", 120000);
-
-      let unlistenProgress;
       try {
-        unlistenProgress = await window.__TAURI__.event.listen("node-download-progress", ({ payload }) => {
-          if (payload.phase === "downloading") {
-            toast(`Descargando Node.js (${Math.round(payload.percent)}%)…`, "loading", 120000);
-          } else if (payload.phase === "extracting") {
-            toast("Extrayendo Node.js…", "loading", 120000);
-          }
-        });
-
-        const result = await downloadNodeRuntime();
+        const result = await runDependencyWithSettingsProgress(
+          container,
+          "Node.js",
+          () => downloadNodeRuntime()
+        );
         if (result.success) {
           toast(result.message, "success", 5000);
           loadDeps();
@@ -1047,7 +1143,6 @@ async function loadDeps() {
       } catch (e) {
         toast(`Error: ${e}`, "error", 6000);
       } finally {
-        if (unlistenProgress) unlistenProgress();
         btn.disabled = false;
         btn.textContent = "Descargar Node.js portable";
       }
@@ -1057,23 +1152,12 @@ async function loadDeps() {
       const btn = container.querySelector("[data-download-python]");
       btn.disabled = true;
       btn.textContent = "Descargando…";
-      toast("Descargando Python portable…", "loading", 120000);
-
-      let unlistenProgress;
       try {
-        unlistenProgress = await window.__TAURI__.event.listen("python-download-progress", ({ payload }) => {
-          if (payload.phase === "downloading") {
-            toast(`Descargando Python (${Math.round(payload.percent)}%)…`, "loading", 120000);
-          } else if (payload.phase === "extracting") {
-            toast("Extrayendo Python…", "loading", 120000);
-          } else if (payload.phase === "configuring") {
-            toast("Configurando Python…", "loading", 120000);
-          } else if (payload.phase === "installing_pip") {
-            toast("Instalando pip…", "loading", 120000);
-          }
-        });
-
-        const result = await downloadPythonRuntime();
+        const result = await runDependencyWithSettingsProgress(
+          container,
+          "Python",
+          () => downloadPythonRuntime()
+        );
         if (result.success) {
           toast(result.message, "success", 5000);
           loadDeps();
@@ -1084,9 +1168,8 @@ async function loadDeps() {
       } catch (e) {
         toast(`Error: ${e}`, "error", 6000);
       } finally {
-        if (unlistenProgress) unlistenProgress();
         btn.disabled = false;
-        btn.textContent = "Descargar Python portable";
+        btn.textContent = "Descargar Python oficial portable";
       }
     });
 
@@ -1094,23 +1177,12 @@ async function loadDeps() {
       const btn = container.querySelector("[data-download-skill]");
       btn.disabled = true;
       btn.textContent = "Instalando…";
-      toast("Instalando Jintia desde npm…", "loading", 120000);
-
-      let unlistenProgress;
       try {
-        unlistenProgress = await window.__TAURI__.event.listen("skill-download-progress", ({ payload }) => {
-          if (payload.phase === "installing") {
-            toast("Instalando Jintia desde npm…", "loading", 120000);
-          } else if (payload.phase === "validating") {
-            toast("Validando paquete Jintia…", "loading", 120000);
-          } else if (payload.phase === "testing") {
-            toast("Probando Jintia…", "loading", 120000);
-          } else if (payload.phase === "activating") {
-            toast("Activando Jintia…", "loading", 120000);
-          }
-        });
-
-        const result = await downloadSkillRuntime();
+        const result = await runDependencyWithSettingsProgress(
+          container,
+          "Jintia Skill",
+          () => downloadSkillRuntime()
+        );
         if (result.success) {
           toast(result.message, "success", 5000);
           loadDeps();
@@ -1121,7 +1193,6 @@ async function loadDeps() {
       } catch (e) {
         toast(`Error: ${e}`, "error", 6000);
       } finally {
-        if (unlistenProgress) unlistenProgress();
         btn.disabled = false;
         btn.textContent = "Instalar Jintia Skill";
       }
@@ -1132,7 +1203,7 @@ async function loadDeps() {
       loadDeps();
     });
 
-    container.querySelector("#btn-install-all-deps")?.addEventListener("click", async () => {
+    container.querySelector("#btn-install-all-deps")?.addEventListener("click", async event => {
       // Solo las herramientas necesarias para producir el PDF: nunca instala
       // Git aunque falte (es opcional, no lo pide este flujo simplificado).
       const targets = deps.filter(d => !d.installed && BULK_INSTALL_TARGETS.has(d.name));
@@ -1142,26 +1213,58 @@ async function loadDeps() {
       }
       const names = targets.map(d => d.name).join(", ");
       if (!await confirm(`Se instalarán las herramientas necesarias para generar tus guías: ${names}. Esto puede tardar varios minutos. ¿Continuar?`)) return;
+      const bulkButton = event.currentTarget;
+      const bulkProgress = container.querySelector("[data-bulk-install-progress]");
+      const bulkMessage = container.querySelector("[data-bulk-progress-message]");
+      const bulkValue = container.querySelector("[data-bulk-progress-value]");
+      const bulkFill = container.querySelector("[data-bulk-progress-fill]");
+      bulkButton.disabled = true;
+      bulkProgress?.classList.remove("hidden");
       let nodeReady = deps.some(d => d.name === "Node.js" && d.installed);
-      for (const dep of targets) {
+      let completed = 0;
+      for (const [index, dep] of targets.entries()) {
+        bulkButton.textContent = `Instalando ${index + 1} de ${targets.length}…`;
+        if (bulkMessage) bulkMessage.textContent = `Herramienta ${index + 1} de ${targets.length}: ${dep.name}`;
+        if (bulkValue) bulkValue.textContent = `${completed} de ${targets.length}`;
+        if (bulkFill) bulkFill.style.width = `${Math.round((completed / targets.length) * 100)}%`;
         if (NODE_DEPENDENT_BULK_TARGETS.has(dep.name) && !nodeReady) {
-          toast(`No se instaló ${dep.name}: requiere Node.js portable.`, "error", 4000);
+          settingsDependencyReporter(container, dep.name)({
+            message: "No se instaló: primero se necesita Node.js portable.",
+            percent: null,
+            state: "error",
+          });
+          completed += 1;
+          if (bulkValue) bulkValue.textContent = `${completed} de ${targets.length}`;
+          if (bulkFill) bulkFill.style.width = `${Math.round((completed / targets.length) * 100)}%`;
           continue;
         }
-        toast(`Instalando ${dep.name}…`, "loading", 120000);
         try {
           let r;
-          if (dep.name === "Node.js") { r = await downloadNodeRuntime(); nodeReady = r.success === true; }
-          else if (dep.name === "Python") r = await downloadPythonRuntime();
-          else if (dep.name === "Jintia Skill") r = await downloadSkillRuntime();
-          else if (dep.name === "Vivliostyle CLI") r = await installVivliostyleCli();
+          if (dep.name === "Node.js") {
+            r = await runDependencyWithSettingsProgress(container, dep.name, () => downloadNodeRuntime());
+            nodeReady = r.success === true;
+          }
+          else if (dep.name === "Python") {
+            r = await runDependencyWithSettingsProgress(container, dep.name, () => downloadPythonRuntime());
+          }
+          else if (dep.name === "Jintia Skill") {
+            r = await runDependencyWithSettingsProgress(container, dep.name, () => downloadSkillRuntime());
+          }
+          else if (dep.name === "Vivliostyle CLI") {
+            r = await runDependencyWithSettingsProgress(container, dep.name, () => installVivliostyleCli());
+          }
           else r = await installDependency(dep.name, true);
           toast(r.message, r.success ? "success" : "error", 4000);
         } catch (e) {
           if (dep.name === "Node.js") nodeReady = false;
           toast(`Error en ${dep.name}: ${e}`, "error");
         }
+        completed += 1;
+        if (bulkValue) bulkValue.textContent = `${completed} de ${targets.length}`;
+        if (bulkFill) bulkFill.style.width = `${Math.round((completed / targets.length) * 100)}%`;
       }
+      if (bulkMessage) bulkMessage.textContent = "Instalación de herramientas finalizada.";
+      bulkButton.textContent = "Instalación finalizada";
       loadDeps(); loadSetupStatus();
     });
 

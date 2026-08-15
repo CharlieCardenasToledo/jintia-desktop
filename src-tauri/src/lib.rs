@@ -78,11 +78,21 @@ async fn download_skill_runtime(app: tauri::AppHandle) -> ActionResult {
 }
 
 #[tauri::command]
-async fn install_notebooklm_mcp_runtime() -> ActionResult {
-    tauri::async_runtime::spawn_blocking(|| {
-        runtimes::install_notebooklm_mcp()
+async fn install_notebooklm_mcp_runtime(app: tauri::AppHandle) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        runtimes::emit_dependency_progress(&app, "NotebookLM MCP", "resolving", None, "Comprobando el contrato de NotebookLM MCP…");
+        runtimes::emit_dependency_progress(&app, "NotebookLM MCP", "installing", None, "Instalando el paquete y sus dependencias…");
+        let result = runtimes::install_notebooklm_mcp()
             .map(|_| ActionResult::ok("NotebookLM MCP administrado instalado correctamente."))
-            .unwrap_or_else(ActionResult::error)
+            .unwrap_or_else(ActionResult::error);
+        runtimes::emit_dependency_progress(
+            &app,
+            "NotebookLM MCP",
+            if result.success { "done" } else { "error" },
+            if result.success { Some(100.0) } else { None },
+            &result.message,
+        );
+        result
     }).await.unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar NotebookLM MCP: {e}")))
 }
 
@@ -437,33 +447,64 @@ async fn run_skill_self_test() -> serde_json::Value {
 }
 
 #[tauri::command]
-async fn install_profile_packages(packages: Vec<String>) -> ActionResult {
+async fn install_profile_packages(app: tauri::AppHandle, packages: Vec<String>) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
-        runtimes::install_pip_packages(&packages)
+        runtimes::emit_dependency_progress(&app, "Python", "installing_pip", None, &format!("Instalando {} paquete(s) Python del perfil…", packages.len()));
+        let result = runtimes::install_pip_packages(&packages)
             .map(|_| ActionResult::ok("Paquetes del perfil instalados correctamente."))
-            .unwrap_or_else(|e| ActionResult::error(e))
+            .unwrap_or_else(ActionResult::error);
+        runtimes::emit_dependency_progress(
+            &app,
+            "Python",
+            if result.success { "done" } else { "error" },
+            if result.success { Some(100.0) } else { None },
+            &result.message,
+        );
+        result
     })
     .await
     .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
 }
 
 #[tauri::command]
-async fn install_vivliostyle_cli() -> ActionResult {
-    tauri::async_runtime::spawn_blocking(|| {
-        runtimes::install_vivliostyle()
-            .map(|_| ActionResult::ok("Vivliostyle CLI instalado correctamente."))
-            .unwrap_or_else(|e| ActionResult::error(e))
-    })
-    .await
-    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
-}
-
-#[tauri::command]
-async fn install_npm_packages(packages: Vec<String>) -> ActionResult {
+async fn install_vivliostyle_cli(app: tauri::AppHandle) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
-        runtimes::install_npm_packages(&packages)
+        runtimes::emit_dependency_progress(&app, "Vivliostyle CLI", "resolving", None, "Comprobando Node.js y npm administrados…");
+        runtimes::emit_dependency_progress(&app, "Vivliostyle CLI", "installing", None, "Instalando Vivliostyle CLI desde npm…");
+        let result = runtimes::install_vivliostyle()
+            .map(|_| ActionResult::ok("Vivliostyle CLI instalado correctamente."))
+            .unwrap_or_else(ActionResult::error);
+        if result.success {
+            runtimes::emit_dependency_progress(&app, "Vivliostyle CLI", "validating", None, "Validando el ejecutable de Vivliostyle…");
+        }
+        runtimes::emit_dependency_progress(
+            &app,
+            "Vivliostyle CLI",
+            if result.success { "done" } else { "error" },
+            if result.success { Some(100.0) } else { None },
+            &result.message,
+        );
+        result
+    })
+    .await
+    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
+
+#[tauri::command]
+async fn install_npm_packages(app: tauri::AppHandle, packages: Vec<String>) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        runtimes::emit_dependency_progress(&app, "Paquetes Node del perfil", "installing", None, &format!("Instalando {} paquete(s) Node del perfil…", packages.len()));
+        let result = runtimes::install_npm_packages(&packages)
             .map(|_| ActionResult::ok("Paquetes npm instalados correctamente."))
-            .unwrap_or_else(|e| ActionResult::error(e))
+            .unwrap_or_else(ActionResult::error);
+        runtimes::emit_dependency_progress(
+            &app,
+            "Paquetes Node del perfil",
+            if result.success { "done" } else { "error" },
+            if result.success { Some(100.0) } else { None },
+            &result.message,
+        );
+        result
     })
     .await
     .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
