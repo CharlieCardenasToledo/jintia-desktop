@@ -145,8 +145,13 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
         match response.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => {
-                file.write_all(&buffer[..n])
-                    .map_err(|e| format!("Error escribiendo descarga: {e}"))?;
+                if let Err(e) = file.write_all(&buffer[..n]) {
+                    let message = format!("Error escribiendo descarga: {e}");
+                    drop(file);
+                    let _ = fs::remove_file(&tmp_file);
+                    emit_progress(app, "error", 0.0, &message);
+                    return Err(message);
+                }
                 downloaded += n as u64;
                 let percent = (downloaded as f32 / total_size as f32) * 100.0;
                 emit_progress(
@@ -157,6 +162,7 @@ pub fn download_portable_node(app: &AppHandle) -> Result<(), String> {
                 );
             }
             Err(e) => {
+                drop(file);
                 let _ = fs::remove_file(&tmp_file);
                 emit_progress(app, "error", 0.0, &format!("Error en descarga: {e}"));
                 return Err(format!("Error descargando: {e}"));
@@ -820,8 +826,13 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
         match response.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => {
-                file.write_all(&buffer[..n])
-                    .map_err(|e| format!("Error escribiendo descarga: {e}"))?;
+                if let Err(e) = file.write_all(&buffer[..n]) {
+                    let message = format!("Error escribiendo descarga: {e}");
+                    drop(file);
+                    let _ = fs::remove_file(&tmp_archive);
+                    emit_python_progress(app, "error", 0.0, &message);
+                    return Err(message);
+                }
                 downloaded += n as u64;
                 let percent = 5.0 + (downloaded as f32 / total_size as f32) * 55.0;
                 emit_python_progress(
@@ -832,6 +843,7 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
                 );
             }
             Err(e) => {
+                drop(file);
                 let _ = fs::remove_file(&tmp_archive);
                 emit_python_progress(app, "error", 0.0, &format!("Error en descarga: {e}"));
                 return Err(format!("Error descargando: {e}"));

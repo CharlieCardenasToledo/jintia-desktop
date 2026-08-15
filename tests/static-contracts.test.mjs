@@ -4712,3 +4712,111 @@ test('Las dependencias administradas sólo están listas si su probe operativo r
   assert.match(settings, /!d\.installed/, 'settings: bulk debe seleccionar por !installed');
   assert.match(settings, /BULK_INSTALL_TARGETS\.has\(d\.name\)/, 'settings: bulk debe filtrar por BULK_INSTALL_TARGETS');
 });
+
+test('Las descargas eliminan el temporal si falla lectura o escritura del streaming', async () => {
+  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+
+  // ── Node ─────────────────────────────────────────────────────────────────────
+  const nodeStart = runtimes.indexOf('pub fn download_portable_node(');
+  const nodeEnd = runtimes.indexOf('\nfn node_version_text_matches_expected', nodeStart);
+  assert.ok(nodeStart >= 0 && nodeEnd > nodeStart, 'download_portable_node no encontrada');
+  const nodeDownloader = runtimes.slice(nodeStart, nodeEnd);
+
+  assert.ok(nodeDownloader.includes('let tmp_file'), 'Node: falta let tmp_file');
+  assert.ok(nodeDownloader.includes('fs::File::create(&tmp_file)'), 'Node: falta File::create(&tmp_file)');
+  assert.ok(nodeDownloader.includes('response.read(&mut buffer)'), 'Node: falta response.read');
+  assert.ok(nodeDownloader.includes('file.write_all(&buffer[..n])'), 'Node: falta file.write_all');
+
+  // Write failure: debe existir rama explícita con if let Err (no propagación directa con ?)
+  const nodeWFIdx = nodeDownloader.indexOf('if let Err(e) = file.write_all(');
+  assert.ok(nodeWFIdx >= 0, 'Node write failure: debe existir if let Err para write_all');
+
+  // Negativo: en el arm Ok(n) no debe existir write_all con propagación directa ?
+  const nodeOkNIdx = nodeDownloader.indexOf('Ok(n) =>');
+  const nodeReadErrIdx = nodeDownloader.indexOf('Err(e) =>', nodeOkNIdx);
+  assert.ok(nodeOkNIdx >= 0, 'Node: falta Ok(n) => en el loop de streaming');
+  assert.ok(nodeReadErrIdx > nodeOkNIdx, 'Node: falta Err(e) => en el loop de streaming');
+  const nodeOkArm = nodeDownloader.slice(nodeOkNIdx, nodeReadErrIdx);
+  assert.doesNotMatch(nodeOkArm, /file\.write_all[\s\S]{1,120}\.map_err[\s\S]{1,80}\?\s*;/, 'Node: write_all en Ok(n) no debe propagar con ? sin cleanup');
+
+  // Write failure — orden obligatorio: drop(file) < remove_file(&tmp_file) < emit "error" < return Err
+  const nodeWFSection = nodeDownloader.slice(nodeWFIdx, nodeWFIdx + 400);
+  const nWDrop   = nodeWFSection.indexOf('drop(file)');
+  const nWRemove = nodeWFSection.indexOf('remove_file(&tmp_file)');
+  const nWEmit   = nodeWFSection.indexOf('"error"');
+  const nWReturn = nodeWFSection.indexOf('return Err');
+  assert.ok(nWDrop   >= 0, 'Node write failure: falta drop(file)');
+  assert.ok(nWRemove >= 0, 'Node write failure: falta remove_file(&tmp_file)');
+  assert.ok(nWEmit   >= 0, 'Node write failure: falta emit con phase "error"');
+  assert.ok(nWReturn >= 0, 'Node write failure: falta return Err');
+  assert.ok(nWDrop   < nWRemove, 'Node write failure: drop(file) debe preceder a remove_file');
+  assert.ok(nWRemove < nWEmit,   'Node write failure: remove_file debe preceder a emit "error"');
+  assert.ok(nWEmit   < nWReturn, 'Node write failure: emit "error" debe preceder a return Err');
+  assert.match(nodeWFSection, /Error escribiendo descarga/, 'Node write failure: falta mensaje "Error escribiendo descarga"');
+
+  // Read failure — orden obligatorio: drop(file) < remove_file(&tmp_file) < emit "error" < return Err
+  const nodeRFSection = nodeDownloader.slice(nodeReadErrIdx, nodeReadErrIdx + 300);
+  const nRDrop   = nodeRFSection.indexOf('drop(file)');
+  const nRRemove = nodeRFSection.indexOf('remove_file(&tmp_file)');
+  const nREmit   = nodeRFSection.indexOf('"error"');
+  const nRReturn = nodeRFSection.indexOf('return Err');
+  assert.ok(nRDrop   >= 0, 'Node read failure: falta drop(file)');
+  assert.ok(nRRemove >= 0, 'Node read failure: falta remove_file(&tmp_file)');
+  assert.ok(nREmit   >= 0, 'Node read failure: falta emit con phase "error"');
+  assert.ok(nRReturn >= 0, 'Node read failure: falta return Err');
+  assert.ok(nRDrop   < nRRemove, 'Node read failure: drop(file) debe preceder a remove_file');
+  assert.ok(nRRemove < nREmit,   'Node read failure: remove_file debe preceder a emit "error"');
+  assert.ok(nREmit   < nRReturn, 'Node read failure: emit "error" debe preceder a return Err');
+
+  // ── Python ───────────────────────────────────────────────────────────────────
+  const pyStart = runtimes.indexOf('pub fn download_portable_python(');
+  const pyEnd = runtimes.indexOf('\nfn emit_python_progress', pyStart);
+  assert.ok(pyStart >= 0 && pyEnd > pyStart, 'download_portable_python no encontrada');
+  const pyDownloader = runtimes.slice(pyStart, pyEnd);
+
+  assert.ok(pyDownloader.includes('let tmp_archive'), 'Python: falta let tmp_archive');
+  assert.ok(pyDownloader.includes('fs::File::create(&tmp_archive)'), 'Python: falta File::create(&tmp_archive)');
+  assert.ok(pyDownloader.includes('response.read(&mut buffer)'), 'Python: falta response.read');
+  assert.ok(pyDownloader.includes('file.write_all(&buffer[..n])'), 'Python: falta file.write_all');
+
+  // Write failure: debe existir rama explícita con if let Err (no propagación directa con ?)
+  const pyWFIdx = pyDownloader.indexOf('if let Err(e) = file.write_all(');
+  assert.ok(pyWFIdx >= 0, 'Python write failure: debe existir if let Err para write_all');
+
+  // Negativo: en el arm Ok(n) no debe existir write_all con propagación directa ?
+  const pyOkNIdx = pyDownloader.indexOf('Ok(n) =>');
+  const pyReadErrIdx = pyDownloader.indexOf('Err(e) =>', pyOkNIdx);
+  assert.ok(pyOkNIdx >= 0, 'Python: falta Ok(n) => en el loop de streaming');
+  assert.ok(pyReadErrIdx > pyOkNIdx, 'Python: falta Err(e) => en el loop de streaming');
+  const pyOkArm = pyDownloader.slice(pyOkNIdx, pyReadErrIdx);
+  assert.doesNotMatch(pyOkArm, /file\.write_all[\s\S]{1,120}\.map_err[\s\S]{1,80}\?\s*;/, 'Python: write_all en Ok(n) no debe propagar con ? sin cleanup');
+
+  // Write failure — orden obligatorio: drop(file) < remove_file(&tmp_archive) < emit "error" < return Err
+  const pyWFSection = pyDownloader.slice(pyWFIdx, pyWFIdx + 400);
+  const pWDrop   = pyWFSection.indexOf('drop(file)');
+  const pWRemove = pyWFSection.indexOf('remove_file(&tmp_archive)');
+  const pWEmit   = pyWFSection.indexOf('"error"');
+  const pWReturn = pyWFSection.indexOf('return Err');
+  assert.ok(pWDrop   >= 0, 'Python write failure: falta drop(file)');
+  assert.ok(pWRemove >= 0, 'Python write failure: falta remove_file(&tmp_archive)');
+  assert.ok(pWEmit   >= 0, 'Python write failure: falta emit con phase "error"');
+  assert.ok(pWReturn >= 0, 'Python write failure: falta return Err');
+  assert.ok(pWDrop   < pWRemove, 'Python write failure: drop(file) debe preceder a remove_file');
+  assert.ok(pWRemove < pWEmit,   'Python write failure: remove_file debe preceder a emit "error"');
+  assert.ok(pWEmit   < pWReturn, 'Python write failure: emit "error" debe preceder a return Err');
+  assert.match(pyWFSection, /Error escribiendo descarga/, 'Python write failure: falta mensaje "Error escribiendo descarga"');
+
+  // Read failure — orden obligatorio: drop(file) < remove_file(&tmp_archive) < emit "error" < return Err
+  const pyRFSection = pyDownloader.slice(pyReadErrIdx, pyReadErrIdx + 300);
+  const pRDrop   = pyRFSection.indexOf('drop(file)');
+  const pRRemove = pyRFSection.indexOf('remove_file(&tmp_archive)');
+  const pREmit   = pyRFSection.indexOf('"error"');
+  const pRReturn = pyRFSection.indexOf('return Err');
+  assert.ok(pRDrop   >= 0, 'Python read failure: falta drop(file)');
+  assert.ok(pRRemove >= 0, 'Python read failure: falta remove_file(&tmp_archive)');
+  assert.ok(pREmit   >= 0, 'Python read failure: falta emit con phase "error"');
+  assert.ok(pRReturn >= 0, 'Python read failure: falta return Err');
+  assert.ok(pRDrop   < pRRemove, 'Python read failure: drop(file) debe preceder a remove_file');
+  assert.ok(pRRemove < pREmit,   'Python read failure: remove_file debe preceder a emit "error"');
+  assert.ok(pREmit   < pRReturn, 'Python read failure: emit "error" debe preceder a return Err');
+});
