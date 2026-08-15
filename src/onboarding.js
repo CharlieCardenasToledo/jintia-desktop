@@ -48,6 +48,7 @@ import geminiLogo from "./assets/gemini-icon.svg";
 import googleGLogo from "./assets/google-g.svg";
 import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
+import { withDependencyProgress } from "./onboardingProgress.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
 
@@ -647,7 +648,8 @@ function dependenciesStep() {
   </section>`;
 }
 
-// Winget no reporta porcentaje; mostramos un indicador indeterminado en bucle.
+// Inicia la UI de progreso en la tarjeta y devuelve un reporter({ message, percent })
+// para actualizarla con datos reales del backend.
 const DEP_PROGRESS_DOTS = 6;
 function beginDependencyInstallProgress(row, statusEl, detailEl, installButton) {
   if (statusEl) {
@@ -660,10 +662,33 @@ function beginDependencyInstallProgress(row, statusEl, detailEl, installButton) 
   const track = document.createElement("div");
   track.className = "dep-progress-track mt-1 self-start";
   track.setAttribute("role", "status");
+  track.setAttribute("aria-live", "polite");
   track.setAttribute("aria-label", "Instalando…");
   const dots = Array.from({ length: DEP_PROGRESS_DOTS }, () => `<span class="dep-progress-dot"></span>`).join("");
   track.innerHTML = `${dots}<span class="dep-progress-node" aria-hidden="true"></span>`;
   row.appendChild(track);
+
+  // Barra de progreso determinado (oculta hasta recibir porcentaje real)
+  const barWrap = document.createElement("div");
+  barWrap.style.cssText = "height:2px;border-radius:1px;background:#e5e7eb;margin-top:4px;overflow:hidden;display:none";
+  const barFill = document.createElement("div");
+  barFill.style.cssText = "height:100%;background:var(--color-brand-600,#4f46e5);width:0%;transition:width 0.25s";
+  barWrap.appendChild(barFill);
+  row.appendChild(barWrap);
+
+  return function reportDependencyProgress({ message, percent }) {
+    if (message !== null) {
+      if (detailEl) detailEl.textContent = message;
+      track.setAttribute("aria-label", message);
+      onboardingBusyMessage = message;
+      syncOnboardingBusyState();
+    }
+    if (percent !== null) {
+      barWrap.style.display = "";
+      barFill.style.width = `${percent}%`;
+      track.style.display = "none";
+    }
+  };
 }
 
 // Revela el estado final de la tarjeta enfocada tras un pequeño retardo
@@ -1727,30 +1752,42 @@ async function requestDependencyInstall(name, button) {
   const confirmed = await confirmInOnboarding(dependencyInstallConfirmMessage(name));
   if (!confirmed) return;
   const row = button?.closest("[data-dep-row]");
+  let reporter = () => {};
   if (row) {
-    beginDependencyInstallProgress(row, row.querySelector("[data-dep-status]"), row.querySelector(".dep-detail"), button);
+    reporter = beginDependencyInstallProgress(row, row.querySelector("[data-dep-status]"), row.querySelector(".dep-detail"), button);
   }
-  await runOnboardingOperation(`Instalando ${name}…`, () => performDependencyInstall(name));
+  await runOnboardingOperation(`Instalando ${name}…`, () => performDependencyInstall(name, reporter));
 }
 
-async function performDependencyInstall(name) {
+async function performDependencyInstall(name, reporter = () => {}) {
   toast(`Instalando ${name}…`, "loading", 120000);
   let result;
-  if (name === "Node.js") {
-    result = await downloadNodeRuntime();
-    if (result.success) {
-      toast("Instalando Vivliostyle CLI…", "loading", 120000);
-      await installVivliostyleCli();
+  try {
+    if (name === "Node.js") {
+      result = await withDependencyProgress(name, listen, () => downloadNodeRuntime(), reporter);
+      if (result.success) {
+        // Vivliostyle no emite eventos: cambiar a fase indeterminada explícitamente
+        reporter({ message: "Instalando Vivliostyle CLI…", percent: null });
+        onboardingBusyMessage = "Instalando Vivliostyle CLI…";
+        syncOnboardingBusyState();
+        toast("Instalando Vivliostyle CLI…", "loading", 120000);
+        await installVivliostyleCli();
+      }
+    } else if (name === "Python") {
+      result = await withDependencyProgress(name, listen, () => downloadPythonRuntime(), reporter);
+      if (result.success) await installDisciplinePackages();
+    } else if (name === "Vivliostyle CLI") {
+      result = await installVivliostyleCli();
+    } else if (name === "Jintia Skill") {
+      result = await withDependencyProgress(name, listen, () => downloadSkillRuntime(), reporter);
+    } else if (name === "NotebookLM MCP") {
+      result = await installNotebookLmMcpRuntime();
+    } else {
+      result = await installDependency(name, true);
     }
+  } catch (e) {
+    result = { success: false, message: String(e) };
   }
-  else if (name === "Python") {
-    result = await downloadPythonRuntime();
-    if (result.success) await installDisciplinePackages();
-  }
-  else if (name === "Vivliostyle CLI") result = await installVivliostyleCli();
-  else if (name === "Jintia Skill") result = await downloadSkillRuntime();
-  else if (name === "NotebookLM MCP") result = await installNotebookLmMcpRuntime();
-  else result = await installDependency(name, true);
   toast(result.message, result.success ? "success" : "error", 9000);
   runtime.dependencies = await checkDependencies();
   renderCurrentStep();

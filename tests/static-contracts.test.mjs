@@ -3050,7 +3050,7 @@ test('Vivliostyle puede repararse desde su propia dependencia', async () => {
     ]);
 
   const start = onboarding.indexOf(
-    'async function performDependencyInstall(name)'
+    'async function performDependencyInstall'
   );
 
   const end = onboarding.indexOf(
@@ -4929,4 +4929,154 @@ test('Jintia Skill sólo está lista si contrato instalado y smoke del engine re
   assert.match(onboarding, /dep\.required\s*&&\s*!dep\.installed/, 'onboarding: filtra por required && !installed');
   assert.match(settings, /!d\.installed/, 'settings: bulk selecciona por !installed');
   assert.match(settings, /BULK_INSTALL_TARGETS\.has\(d\.name\)/, 'settings: bulk filtra por BULK_INSTALL_TARGETS');
+});
+
+// ── Tests del módulo onboardingProgress (importable porque no tiene imports Tauri) ──
+
+import { normalizeProgressPayload, withDependencyProgress, DEPENDENCY_EVENTS } from '../src/onboardingProgress.js';
+
+test('normaliza mensajes y porcentajes del progreso de dependencias', () => {
+  // Fases conocidas → etiquetas en español
+  assert.equal(normalizeProgressPayload({ phase: 'downloading', percent: 50 }).message, 'Descargando…');
+  assert.equal(normalizeProgressPayload({ phase: 'verifying' }).message, 'Verificando…');
+  assert.equal(normalizeProgressPayload({ phase: 'extracting' }).message, 'Extrayendo…');
+  assert.equal(normalizeProgressPayload({ phase: 'validating' }).message, 'Validando…');
+  assert.equal(normalizeProgressPayload({ phase: 'activating' }).message, 'Activando…');
+  assert.equal(normalizeProgressPayload({ phase: 'done' }).message, 'Listo');
+  assert.equal(normalizeProgressPayload({ phase: 'error' }).message, 'Error');
+
+  // message explícito tiene prioridad sobre phase
+  assert.equal(normalizeProgressPayload({ message: 'Texto custom', phase: 'downloading' }).message, 'Texto custom');
+
+  // Porcentaje válido
+  assert.equal(normalizeProgressPayload({ percent: 50 }).percent, 50);
+  // Límite inferior: negativo → 0
+  assert.equal(normalizeProgressPayload({ percent: -5 }).percent, 0);
+  // Límite superior: mayor de 100 → 100
+  assert.equal(normalizeProgressPayload({ percent: 150 }).percent, 100);
+  // No numérico → null
+  assert.equal(normalizeProgressPayload({ percent: 'rápido' }).percent, null);
+  // NaN → null
+  assert.equal(normalizeProgressPayload({ percent: NaN }).percent, null);
+  // Infinito → null
+  assert.equal(normalizeProgressPayload({ percent: Infinity }).percent, null);
+  // Payload nulo → ambos null
+  assert.deepEqual(normalizeProgressPayload(null), { message: null, percent: null });
+  // Mensaje en blanco → null
+  assert.equal(normalizeProgressPayload({ message: '   ' }).message, null);
+});
+
+test('DEPENDENCY_EVENTS mapea exactamente Node.js, Python y Jintia Skill', () => {
+  assert.equal(DEPENDENCY_EVENTS['Node.js'], 'node-download-progress');
+  assert.equal(DEPENDENCY_EVENTS['Python'], 'python-download-progress');
+  assert.equal(DEPENDENCY_EVENTS['Jintia Skill'], 'skill-download-progress');
+  // Vivliostyle y NotebookLM no tienen evento (feedback indeterminado)
+  assert.equal(DEPENDENCY_EVENTS['Vivliostyle CLI'], undefined);
+  assert.equal(DEPENDENCY_EVENTS['NotebookLM MCP'], undefined);
+});
+
+test('se suscribe antes de instalar y libera el listener al terminar (éxito)', async () => {
+  const order = [];
+  const fakeListen = async (event, _cb) => {
+    order.push(`subscribed:${event}`);
+    return () => order.push(`unsubscribed:${event}`);
+  };
+  const fakeOperation = async () => { order.push('operation'); return { success: true }; };
+
+  await withDependencyProgress('Node.js', fakeListen, fakeOperation, () => {});
+
+  assert.deepEqual(order, [
+    'subscribed:node-download-progress',
+    'operation',
+    'unsubscribed:node-download-progress',
+  ]);
+});
+
+test('se suscribe antes de instalar y libera el listener al terminar (excepción)', async () => {
+  const order = [];
+  const fakeListen = async (event, _cb) => {
+    order.push(`subscribed:${event}`);
+    return () => order.push(`unsubscribed:${event}`);
+  };
+  const fakeOperation = async () => { order.push('operation'); throw new Error('fallo de red'); };
+
+  await assert.rejects(() => withDependencyProgress('Python', fakeListen, fakeOperation, () => {}));
+
+  assert.deepEqual(order, [
+    'subscribed:python-download-progress',
+    'operation',
+    'unsubscribed:python-download-progress',
+  ]);
+});
+
+test('una dependencia sin evento conserva progreso indeterminado', async () => {
+  let subscribed = false;
+  const fakeListen = async () => { subscribed = true; return () => {}; };
+  const fakeOperation = async () => ({ success: true });
+
+  await withDependencyProgress('Vivliostyle CLI', fakeListen, fakeOperation, () => {});
+
+  assert.equal(subscribed, false, 'no debe suscribirse para dependencias sin evento Tauri');
+});
+
+test('fallo al suscribirse: la instalación sigue con feedback genérico', async () => {
+  let operationRan = false;
+  const fakeListen = async () => { throw new Error('listen no disponible'); };
+  const fakeOperation = async () => { operationRan = true; return { success: true }; };
+
+  const result = await withDependencyProgress('Node.js', fakeListen, fakeOperation, () => {});
+
+  assert.ok(operationRan, 'la operación debe ejecutarse aunque listen() falle');
+  assert.equal(result.success, true);
+});
+
+test('el reporter recibe payload normalizado al dispararse el evento', async () => {
+  const received = [];
+  let capturedCallback;
+
+  const fakeListen = async (_event, cb) => {
+    capturedCallback = cb;
+    return () => {};
+  };
+  const fakeOperation = async () => {
+    capturedCallback({ payload: { phase: 'downloading', percent: 42 } });
+    capturedCallback({ payload: { phase: 'extracting', percent: 'x' } });
+    return { success: true };
+  };
+
+  await withDependencyProgress('Node.js', fakeListen, fakeOperation, (p) => received.push(p));
+
+  assert.deepEqual(received[0], { message: 'Descargando…', percent: 42 });
+  assert.deepEqual(received[1], { message: 'Extrayendo…', percent: null });
+});
+
+test('el onboarding presenta el error terminal y permite reintentar', async () => {
+  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  // Excepción capturada y convertida en resultado de error
+  assert.match(source, /catch\s*\(e\)[\s\S]{0,120}?result\s*=\s*\{\s*success:\s*false/);
+  // renderCurrentStep() restaura la acción de reintento tras el error
+  const fnStart = source.indexOf('async function performDependencyInstall');
+  const fnEnd = source.indexOf('\n}', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+  assert.match(fn, /renderCurrentStep\(\)/);
+  assert.match(fn, /checkDependencies\(\)/);
+});
+
+test('el onboarding usa progreso real del backend: sin simulación de porcentajes', async () => {
+  const [onboarding, progress] = await Promise.all([
+    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readFile(new URL('src/onboardingProgress.js', root), 'utf8'),
+  ]);
+  // Usa el módulo de progreso
+  assert.match(onboarding, /withDependencyProgress/);
+  assert.match(onboarding, /from.*onboardingProgress/);
+  // No inventa porcentajes con temporizadores
+  assert.doesNotMatch(onboarding, /setInterval[\s\S]{0,200}percent/);
+  assert.doesNotMatch(progress, /setInterval/);
+  assert.doesNotMatch(progress, /fakePercent|simulatedPercent/);
+  // Suscripción anterior al comando
+  assert.match(progress, /unlisten\s*=\s*await\s*listen/);
+  assert.match(progress, /return\s*await\s*operation\(\)/);
+  // Limpieza en finally
+  assert.match(progress, /finally[\s\S]{0,60}?unlisten\?\.\(\)/);
 });
