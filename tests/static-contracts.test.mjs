@@ -5080,3 +5080,120 @@ test('el onboarding usa progreso real del backend: sin simulación de porcentaje
   // Limpieza en finally
   assert.match(progress, /finally[\s\S]{0,60}?unlisten\?\.\(\)/);
 });
+
+// ── Tests de transición determinado ↔ indeterminado ──────────────────────────
+
+test('la presentación cambia de determinada a indeterminada', () => {
+  // Simula el entorno DOM mínimo que usa beginDependencyInstallProgress
+  const elements = {
+    barWrap: { style: { display: 'none', cssText: '' }, appendChild() {} },
+    barFill: { style: { width: '0%', cssText: '' } },
+    track: {
+      style: { display: '' },
+      _attrs: {},
+      setAttribute(k, v) { this._attrs[k] = v; },
+      removeAttribute(k) { delete this._attrs[k]; },
+      getAttribute(k) { return this._attrs[k]; },
+    },
+    detailEl: { textContent: '' },
+  };
+
+  // Construimos el reporter de forma aislada (sin DOM real)
+  let onboardingBusyMessage = '';
+  function syncOnboardingBusyState() {}
+
+  function makeReporter(track, barWrap, barFill, detailEl) {
+    return function reportDependencyProgress({ message, percent }) {
+      if (message !== null) {
+        if (detailEl) detailEl.textContent = message;
+        track.setAttribute('aria-label', message);
+        onboardingBusyMessage = message;
+        syncOnboardingBusyState();
+      }
+      if (percent !== null) {
+        barWrap.style.display = '';
+        barFill.style.width = `${percent}%`;
+        track.style.display = 'none';
+        track.setAttribute('role', 'status');
+        track.setAttribute('aria-valuenow', String(percent));
+        track.setAttribute('aria-valuemin', '0');
+        track.setAttribute('aria-valuemax', '100');
+      } else {
+        barWrap.style.display = 'none';
+        barFill.style.width = '0%';
+        track.style.display = '';
+        track.removeAttribute('aria-valuenow');
+      }
+    };
+  }
+
+  const reporter = makeReporter(elements.track, elements.barWrap, elements.barFill, elements.detailEl);
+
+  // Primero: porcentaje determinado al 100 %
+  reporter({ message: 'Descargando…', percent: 100 });
+  assert.equal(elements.barWrap.style.display, '', 'barra debe ser visible al 100 %');
+  assert.equal(elements.barFill.style.width, '100%', 'fill debe ser 100 %');
+  assert.equal(elements.track.style.display, 'none', 'indicador debe estar oculto al 100 %');
+  assert.equal(elements.track.getAttribute('aria-valuenow'), '100');
+
+  // Después: fase indeterminada (percent: null)
+  reporter({ message: 'Instalando Vivliostyle CLI…', percent: null });
+  assert.equal(elements.barWrap.style.display, 'none', 'barra debe ocultarse al pasar a indeterminado');
+  assert.equal(elements.barFill.style.width, '0%', 'fill debe resetearse al pasar a indeterminado');
+  assert.equal(elements.track.style.display, '', 'indicador debe reaparecer al pasar a indeterminado');
+  assert.equal(elements.track.getAttribute('aria-valuenow'), undefined, 'aria-valuenow debe eliminarse en modo indeterminado');
+});
+
+test('cero por ciento sigue siendo progreso determinado', () => {
+  const barWrap = { style: { display: 'none' } };
+  const barFill = { style: { width: '' } };
+  const track = { style: { display: '' }, _attrs: {}, setAttribute(k, v) { this._attrs[k] = v; }, removeAttribute(k) { delete this._attrs[k]; } };
+
+  function reporter({ percent }) {
+    if (percent !== null) {
+      barWrap.style.display = '';
+      barFill.style.width = `${percent}%`;
+      track.style.display = 'none';
+      track.setAttribute('aria-valuenow', String(percent));
+    } else {
+      barWrap.style.display = 'none';
+      barFill.style.width = '0%';
+      track.style.display = '';
+      track.removeAttribute('aria-valuenow');
+    }
+  }
+
+  reporter({ percent: 0 });
+  assert.equal(barWrap.style.display, '', 'porcentaje 0 debe mostrar la barra (modo determinado)');
+  assert.equal(barFill.style.width, '0%', 'fill debe ser 0 %');
+  assert.equal(track.style.display, 'none', 'indicador debe estar oculto cuando hay un porcentaje, incluso 0');
+  assert.equal(track._attrs['aria-valuenow'], '0');
+});
+
+test('Node cambia a progreso indeterminado antes de instalar Vivliostyle', async () => {
+  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const fnStart = source.indexOf('async function performDependencyInstall');
+  const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+
+  // El reporter debe llamarse con percent: null antes de installVivliostyleCli
+  const reporterCallIdx = fn.indexOf("reporter({ message:");
+  const vivliostyleIdx = fn.indexOf('installVivliostyleCli');
+  assert.ok(reporterCallIdx >= 0, 'debe existir llamada a reporter antes de Vivliostyle');
+  assert.ok(reporterCallIdx < vivliostyleIdx, 'reporter(null) debe preceder a installVivliostyleCli');
+  assert.match(fn, /reporter\(\{\s*message:[\s\S]{0,60}?percent:\s*null[\s\S]{0,10}?\}[\s\S]{0,250}?installVivliostyleCli/);
+});
+
+test('Python cambia a progreso indeterminado antes de instalar paquetes del perfil', async () => {
+  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const fnStart = source.indexOf('async function performDependencyInstall');
+  const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+
+  // La rama Python debe reportar percent: null antes de installDisciplinePackages
+  assert.match(
+    fn,
+    /Python[\s\S]{0,300}?reporter\(\{\s*message:[\s\S]{0,80}?percent:\s*null[\s\S]{0,20}?\}[\s\S]{0,200}?installDisciplinePackages/,
+    'Python debe reportar fase indeterminada antes de instalar paquetes del perfil'
+  );
+});

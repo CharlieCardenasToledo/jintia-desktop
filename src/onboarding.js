@@ -684,9 +684,20 @@ function beginDependencyInstallProgress(row, statusEl, detailEl, installButton) 
       syncOnboardingBusyState();
     }
     if (percent !== null) {
+      // Modo determinado: barra visible, indicador indeterminado oculto
       barWrap.style.display = "";
       barFill.style.width = `${percent}%`;
       track.style.display = "none";
+      track.setAttribute("role", "status");
+      track.setAttribute("aria-valuenow", String(percent));
+      track.setAttribute("aria-valuemin", "0");
+      track.setAttribute("aria-valuemax", "100");
+    } else {
+      // Modo indeterminado: oculta la barra y restaura el indicador animado
+      barWrap.style.display = "none";
+      barFill.style.width = "0%";
+      track.style.display = "";
+      track.removeAttribute("aria-valuenow");
     }
   };
 }
@@ -1775,7 +1786,11 @@ async function performDependencyInstall(name, reporter = () => {}) {
       }
     } else if (name === "Python") {
       result = await withDependencyProgress(name, listen, () => downloadPythonRuntime(), reporter);
-      if (result.success) await installDisciplinePackages();
+      if (result.success) {
+        // Paquetes del perfil no emiten eventos: cambiar a fase indeterminada
+        reporter({ message: "Instalando paquetes del perfil…", percent: null });
+        await installDisciplinePackages();
+      }
     } else if (name === "Vivliostyle CLI") {
       result = await installVivliostyleCli();
     } else if (name === "Jintia Skill") {
