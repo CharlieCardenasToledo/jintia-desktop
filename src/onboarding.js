@@ -49,7 +49,7 @@ import googleGLogo from "./assets/google-g.svg";
 import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
 import { withDependencyProgress, applyDependencyProgressPresentation } from "./onboardingProgress.js";
-import { runSecondaryStage, normalizeProfileInstallResult, verifyInstalledDependencyResult } from "./onboardingInstall.js";
+import { runSecondaryStage, normalizeProfileInstallResult, verifyPythonInstallResult } from "./onboardingInstall.js";
 import { runOperationWithFeedback } from "./onboardingOperation.js";
 import { runCompletionHandoff } from "./onboardingCompletion.js";
 import { APP_META } from "./appMeta.js";
@@ -1793,9 +1793,11 @@ async function performDependencyInstall(name, reporter = () => {}) {
   } catch (e) {
     result = { success: false, message: String(e) };
   }
-  // La autoridad definitiva es checkDependencies(); el toast usa ese resultado.
+  // La autoridad definitiva es checkDependencies(); solo Python concilia con ese snapshot.
   const freshDeps = await checkDependencies();
-  result = verifyInstalledDependencyResult(name, result, freshDeps);
+  if (name === "Python") {
+    result = verifyPythonInstallResult(result, freshDeps);
+  }
   toast(result.message, result.success ? "success" : "error", 9000);
   runtime.dependencies = freshDeps;
   renderCurrentStep();

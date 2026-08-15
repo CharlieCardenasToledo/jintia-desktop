@@ -694,11 +694,30 @@ fn python_version_text_matches_expected(text: &str) -> bool {
     text.trim() == format!("Python {PYTHON_VERSION}")
 }
 
+fn quarantine_python_runtime(python_dir: &std::path::Path) -> Result<(), String> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let quarantine = python_dir.with_extension(format!("invalid-{ts}"));
+    if quarantine.exists() {
+        fs::remove_dir_all(&quarantine)
+            .map_err(|e| format!("no se pudo limpiar el quarantine preexistente: {e}"))?;
+    }
+    fs::rename(python_dir, &quarantine)
+        .map_err(|e| format!("no se pudo apartar el runtime inválido: {e}"))?;
+    if let Err(_cleanup_err) = fs::remove_dir_all(&quarantine) {
+        // El runtime ya está apartado; python_dir está libre. El quarantine residual es no-fatal.
+    }
+    Ok(())
+}
+
 fn activate_staged_python_runtime(
     staged_python: &std::path::Path,
     python_dir: &std::path::Path,
     backup_dir: &std::path::Path,
     mut validate: impl FnMut(&std::path::Path) -> Result<(), String>,
+    mut evict: impl FnMut(&std::path::Path) -> Result<(), String>,
 ) -> Result<(), String> {
     let had_previous_runtime = python_dir.exists();
 
@@ -722,14 +741,20 @@ fn activate_staged_python_runtime(
 
     // Valida desde la ubicación definitiva; el respaldo se conserva hasta aquí.
     if let Err(validation_error) = validate(python_dir) {
-        let discard = python_dir.with_extension("invalid");
-        let _ = fs::rename(python_dir, &discard);
-        let _ = fs::remove_dir_all(&discard);
+        // Intentar apartar el runtime inválido. Si falla, python_dir sigue ocupado:
+        // no intentar restaurar el backup encima de la ruta ocupada.
+        if let Err(evict_error) = evict(python_dir) {
+            return Err(format!(
+                "El runtime Python activado no superó la verificación final: {validation_error}; \
+                 no se pudo apartar el runtime inválido: {evict_error}"
+            ));
+        }
+        // python_dir está libre; restaurar el runtime anterior si existía.
         if had_previous_runtime {
             if let Err(restore_error) = fs::rename(backup_dir, python_dir) {
                 return Err(format!(
                     "El runtime Python activado no superó la verificación final: {validation_error}; \
-                     además no se pudo restaurar el runtime anterior: {restore_error}"
+                     no se pudo restaurar el runtime anterior: {restore_error}"
                 ));
             }
         }
@@ -740,7 +765,7 @@ fn activate_staged_python_runtime(
 
     // Solo elimina el respaldo después de que la ubicación definitiva esté validada.
     if had_previous_runtime && backup_dir.exists() {
-        let _ = fs::remove_dir_all(backup_dir);
+        if let Err(_) = fs::remove_dir_all(backup_dir) {}
     }
 
     Ok(())
@@ -920,6 +945,7 @@ pub fn download_portable_python(app: &AppHandle) -> Result<(), String> {
         &python_dir,
         &backup_dir,
         validate_python_runtime,
+        quarantine_python_runtime,
     ) {
         let _ = fs::remove_dir_all(&stage_dir);
         return Err(error);
@@ -1252,7 +1278,7 @@ pub fn install_notebooklm_mcp() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_portable_python_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_command, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, resolve_notebooklm_mcp_bin_for, try_runtime_mutation_lock, verify_sha256, NODE_RUNTIME_MUTATION_LOCK, NOTEBOOKLM_RUNTIME_MUTATION_LOCK, PYTHON_RUNTIME_MUTATION_LOCK, SKILL_RUNTIME_MUTATION_LOCK};
+    use super::{activate_staged_node_runtime, activate_staged_notebooklm_mcp, activate_staged_python_runtime, build_managed_node_cli_version_command, build_managed_notebooklm_browser_command, build_managed_notebooklm_npm_command, build_managed_npm_install_command, build_managed_pip_install_command, build_portable_node_version_command, build_portable_python_version_command, build_staged_node_version_command, install_npm_packages, install_pip_packages, managed_node_command, managed_node_runtime_path, managed_python_command, managed_python_runtime_path, node_checksum_from_manifest, node_version_text_matches_expected, notebooklm_lock_entry, notebooklm_package_matches_contract, python_version_text_matches_expected, quarantine_python_runtime, resolve_notebooklm_mcp_bin_for, try_runtime_mutation_lock, verify_sha256, NODE_RUNTIME_MUTATION_LOCK, NOTEBOOKLM_RUNTIME_MUTATION_LOCK, PYTHON_RUNTIME_MUTATION_LOCK, SKILL_RUNTIME_MUTATION_LOCK};
     use crate::paths;
     #[cfg(target_os = "windows")]
     use super::extract_zip;
@@ -1674,7 +1700,7 @@ mod tests {
         fs::create_dir_all(&staged_python).unwrap();
         fs::write(staged_python.join("marker-new"), "new").unwrap();
 
-        activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir, |_| Ok(())).unwrap();
+        activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir, |_| Ok(()), quarantine_python_runtime).unwrap();
 
         assert!(python_dir.join("marker-new").is_file());
         assert!(!staged_python.exists());
@@ -1693,7 +1719,7 @@ mod tests {
         fs::write(staged_python.join("marker-new"), "new").unwrap();
         fs::write(python_dir.join("marker-old"), "old").unwrap();
 
-        activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir, |_| Ok(())).unwrap();
+        activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir, |_| Ok(()), quarantine_python_runtime).unwrap();
 
         assert!(python_dir.join("marker-new").is_file());
         assert!(!python_dir.join("marker-old").exists());
@@ -1710,7 +1736,7 @@ mod tests {
         fs::create_dir_all(&python_dir).unwrap();
         fs::write(python_dir.join("marker-old"), "old").unwrap();
 
-        let error = activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir, |_| Ok(()))
+        let error = activate_staged_python_runtime(&staged_python, &python_dir, &backup_dir, |_| Ok(()), quarantine_python_runtime)
             .unwrap_err();
 
         assert!(error.contains("Error activando Python"));
@@ -3093,6 +3119,16 @@ mod python_activation_tests {
         fs::write(dir.join(name), b"marker").expect("crear marker");
     }
 
+    fn inline_quarantine(p: &std::path::Path) -> Result<(), String> {
+        let q = p.with_extension("invalid-test");
+        if q.exists() {
+            fs::remove_dir_all(&q).map_err(|e| format!("cleanup preexistente: {e}"))?;
+        }
+        fs::rename(p, &q).map_err(|e| format!("rename: {e}"))?;
+        if let Err(_) = fs::remove_dir_all(&q) {}
+        Ok(())
+    }
+
     #[test]
     fn python_activation_validates_the_final_path_before_removing_backup() {
         let staged = make_temp_dir("staged");
@@ -3104,10 +3140,11 @@ mod python_activation_tests {
 
         let mut validated_path: Option<std::path::PathBuf> = None;
 
-        let result = activate_staged_python_runtime(&staged, &python_dir, &backup_dir, |p| {
-            validated_path = Some(p.to_path_buf());
-            Ok(())
-        });
+        let result = activate_staged_python_runtime(
+            &staged, &python_dir, &backup_dir,
+            |p| { validated_path = Some(p.to_path_buf()); Ok(()) },
+            |_| unreachable!("evict no debe llamarse si la validación es exitosa"),
+        );
 
         assert!(result.is_ok(), "la activación debe tener éxito: {result:?}");
 
@@ -3132,7 +3169,11 @@ mod python_activation_tests {
         touch_marker(&staged, "staged.marker");
         touch_marker(&python_dir, "previous.marker");
 
-        let result = activate_staged_python_runtime(&staged, &python_dir, &backup_dir, |_| Ok(()));
+        let result = activate_staged_python_runtime(
+            &staged, &python_dir, &backup_dir,
+            |_| Ok(()),
+            |_| unreachable!("evict no debe llamarse si la validación es exitosa"),
+        );
 
         assert!(result.is_ok());
         assert!(!backup_dir.exists(), "el backup debe eliminarse tras validación exitosa");
@@ -3151,9 +3192,11 @@ mod python_activation_tests {
         touch_marker(&staged, "staged.marker");
         touch_marker(&python_dir, "previous.marker");
 
-        let result = activate_staged_python_runtime(&staged, &python_dir, &backup_dir, |_| {
-            Err("validación final falló".to_string())
-        });
+        let result = activate_staged_python_runtime(
+            &staged, &python_dir, &backup_dir,
+            |_| Err("validación final falló".to_string()),
+            inline_quarantine,
+        );
 
         assert!(result.is_err(), "debe retornar error si la validación final falla");
         assert!(result.unwrap_err().contains("verificación final"));
@@ -3163,6 +3206,7 @@ mod python_activation_tests {
             python_dir.join("previous.marker").exists(),
             "el runtime anterior debe estar restaurado"
         );
+        assert!(!python_dir.join("staged.marker").exists(), "runtime inválido no debe estar activo");
         assert!(!backup_dir.exists(), "el backup no debe permanecer tras restauración");
 
         let _ = fs::remove_dir_all(&python_dir);
@@ -3180,14 +3224,101 @@ mod python_activation_tests {
 
         touch_marker(&staged, "staged.marker");
 
-        let result = activate_staged_python_runtime(&staged, &python_dir, &backup_dir, |_| {
-            Err("ejecutable no válido".to_string())
-        });
+        let result = activate_staged_python_runtime(
+            &staged, &python_dir, &backup_dir,
+            |_| Err("ejecutable no válido".to_string()),
+            inline_quarantine,
+        );
 
         assert!(result.is_err());
-        assert!(
-            !python_dir.exists() || !python_dir.join("staged.marker").exists(),
-            "el runtime inválido no debe permanecer en python_dir"
+        assert!(!python_dir.exists(), "el runtime inválido no debe permanecer en python_dir");
+    }
+
+    #[test]
+    fn python_activation_handles_preexisting_quarantine_before_rollback() {
+        let staged = make_temp_dir("staged_q");
+        let python_dir = make_temp_dir("python_q");
+        let backup_dir = std::env::temp_dir()
+            .join(format!("jintia-test-backup-q-{}", std::process::id()));
+        let quarantine = std::env::temp_dir()
+            .join(format!("jintia-test-quarantine-q-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&backup_dir);
+        let _ = fs::remove_dir_all(&quarantine);
+
+        touch_marker(&staged, "staged.marker");
+        touch_marker(&python_dir, "previous.marker");
+
+        // Simula un quarantine preexistente de una activación fallida anterior.
+        fs::create_dir_all(&quarantine).expect("crear quarantine preexistente");
+        touch_marker(&quarantine, "leftover.marker");
+
+        let quarantine_clone = quarantine.clone();
+        let result = activate_staged_python_runtime(
+            &staged, &python_dir, &backup_dir,
+            |_| Err("validación fallida".to_string()),
+            move |p| {
+                if quarantine_clone.exists() {
+                    fs::remove_dir_all(&quarantine_clone)
+                        .map_err(|e| format!("limpieza preexistente: {e}"))?;
+                }
+                fs::rename(p, &quarantine_clone).map_err(|e| format!("rename: {e}"))?;
+                if let Err(_) = fs::remove_dir_all(&quarantine_clone) {}
+                Ok(())
+            },
         );
+
+        assert!(result.is_err());
+
+        // El runtime anterior debe haber sido restaurado.
+        assert!(python_dir.exists(), "python_dir debe existir tras restauración");
+        assert!(
+            python_dir.join("previous.marker").exists(),
+            "el runtime anterior debe estar restaurado"
+        );
+        // El runtime inválido no debe estar activo.
+        assert!(!python_dir.join("staged.marker").exists(), "runtime inválido no activo");
+
+        let _ = fs::remove_dir_all(&python_dir);
+    }
+
+    #[test]
+    fn python_activation_reports_failure_to_evict_invalid_runtime() {
+        let staged = make_temp_dir("staged_evict");
+        let python_dir = make_temp_dir("python_evict");
+        let backup_dir = std::env::temp_dir()
+            .join(format!("jintia-test-backup-evict-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&backup_dir);
+
+        touch_marker(&staged, "staged.marker");
+        touch_marker(&python_dir, "previous.marker");
+
+        let result = activate_staged_python_runtime(
+            &staged, &python_dir, &backup_dir,
+            |_| Err("validación fallida".to_string()),
+            |_| Err("imposible apartar el runtime".to_string()),
+        );
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+
+        // El mensaje debe incluir el error de validación y el de desalojo.
+        assert!(msg.contains("verificación final"), "debe incluir error de validación: {msg}");
+        assert!(msg.contains("apartar"), "debe incluir error de desalojo: {msg}");
+
+        // El backup no debe haberse tocado: python_dir seguía ocupado cuando evict falló.
+        assert!(backup_dir.exists(), "el backup debe estar preservado");
+        assert!(
+            backup_dir.join("previous.marker").exists(),
+            "el contenido del backup debe estar intacto"
+        );
+
+        // python_dir contiene el runtime inválido (evict no lo movió).
+        assert!(
+            python_dir.join("staged.marker").exists(),
+            "el runtime inválido sigue en python_dir"
+        );
+
+        let _ = fs::remove_dir_all(&python_dir);
+        let _ = fs::remove_dir_all(&backup_dir);
     }
 }
