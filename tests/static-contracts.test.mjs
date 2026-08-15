@@ -5184,7 +5184,7 @@ test('Python cambia a progreso indeterminado antes de instalar paquetes del perf
 
 // ── Tests de propagación de fallos en instalaciones compuestas ────────────────
 
-import { runSecondaryStage, normalizeProfileInstallResult } from '../src/onboardingInstall.js';
+import { runSecondaryStage, normalizeProfileInstallResult, verifyInstalledDependencyResult } from '../src/onboardingInstall.js';
 import { runOperationWithFeedback } from '../src/onboardingOperation.js';
 import { runCompletionHandoff } from '../src/onboardingCompletion.js';
 
@@ -5466,4 +5466,70 @@ test('los resultados fallidos no entran al handoff', async () => {
   const completeErrorBlock = completeBlock.slice(completeElseIdx);
   assert.match(completeSuccessBlock, /doCompletionHandoff/);
   assert.doesNotMatch(completeErrorBlock, /doCompletionHandoff/, 'la rama de error de complete no debe llamar al handoff');
+});
+
+// ── Tests de verificación autoritativa de instalación ────────────────────────
+
+test('conserva el éxito de Python cuando la verificación autoritativa lo encuentra instalado', () => {
+  const preliminary = { success: true, message: 'Python instalado correctamente.' };
+  const deps = [{ name: 'Python', installed: true }, { name: 'Node.js', installed: true }];
+  const result = verifyInstalledDependencyResult('Python', preliminary, deps);
+  assert.deepEqual(result, preliminary, 'el resultado preliminar debe conservarse si dep.installed === true');
+});
+
+test('convierte el éxito preliminar en error cuando Python no queda verificable', () => {
+  const preliminary = { success: true, message: 'Python instalado.' };
+  const depsNotInstalled = [{ name: 'Python', installed: false }];
+  const result = verifyInstalledDependencyResult('Python', preliminary, depsNotInstalled);
+  assert.equal(result.success, false);
+  assert.ok(result.message.includes('no pudo verificarse'), `mensaje esperado con "no pudo verificarse": ${result.message}`);
+  assert.ok(result.message.length > 10, 'el mensaje debe ser accionable');
+
+  // También falla si Python no aparece en el snapshot
+  const depsEmpty = [];
+  const result2 = verifyInstalledDependencyResult('Python', preliminary, depsEmpty);
+  assert.equal(result2.success, false);
+});
+
+test('no reemplaza un fallo real de descarga o perfil', () => {
+  const failedPreliminary = { success: false, message: 'timeout de red' };
+
+  // Falla con dep instalada — no debe convertirse en éxito
+  const depsInstalled = [{ name: 'Python', installed: true }];
+  assert.deepEqual(
+    verifyInstalledDependencyResult('Python', failedPreliminary, depsInstalled),
+    failedPreliminary,
+    'un fallo preliminar debe devolverse sin cambios'
+  );
+
+  // Falla con dep no instalada — tampoco cambia
+  const depsNotInstalled = [{ name: 'Python', installed: false }];
+  assert.deepEqual(
+    verifyInstalledDependencyResult('Python', failedPreliminary, depsNotInstalled),
+    failedPreliminary
+  );
+});
+
+test('verifica Python antes de emitir el toast terminal', async () => {
+  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const fnStart = source.indexOf('async function performDependencyInstall');
+  const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+
+  // checkDependencies debe preceder a verifyInstalledDependencyResult
+  const checkIdx = fn.indexOf('checkDependencies()');
+  const verifyIdx = fn.indexOf('verifyInstalledDependencyResult');
+  const toastIdx = fn.indexOf('toast(result.message');
+  const runtimeIdx = fn.indexOf('runtime.dependencies');
+
+  assert.ok(checkIdx >= 0, 'performDependencyInstall debe llamar checkDependencies');
+  assert.ok(verifyIdx >= 0, 'performDependencyInstall debe llamar verifyInstalledDependencyResult');
+  assert.ok(checkIdx < verifyIdx, 'checkDependencies debe preceder a verifyInstalledDependencyResult');
+  assert.ok(verifyIdx < toastIdx, 'verifyInstalledDependencyResult debe preceder al toast terminal');
+
+  // El resultado de checkDependencies se asigna a runtime.dependencies
+  assert.match(fn, /const\s+freshDeps\s*=\s*await\s*checkDependencies\(\)/);
+  assert.match(fn, /runtime\.dependencies\s*=\s*freshDeps/);
+  assert.ok(runtimeIdx > toastIdx || fn.indexOf('runtime.dependencies = freshDeps') > verifyIdx,
+    'runtime.dependencies debe usar el mismo snapshot que la conciliación');
 });

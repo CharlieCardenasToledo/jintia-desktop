@@ -8,6 +8,26 @@ export async function runSecondaryStage(primaryResult, runSecondary) {
   return primaryResult;
 }
 
+const VERIFY_ERROR_MESSAGES = {
+  "Python": "Python terminó de instalarse, pero no pudo verificarse en su ubicación final. Intenta instalarlo de nuevo; si persiste, reinicia la app.",
+};
+
+// Concilia el resultado preliminar de una instalación con el snapshot autoritativo
+// de dependencias devuelto por checkDependencies(). Si la dependencia no aparece
+// como installed:true en el snapshot, el resultado se convierte en error.
+// Un resultado preliminar fallido se devuelve sin cambios.
+export function verifyInstalledDependencyResult(name, preliminaryResult, dependencies) {
+  if (!preliminaryResult.success) return preliminaryResult;
+  const dep = Array.isArray(dependencies) ? dependencies.find(d => d.name === name) : null;
+  if (!dep || dep.installed !== true) {
+    return {
+      success: false,
+      message: VERIFY_ERROR_MESSAGES[name] ?? `${name} no pudo verificarse tras la instalación.`,
+    };
+  }
+  return preliminaryResult;
+}
+
 // Convierte la respuesta de installDisciplinePackages() en un ActionResult uniforme.
 // El objeto de entrada puede tener { error, failedStage } en caso de fallo
 // o carecer de ellos en caso de éxito.
