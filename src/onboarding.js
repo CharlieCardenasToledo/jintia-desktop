@@ -50,7 +50,7 @@ import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
 import { withDependencyProgress, applyDependencyProgressPresentation } from "./onboardingProgress.js";
 import { runSecondaryStage, normalizeProfileInstallResult, verifyPythonInstallResult } from "./onboardingInstall.js";
-import { runOperationWithFeedback, awaitPreparationWithCleanup } from "./onboardingOperation.js";
+import { runOperationWithFeedback, awaitPreparationWithCleanup, operationFailureResult } from "./onboardingOperation.js";
 import { runCompletionHandoff } from "./onboardingCompletion.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
@@ -1784,7 +1784,7 @@ async function performDependencyInstall(name, reporter = () => {}) {
       result = await installDependency(name, true);
     }
   } catch (e) {
-    result = { success: false, message: String(e) };
+    result = operationFailureResult(e);
   }
   // La autoridad definitiva es checkDependencies(); solo Python concilia con ese snapshot.
   const freshDeps = await checkDependencies();

@@ -22,6 +22,11 @@ export async function awaitPreparationWithCleanup(preparation, cleanup) {
   }
 }
 
+// Construye un ActionResult fallido con el mensaje normalizado para cualquier rechazo.
+export function operationFailureResult(error) {
+  return { success: false, message: normalizeErrorMessage(error) };
+}
+
 // Ejecuta operation() y garantiza que:
 //   - onSettled() se invoca exactamente una vez (éxito o rechazo).
 //   - En caso de rechazo, onError(message) se invoca antes de onSettled().
@@ -31,9 +36,9 @@ export async function runOperationWithFeedback(operation, { onError, onSettled }
   try {
     return await operation();
   } catch (e) {
-    const message = normalizeErrorMessage(e);
-    onError(message);
-    return { success: false, message };
+    const result = operationFailureResult(e);
+    onError(result.message);
+    return result;
   } finally {
     onSettled();
   }

@@ -5052,8 +5052,8 @@ test('el reporter recibe payload normalizado al dispararse el evento', async () 
 
 test('el onboarding presenta el error terminal y permite reintentar', async () => {
   const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
-  // Excepción capturada y convertida en resultado de error
-  assert.match(source, /catch\s*\(e\)[\s\S]{0,120}?result\s*=\s*\{\s*success:\s*false/);
+  // Excepción capturada con el helper central de normalización
+  assert.match(source, /catch\s*\(e\)[\s\S]{0,80}?result\s*=\s*operationFailureResult\(e\)/);
   // renderCurrentStep() restaura la acción de reintento tras el error
   const fnStart = source.indexOf('async function performDependencyInstall');
   const fnEnd = source.indexOf('\n}', fnStart);
@@ -5185,7 +5185,7 @@ test('Python cambia a progreso indeterminado antes de instalar paquetes del perf
 // ── Tests de propagación de fallos en instalaciones compuestas ────────────────
 
 import { runSecondaryStage, normalizeProfileInstallResult, verifyPythonInstallResult } from '../src/onboardingInstall.js';
-import { runOperationWithFeedback, awaitPreparationWithCleanup } from '../src/onboardingOperation.js';
+import { runOperationWithFeedback, awaitPreparationWithCleanup, operationFailureResult } from '../src/onboardingOperation.js';
 import { runCompletionHandoff } from '../src/onboardingCompletion.js';
 
 test('no ejecuta la etapa secundaria cuando la primaria falla', async () => {
@@ -5630,4 +5630,92 @@ test('showPreparedStep delega la limpieza y no emite feedback local', async () =
   // Conserva animación y estado de carga
   assert.match(fn, /animateStepTransition/, 'debe conservar la animación de transición');
   assert.match(fn, /runtime\.loadingStep\s*=\s*destination/, 'debe mostrar el estado de carga para preparaciones lentas');
+});
+
+// ── Tests de normalización de rechazos al instalar dependencias ───────────────
+
+test('operationFailureResult normaliza Error, string y objeto con message', () => {
+  const fromError = operationFailureResult(new Error('tiempo de espera agotado'));
+  assert.equal(fromError.success, false);
+  assert.equal(fromError.message, 'tiempo de espera agotado');
+  assert.doesNotMatch(fromError.message, /^Error:/);
+
+  const fromString = operationFailureResult('sin conexión');
+  assert.equal(fromString.success, false);
+  assert.equal(fromString.message, 'sin conexión');
+
+  const fromObj = operationFailureResult({ message: 'credencial inválida' });
+  assert.equal(fromObj.success, false);
+  assert.equal(fromObj.message, 'credencial inválida');
+});
+
+test('operationFailureResult usa fallback para rechazos arbitrarios', () => {
+  const FALLBACK = 'No se pudo completar la operación.';
+
+  for (const arbitrary of [{}, null, undefined, 42, new Error(''), '   ']) {
+    const result = operationFailureResult(arbitrary);
+    assert.equal(result.success, false);
+    assert.equal(result.message, FALLBACK,
+      `debe usar el fallback para: ${JSON.stringify(arbitrary)}`);
+    assert.doesNotMatch(result.message, /\[object Object\]/);
+  }
+});
+
+test('runOperationWithFeedback usa el mismo resultado normalizado', async () => {
+  const rejection = new Error('fallo de red');
+  let onErrorMsg = null;
+  let onSettledCalls = 0;
+
+  const runnerResult = await runOperationWithFeedback(
+    () => Promise.reject(rejection),
+    { onError: (m) => { onErrorMsg = m; }, onSettled: () => { onSettledCalls++; } }
+  );
+
+  const helperResult = operationFailureResult(rejection);
+
+  assert.deepEqual(runnerResult, helperResult, 'el resultado del runner debe coincidir con el helper');
+  assert.equal(onErrorMsg, helperResult.message, 'onError debe recibir el mismo mensaje normalizado');
+  assert.equal(onSettledCalls, 1, 'onSettled debe llamarse exactamente una vez');
+});
+
+test('performDependencyInstall normaliza antes del recheck y toast', async () => {
+  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const fnStart = source.indexOf('async function performDependencyInstall');
+  const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+
+  // No debe usar String(e) en el catch
+  assert.doesNotMatch(fn, /String\s*\(\s*e\s*\)/, 'no debe usar String(e) para construir el mensaje');
+
+  // Debe usar el helper de normalización
+  assert.match(fn, /operationFailureResult\s*\(e\)/, 'debe usar operationFailureResult para normalizar el rechazo');
+
+  // El orden posterior al catch debe preservarse
+  const catchEnd = fn.indexOf('} catch (e) {');
+  const postCatch = fn.slice(catchEnd);
+  const checkIdx = postCatch.indexOf('checkDependencies()');
+  const verifyIdx = postCatch.indexOf('verifyPythonInstallResult');
+  const toastIdx = postCatch.indexOf('toast(result.message');
+  const runtimeIdx = postCatch.indexOf('runtime.dependencies');
+
+  assert.ok(checkIdx >= 0, 'checkDependencies debe seguir presente');
+  assert.ok(verifyIdx >= 0, 'verifyPythonInstallResult debe seguir presente');
+  assert.ok(checkIdx < verifyIdx, 'checkDependencies debe preceder a verifyPythonInstallResult');
+  assert.ok(verifyIdx < toastIdx, 'conciliación Python debe preceder al toast');
+  assert.ok(toastIdx < runtimeIdx, 'toast debe preceder a runtime.dependencies');
+});
+
+test('un ActionResult fallido normal no activa un segundo canal de error', async () => {
+  const normalFailure = { success: false, message: 'versión incompatible' };
+  let onErrorCalls = 0;
+  let onSettledCalls = 0;
+
+  const result = await runOperationWithFeedback(
+    () => Promise.resolve(normalFailure),
+    { onError: () => { onErrorCalls++; }, onSettled: () => { onSettledCalls++; } }
+  );
+
+  assert.deepEqual(result, normalFailure, 'el ActionResult fallido debe preservarse sin cambios');
+  assert.equal(onErrorCalls, 0, 'onError no debe activarse para un ActionResult devuelto normalmente');
+  assert.equal(onSettledCalls, 1, 'onSettled debe llamarse exactamente una vez');
 });
