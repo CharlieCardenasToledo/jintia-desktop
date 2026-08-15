@@ -5294,26 +5294,54 @@ test('convierte Error rechazado en feedback terminal', async () => {
 });
 
 test('normaliza strings, objetos y rechazos vacíos', async () => {
-  async function collectError(throwValue) {
+  const FALLBACK = 'No se pudo completar la operación.';
+
+  async function collectBoth(throwValue) {
     let errorMsg = null;
-    await runOperationWithFeedback(
+    let settledCalls = 0;
+    const result = await runOperationWithFeedback(
       async () => { throw throwValue; },
-      { onError: (m) => { errorMsg = m; }, onSettled: () => {} }
+      { onError: (m) => { errorMsg = m; }, onSettled: () => settledCalls++ }
     );
-    return errorMsg;
+    return { errorMsg, result, settledCalls };
   }
 
   // String rechazado → conservado
-  assert.equal(await collectError('timeout de red'), 'timeout de red');
+  assert.equal((await collectBoth('timeout de red')).errorMsg, 'timeout de red');
   // Objeto con message → conservado
-  assert.equal(await collectError({ message: 'acceso denegado' }), 'acceso denegado');
+  assert.equal((await collectBoth({ message: 'acceso denegado' })).errorMsg, 'acceso denegado');
   // null → fallback
-  assert.equal(await collectError(null), 'No se pudo completar la operación.');
+  assert.equal((await collectBoth(null)).errorMsg, FALLBACK);
   // undefined → fallback
-  assert.equal(await collectError(undefined), 'No se pudo completar la operación.');
+  assert.equal((await collectBoth(undefined)).errorMsg, FALLBACK);
+
+  // Error con mensaje vacío → fallback
+  assert.equal((await collectBoth(new Error(''))).errorMsg, FALLBACK, 'new Error("") debe usar el fallback');
+  // Error con solo espacios → fallback
+  assert.equal((await collectBoth(new Error('   '))).errorMsg, FALLBACK, 'new Error("   ") debe usar el fallback');
+  // Error con mensaje con espacios extremos → trimado
+  assert.equal((await collectBoth(new Error('  conexión perdida  '))).errorMsg, 'conexión perdida');
+  // String vacío → fallback
+  assert.equal((await collectBoth('')).errorMsg, FALLBACK);
+  // String con solo espacios → fallback
+  assert.equal((await collectBoth('   ')).errorMsg, FALLBACK);
+  // Objeto con message vacía → fallback
+  assert.equal((await collectBoth({ message: '' })).errorMsg, FALLBACK);
+  // Objeto con message con solo espacios → fallback
+  assert.equal((await collectBoth({ message: '   ' })).errorMsg, FALLBACK);
+
+  // El mensaje en onError coincide con el de ActionResult
+  const { errorMsg, result } = await collectBoth(new Error('fallo de red'));
+  assert.equal(result.success, false);
+  assert.equal(result.message, errorMsg, 'onError y ActionResult deben usar el mismo mensaje');
+
+  // onSettled se ejecuta exactamente una vez en cada rechazo
+  const { settledCalls } = await collectBoth(new Error('x'));
+  assert.equal(settledCalls, 1);
+
   // Ningún mensaje debe contener stack
-  const msgWithError = await collectError(new Error('fallo'));
-  assert.doesNotMatch(msgWithError, /Error:|at\s+\w/, 'el mensaje no debe exponer el stack trace');
+  const { errorMsg: msgWithStack } = await collectBoth(new Error('fallo'));
+  assert.doesNotMatch(msgWithStack, /Error:|at\s+\w/, 'el mensaje no debe exponer el stack trace');
 });
 
 test('no confunde ActionResult fallido con una excepción', async () => {

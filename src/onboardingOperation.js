@@ -1,11 +1,15 @@
+const FALLBACK = "No se pudo completar la operación.";
+
 // Normaliza cualquier valor rechazado a un mensaje de usuario legible.
+// Aplica trim() al candidato; si queda vacío usa el fallback.
 // No expone stacks ni serializaciones arbitrarias.
 function normalizeErrorMessage(error) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string" && error.trim()) return error.trim();
-  if (error && typeof error === "object" && typeof error.message === "string" && error.message.trim())
-    return error.message.trim();
-  return "No se pudo completar la operación.";
+  let candidate = null;
+  if (error instanceof Error) candidate = error.message;
+  else if (typeof error === "string") candidate = error;
+  else if (error && typeof error === "object" && typeof error.message === "string") candidate = error.message;
+  const trimmed = candidate?.trim() ?? "";
+  return trimmed || FALLBACK;
 }
 
 // Ejecuta operation() y garantiza que:
