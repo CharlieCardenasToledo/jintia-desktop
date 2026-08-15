@@ -5186,6 +5186,7 @@ test('Python cambia a progreso indeterminado antes de instalar paquetes del perf
 
 import { runSecondaryStage, normalizeProfileInstallResult } from '../src/onboardingInstall.js';
 import { runOperationWithFeedback } from '../src/onboardingOperation.js';
+import { runCompletionHandoff } from '../src/onboardingCompletion.js';
 
 test('no ejecuta la etapa secundaria cuando la primaria falla', async () => {
   let secondaryCalls = 0;
@@ -5371,4 +5372,98 @@ test('runOnboardingOperation integra error y restauración', async () => {
   assert.match(fn, /onSettled[\s\S]{0,200}?onboardingActionInFlight\s*=\s*false/);
   assert.match(fn, /onSettled[\s\S]{0,200}?onboardingBusyMessage\s*=\s*["']["']/);
   assert.match(fn, /onSettled[\s\S]{0,200}?syncOnboardingBusyState/);
+});
+
+// ── Tests del handoff de cierre perceptible ───────────────────────────────────
+
+test('anuncia el cierre antes de esperar y recargar', async () => {
+  const order = [];
+  await runCompletionHandoff({
+    announce: () => order.push('announce'),
+    wait: async () => order.push('wait'),
+    reload: () => order.push('reload'),
+  });
+  assert.deepEqual(order, ['announce', 'wait', 'reload']);
+});
+
+test('no recarga mientras el intervalo perceptible sigue pendiente', async () => {
+  let reloads = 0;
+  let resolve;
+  const deferred = new Promise(r => { resolve = r; });
+
+  const promise = runCompletionHandoff({
+    announce: () => {},
+    wait: () => deferred,
+    reload: () => reloads++,
+  });
+
+  // La promesa aún no se resolvió: reload no debe haberse ejecutado
+  assert.equal(reloads, 0, 'reload no debe ocurrir mientras wait está pendiente');
+
+  resolve();
+  await promise;
+  assert.equal(reloads, 1, 'reload debe ejecutarse exactamente una vez tras resolver el intervalo');
+});
+
+test('conserva exactamente un anuncio y una recarga', async () => {
+  let announces = 0;
+  let reloads = 0;
+  await runCompletionHandoff({
+    announce: () => announces++,
+    wait: async () => {},
+    reload: () => reloads++,
+  });
+  assert.equal(announces, 1);
+  assert.equal(reloads, 1);
+});
+
+test('complete y skip usan el mismo handoff terminal', async () => {
+  // Normalizar saltos de línea para evitar diferencias CRLF/LF
+  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+
+  // Extraer el bloque skip-onboarding
+  const skipMatch = source.match(/action === "skip-onboarding"\)([\s\S]*?)(?=\n  if \(action === "complete"\))/);
+  assert.ok(skipMatch, 'debe encontrarse el bloque skip-onboarding');
+  const skipBlock = skipMatch[1];
+  assert.match(skipBlock, /doCompletionHandoff/, 'skip-onboarding debe usar doCompletionHandoff');
+  assert.doesNotMatch(skipBlock, /window\.location\.reload\(\)/, 'skip-onboarding no debe llamar reload directamente');
+  assert.doesNotMatch(skipBlock, /\.remove\(\)/, 'skip-onboarding no debe eliminar el root manualmente');
+
+  // Extraer el bloque complete
+  const completeMatch = source.match(/action === "complete"\)([\s\S]*?)(?=\n  if \(action === "advance"\))/);
+  assert.ok(completeMatch, 'debe encontrarse el bloque complete');
+  const completeBlock = completeMatch[1];
+  assert.match(completeBlock, /doCompletionHandoff/, 'complete debe usar doCompletionHandoff');
+  assert.doesNotMatch(completeBlock, /window\.location\.reload\(\)/, 'complete no debe llamar reload directamente');
+  assert.doesNotMatch(completeBlock, /\.remove\(\)/, 'complete no debe eliminar el root manualmente');
+
+  // doCompletionHandoff usa runCompletionHandoff
+  assert.match(source, /runCompletionHandoff/);
+  assert.match(source, /from.*onboardingCompletion/);
+});
+
+test('los resultados fallidos no entran al handoff', async () => {
+  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+
+  // skip-onboarding: handoff solo en la rama success
+  const skipMatch = source.match(/action === "skip-onboarding"\)([\s\S]*?)(?=\n  if \(action === "complete"\))/);
+  assert.ok(skipMatch, 'bloque skip-onboarding requerido');
+  const skipBlock = skipMatch[1];
+  const skipSuccessIdx = skipBlock.indexOf('if (result.success)');
+  const skipElseIdx = skipBlock.indexOf('} else {', skipSuccessIdx);
+  const skipSuccessBlock = skipBlock.slice(skipSuccessIdx, skipElseIdx);
+  const skipErrorBlock = skipBlock.slice(skipElseIdx);
+  assert.match(skipSuccessBlock, /doCompletionHandoff/);
+  assert.doesNotMatch(skipErrorBlock, /doCompletionHandoff/, 'la rama de error de skip no debe llamar al handoff');
+
+  // complete: handoff solo en la rama success
+  const completeMatch = source.match(/action === "complete"\)([\s\S]*?)(?=\n  if \(action === "advance"\))/);
+  assert.ok(completeMatch, 'bloque complete requerido');
+  const completeBlock = completeMatch[1];
+  const completeSuccessIdx = completeBlock.indexOf('if (result.success)');
+  const completeElseIdx = completeBlock.indexOf('} else {', completeSuccessIdx);
+  const completeSuccessBlock = completeBlock.slice(completeSuccessIdx, completeElseIdx);
+  const completeErrorBlock = completeBlock.slice(completeElseIdx);
+  assert.match(completeSuccessBlock, /doCompletionHandoff/);
+  assert.doesNotMatch(completeErrorBlock, /doCompletionHandoff/, 'la rama de error de complete no debe llamar al handoff');
 });

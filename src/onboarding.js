@@ -51,6 +51,7 @@ import { ui, cx } from "./uiClasses.js";
 import { withDependencyProgress, applyDependencyProgressPresentation } from "./onboardingProgress.js";
 import { runSecondaryStage, normalizeProfileInstallResult } from "./onboardingInstall.js";
 import { runOperationWithFeedback } from "./onboardingOperation.js";
+import { runCompletionHandoff } from "./onboardingCompletion.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
 
@@ -1913,6 +1914,22 @@ function setBusyState(button, busy, label = "") {
   if (text && !busy) text.textContent = button.dataset.originalLabel || text.textContent;
 }
 
+const COMPLETION_FALLBACK = "Configuración completada. Abriendo el dashboard…";
+
+// Anuncia el mensaje terminal, mantiene el status bar visible durante el intervalo
+// mínimo y recarga exactamente una vez. No elimina el root manualmente.
+async function doCompletionHandoff(message) {
+  const text = (typeof message === "string" && message.trim()) ? message.trim() : COMPLETION_FALLBACK;
+  await runCompletionHandoff({
+    announce: () => {
+      onboardingBusyMessage = text;
+      syncOnboardingBusyState();
+    },
+    wait: () => new Promise(r => setTimeout(r, 1500)),
+    reload: () => window.location.reload(),
+  });
+}
+
 async function performAction(action, current) {
   if (action === "retry") return renderOnboarding();
   if (action === "back") {
@@ -2042,9 +2059,8 @@ async function performAction(action, current) {
     if (!stepResult.success) { toast(stepResult.message, "error"); return; }
     const result = await completeOnboarding();
     if (result.success) {
-      toast("Saltando asistente...", "info", 3000);
-      document.getElementById("onboarding-root")?.remove();
-      window.location.reload();
+      toast("Configuración omitida. Abriendo el dashboard…", "success", 3000);
+      await doCompletionHandoff("Configuración omitida. Abriendo el dashboard…");
     } else {
       toast(result.message, "error", 6000);
     }
@@ -2052,9 +2068,15 @@ async function performAction(action, current) {
   }
   if (action === "complete") {
     const result = await completeOnboarding();
-    toast(result.message, result.success ? "success" : "error", 10000);
-    if (result.success) { runtime.status = result.status; document.getElementById("onboarding-root")?.remove(); window.location.reload(); }
-    else { runtime.status = result.status; renderCurrentStep(); }
+    if (result.success) {
+      runtime.status = result.status;
+      toast(result.message, "success", 3000);
+      await doCompletionHandoff(result.message);
+    } else {
+      runtime.status = result.status;
+      toast(result.message, "error", 10000);
+      renderCurrentStep();
+    }
     return;
   }
   if (action === "advance") return advance(current);
