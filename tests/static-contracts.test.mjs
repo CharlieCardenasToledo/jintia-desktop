@@ -5547,7 +5547,8 @@ test('Python verifica antes del toast y usa el mismo snapshot', async () => {
   assert.ok(verifyIdx < toastIdx, 'verifyPythonInstallResult debe preceder al toast terminal');
 
   // El resultado de checkDependencies se asigna al snapshot compartido
-  assert.match(fn, /const\s+freshDeps\s*=\s*await\s*checkDependencies\(\)/);
+  // (let porque puede reasignarse en el reintento de verificación)
+  assert.match(fn, /(?:let|const)\s+freshDeps\s*=\s*await\s*checkDependencies\(\)/);
   assert.match(fn, /runtime\.dependencies\s*=\s*freshDeps/);
   assert.ok(runtimeIdx > toastIdx || fn.indexOf('runtime.dependencies = freshDeps') > verifyIdx,
     'runtime.dependencies debe usar el mismo snapshot que la conciliación');

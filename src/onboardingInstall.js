@@ -9,7 +9,7 @@ export async function runSecondaryStage(primaryResult, runSecondary) {
 }
 
 const PYTHON_VERIFY_ERROR =
-  "Python terminó de instalarse, pero no pudo verificarse en su ubicación final. Intenta instalarlo de nuevo; si persiste, reinicia la app.";
+  "Python no pudo verificarse en su ubicación final. Si tienes antivirus activo, agrega una excepción para la carpeta de Jintia; si no, reinicia la app e intenta de nuevo.";
 
 // Concilia el resultado preliminar de Python con el snapshot autoritativo de checkDependencies().
 // Solo aplica a Python; otras dependencias conservan su flujo sin modificación.

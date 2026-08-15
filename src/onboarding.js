@@ -1787,7 +1787,16 @@ async function performDependencyInstall(name, reporter = () => {}) {
     result = operationFailureResult(e);
   }
   // La autoridad definitiva es checkDependencies(); solo Python concilia con ese snapshot.
-  const freshDeps = await checkDependencies();
+  // Si el antivirus escanea el binario recién instalado puede bloquearlo unos segundos;
+  // se reintenta una vez antes de declarar fallo.
+  let freshDeps = await checkDependencies();
+  if (name === "Python" && result.success) {
+    const pyDep = freshDeps.find(d => d.name === "Python");
+    if (!pyDep || !pyDep.installed) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      freshDeps = await checkDependencies();
+    }
+  }
   if (name === "Python") {
     result = verifyPythonInstallResult(result, freshDeps);
   }
