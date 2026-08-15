@@ -36,6 +36,40 @@ export function normalizeProgressPayload(payload) {
   return { message, percent };
 }
 
+// Aplica el modo visual y accesible correcto sobre los tres elementos del componente.
+// Modo determinado (percent !== null, incluido 0):
+//   barWrap visible con role="progressbar" y aria-value*; track oculto sin aria-value*.
+// Modo indeterminado (percent === null):
+//   barWrap oculto sin rol ni aria-value*; track visible con role="status".
+export function applyDependencyProgressPresentation({ track, barWrap, barFill, message, percent }) {
+  if (percent !== null) {
+    barFill.style.width = `${percent}%`;
+    barWrap.style.display = "";
+    barWrap.setAttribute("role", "progressbar");
+    barWrap.setAttribute("aria-valuemin", "0");
+    barWrap.setAttribute("aria-valuemax", "100");
+    barWrap.setAttribute("aria-valuenow", String(percent));
+    if (message !== null) barWrap.setAttribute("aria-label", message);
+    track.style.display = "none";
+    track.removeAttribute("aria-valuenow");
+    track.removeAttribute("aria-valuemin");
+    track.removeAttribute("aria-valuemax");
+  } else {
+    barWrap.style.display = "none";
+    barFill.style.width = "0%";
+    barWrap.removeAttribute("role");
+    barWrap.removeAttribute("aria-valuenow");
+    barWrap.removeAttribute("aria-valuemin");
+    barWrap.removeAttribute("aria-valuemax");
+    track.style.display = "";
+    track.setAttribute("role", "status");
+    track.removeAttribute("aria-valuenow");
+    track.removeAttribute("aria-valuemin");
+    track.removeAttribute("aria-valuemax");
+    if (message !== null) track.setAttribute("aria-label", message);
+  }
+}
+
 // Suscribe el listener ANTES de invocar la operación para no perder el primer evento.
 // Si listen() lanza, la operación sigue con feedback indeterminado.
 // Desuscribe en finally tanto en éxito como en excepción.

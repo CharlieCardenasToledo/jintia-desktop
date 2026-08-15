@@ -48,7 +48,7 @@ import geminiLogo from "./assets/gemini-icon.svg";
 import googleGLogo from "./assets/google-g.svg";
 import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
-import { withDependencyProgress } from "./onboardingProgress.js";
+import { withDependencyProgress, applyDependencyProgressPresentation } from "./onboardingProgress.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
 
@@ -679,26 +679,10 @@ function beginDependencyInstallProgress(row, statusEl, detailEl, installButton) 
   return function reportDependencyProgress({ message, percent }) {
     if (message !== null) {
       if (detailEl) detailEl.textContent = message;
-      track.setAttribute("aria-label", message);
       onboardingBusyMessage = message;
       syncOnboardingBusyState();
     }
-    if (percent !== null) {
-      // Modo determinado: barra visible, indicador indeterminado oculto
-      barWrap.style.display = "";
-      barFill.style.width = `${percent}%`;
-      track.style.display = "none";
-      track.setAttribute("role", "status");
-      track.setAttribute("aria-valuenow", String(percent));
-      track.setAttribute("aria-valuemin", "0");
-      track.setAttribute("aria-valuemax", "100");
-    } else {
-      // Modo indeterminado: oculta la barra y restaura el indicador animado
-      barWrap.style.display = "none";
-      barFill.style.width = "0%";
-      track.style.display = "";
-      track.removeAttribute("aria-valuenow");
-    }
+    applyDependencyProgressPresentation({ track, barWrap, barFill, message, percent });
   };
 }
 
