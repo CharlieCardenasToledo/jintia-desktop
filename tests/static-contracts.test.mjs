@@ -5185,6 +5185,7 @@ test('Python cambia a progreso indeterminado antes de instalar paquetes del perf
 // ── Tests de propagación de fallos en instalaciones compuestas ────────────────
 
 import { runSecondaryStage, normalizeProfileInstallResult } from '../src/onboardingInstall.js';
+import { runOperationWithFeedback } from '../src/onboardingOperation.js';
 
 test('no ejecuta la etapa secundaria cuando la primaria falla', async () => {
   let secondaryCalls = 0;
@@ -5259,4 +5260,87 @@ test('performDependencyInstall usa el resultado compuesto antes del toast termin
   // Paquetes del perfil siempre asignados, nunca descartados
   const pythonBlock = fn.slice(fn.indexOf('"Python"'), fn.indexOf('"Vivliostyle CLI"'));
   assert.match(pythonBlock, /result\s*=\s*await\s*runSecondaryStage[\s\S]{0,150}?installDisciplinePackages/);
+});
+
+// ── Tests del ejecutor con feedback para rechazos inesperados ─────────────────
+
+test('devuelve sin cambios el resultado exitoso', async () => {
+  let errorCalls = 0;
+  let settledCalls = 0;
+  const expected = { success: true, message: 'operación completada' };
+
+  const result = await runOperationWithFeedback(
+    async () => expected,
+    { onError: () => errorCalls++, onSettled: () => settledCalls++ }
+  );
+
+  assert.deepEqual(result, expected);
+  assert.equal(errorCalls, 0, 'onError no debe invocarse en el camino exitoso');
+  assert.equal(settledCalls, 1, 'onSettled debe invocarse exactamente una vez');
+});
+
+test('convierte Error rechazado en feedback terminal', async () => {
+  let errorMsg = null;
+  let settledCalls = 0;
+
+  const result = await runOperationWithFeedback(
+    async () => { throw new Error('sin conexión'); },
+    { onError: (m) => { errorMsg = m; }, onSettled: () => settledCalls++ }
+  );
+
+  assert.equal(result.success, false);
+  assert.ok(errorMsg?.includes('sin conexión'), `onError debe recibir el mensaje del Error; recibió: ${errorMsg}`);
+  assert.equal(settledCalls, 1, 'onSettled debe invocarse exactamente una vez');
+});
+
+test('normaliza strings, objetos y rechazos vacíos', async () => {
+  async function collectError(throwValue) {
+    let errorMsg = null;
+    await runOperationWithFeedback(
+      async () => { throw throwValue; },
+      { onError: (m) => { errorMsg = m; }, onSettled: () => {} }
+    );
+    return errorMsg;
+  }
+
+  // String rechazado → conservado
+  assert.equal(await collectError('timeout de red'), 'timeout de red');
+  // Objeto con message → conservado
+  assert.equal(await collectError({ message: 'acceso denegado' }), 'acceso denegado');
+  // null → fallback
+  assert.equal(await collectError(null), 'No se pudo completar la operación.');
+  // undefined → fallback
+  assert.equal(await collectError(undefined), 'No se pudo completar la operación.');
+  // Ningún mensaje debe contener stack
+  const msgWithError = await collectError(new Error('fallo'));
+  assert.doesNotMatch(msgWithError, /Error:|at\s+\w/, 'el mensaje no debe exponer el stack trace');
+});
+
+test('no confunde ActionResult fallido con una excepción', async () => {
+  let errorCalls = 0;
+  const actionResult = { success: false, message: 'credenciales inválidas' };
+
+  const result = await runOperationWithFeedback(
+    async () => actionResult,
+    { onError: () => errorCalls++, onSettled: () => {} }
+  );
+
+  assert.deepEqual(result, actionResult, 'el ActionResult debe devolverse intacto');
+  assert.equal(errorCalls, 0, 'onError no debe invocarse para un ActionResult fallido normal');
+});
+
+test('runOnboardingOperation integra error y restauración', async () => {
+  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const fnStart = source.indexOf('async function runOnboardingOperation');
+  const fnEnd = source.indexOf('\n}', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+
+  // Usa el ejecutor productivo
+  assert.match(fn, /runOperationWithFeedback/);
+  // onError dirige el mensaje a toast con "error"
+  assert.match(fn, /onError[\s\S]{0,80}?toast[\s\S]{0,60}?["']error["']/);
+  // onSettled restablece las tres variables/estados
+  assert.match(fn, /onSettled[\s\S]{0,200}?onboardingActionInFlight\s*=\s*false/);
+  assert.match(fn, /onSettled[\s\S]{0,200}?onboardingBusyMessage\s*=\s*["']["']/);
+  assert.match(fn, /onSettled[\s\S]{0,200}?syncOnboardingBusyState/);
 });

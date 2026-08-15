@@ -50,6 +50,7 @@ import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
 import { withDependencyProgress, applyDependencyProgressPresentation } from "./onboardingProgress.js";
 import { runSecondaryStage, normalizeProfileInstallResult } from "./onboardingInstall.js";
+import { runOperationWithFeedback } from "./onboardingOperation.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
 
@@ -468,13 +469,14 @@ async function runOnboardingOperation(message, operation) {
   onboardingActionInFlight = true;
   onboardingBusyMessage = message;
   syncOnboardingBusyState();
-  try {
-    return await operation();
-  } finally {
-    onboardingActionInFlight = false;
-    onboardingBusyMessage = "";
-    syncOnboardingBusyState();
-  }
+  return await runOperationWithFeedback(operation, {
+    onError: (msg) => toast(msg, "error", 9000),
+    onSettled: () => {
+      onboardingActionInFlight = false;
+      onboardingBusyMessage = "";
+      syncOnboardingBusyState();
+    },
+  });
 }
 
 function actionBusyMessage(action, current) {
