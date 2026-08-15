@@ -101,6 +101,19 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
     let vivliostyle_version = crate::runtimes::vivliostyle_version();
     let vivliostyle_ready = vivliostyle_version.is_some();
 
+    let managed_contract = crate::release::managed_mcp_contract().ok();
+
+    let skill_version = managed_contract.as_ref().and_then(|contract| {
+        let skill_path = crate::runtimes::resolve_skill()?;
+        let _: serde_json::Value = crate::engine::run_jintia_json(
+            std::path::Path::new(&skill_path),
+            &["capabilities", "profiles", "--json"],
+        )
+        .ok()?;
+        Some(contract.jintia_version.clone())
+    });
+    let skill_ready = skill_version.is_some();
+
     let git = command_exists("git");
 
     let mut dependencies = vec![
@@ -141,11 +154,11 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         },
         DependencyStatus {
             name: "Jintia Skill".to_string(),
-            installed: crate::runtimes::resolve_skill().is_some(),
-            version: None,
+            installed: skill_ready,
+            version: skill_version,
             required: true,
             installable: true,
-            note: if crate::runtimes::portable_skill_installed() {
+            note: if skill_ready {
                 "Usando Jintia portable de esta app.".to_string()
             } else {
                 "Motor editorial para renderizar guías. Descárgalo desde Configuración > Entorno.".to_string()
@@ -170,12 +183,11 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
     // El compilador LaTeX es opcional. La skill puede renderizar a través de
     // Vivliostyle en lugar de LaTeX. Detección local únicamente para capacidades
     // avanzadas (plantillas LaTeX personalizadas, si existen en el futuro).
-    let mcp_contract = crate::release::managed_mcp_contract().ok();
-    let mcp_installed = mcp_contract
+    let mcp_installed = managed_contract
         .as_ref()
         .is_some_and(crate::runtimes::portable_notebooklm_mcp_installed_for);
     let mcp_version = if mcp_installed {
-        mcp_contract.as_ref().map(|contract| contract.version.clone())
+        managed_contract.as_ref().map(|contract| contract.version.clone())
     } else {
         None
     };

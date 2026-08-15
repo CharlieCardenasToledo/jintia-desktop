@@ -4698,8 +4698,15 @@ test('Las dependencias administradas sólo están listas si su probe operativo r
   assert.doesNotMatch(depsFn, /resolve_vivliostyle\(\)\.is_some\(\)/, 'check_dependencies: no debe usar resolve_vivliostyle como autoridad de installed');
   assert.doesNotMatch(depsFn, /portable_vivliostyle_bin\(\)\.is_file\(\)/, 'check_dependencies: no debe usar is_file como autoridad del note Vivliostyle');
 
-  // Jintia Skill conserva resolve_skill (sin probe de versión en PLAN 99)
-  assert.match(depsFn, /resolve_skill\(\)\.is_some\(\)/, 'check_dependencies: Jintia Skill debe seguir usando resolve_skill');
+  // Jintia Skill: probe operativo via engine (PLAN 101)
+  const runJintiaJsonCalls = (depsFn.match(/run_jintia_json/g) || []).length;
+  assert.strictEqual(runJintiaJsonCalls, 1, 'check_dependencies: exactamente una llamada a run_jintia_json para Jintia Skill');
+  assert.match(depsFn, /skill_version/, 'check_dependencies: debe existir skill_version');
+  assert.match(depsFn, /skill_ready\s*=\s*skill_version\.is_some\(\)/, 'check_dependencies: skill_ready debe derivar de skill_version.is_some()');
+  assert.match(depsFn, /installed:\s*skill_ready/, 'check_dependencies: Jintia Skill installed debe ser skill_ready');
+  assert.match(depsFn, /version:\s*skill_version/, 'check_dependencies: Jintia Skill version debe reutilizar skill_version');
+  assert.doesNotMatch(depsFn, /resolve_skill\(\)\.is_some\(\)/, 'check_dependencies: no debe usar resolve_skill().is_some() como autoridad de installed');
+  assert.doesNotMatch(depsFn, /note:\s*if crate::runtimes::portable_skill_installed/, 'check_dependencies: note no debe depender de portable_skill_installed()');
 
   // NotebookLM conserva portable_notebooklm_mcp_installed_for
   assert.match(depsFn, /portable_notebooklm_mcp_installed_for/, 'check_dependencies: NotebookLM debe seguir usando portable_notebooklm_mcp_installed_for');
@@ -4819,4 +4826,107 @@ test('Las descargas eliminan el temporal si falla lectura o escritura del stream
   assert.ok(pRDrop   < pRRemove, 'Python read failure: drop(file) debe preceder a remove_file');
   assert.ok(pRRemove < pREmit,   'Python read failure: remove_file debe preceder a emit "error"');
   assert.ok(pREmit   < pRReturn, 'Python read failure: emit "error" debe preceder a return Err');
+});
+
+test('Jintia Skill sólo está lista si contrato instalado y smoke del engine responden', async () => {
+  const [course, engine, runtimes, release, onboarding, settings] = await Promise.all([
+    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/engine.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/release.rs', root), 'utf8'),
+    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readFile(new URL('src/pages/settings.js', root), 'utf8'),
+  ]);
+
+  // ── check_dependencies: snapshot único de contrato ────────────────────────────
+  const depsStart = course.indexOf('pub fn check_dependencies()');
+  const depsEnd = course.indexOf('\npub fn check_dependencies_cached', depsStart);
+  assert.ok(depsStart >= 0, 'falta pub fn check_dependencies()');
+  const depsFn = course.slice(depsStart, depsEnd > depsStart ? depsEnd : depsStart + 5000);
+
+  // Exactamente una llamada a managed_mcp_contract()
+  const contractCalls = (depsFn.match(/managed_mcp_contract\(\)/g) || []).length;
+  assert.strictEqual(contractCalls, 1, 'check_dependencies: debe existir exactamente una llamada a managed_mcp_contract()');
+
+  // El snapshot se usa para Jintia y para NotebookLM
+  assert.match(depsFn, /managed_contract/, 'check_dependencies: debe existir snapshot managed_contract');
+  assert.match(depsFn, /managed_contract\.as_ref\(\)[\s\S]{0,200}resolve_skill/, 'check_dependencies: skill_version debe partir de managed_contract y resolve_skill');
+  assert.match(depsFn, /mcp_installed\s*=\s*managed_contract[\s\S]{0,60}portable_notebooklm_mcp_installed_for/, 'check_dependencies: NotebookLM mcp_installed debe usar el mismo managed_contract');
+
+  // ── Jintia Skill: cálculo de skill_version via engine smoke ──────────────────
+  assert.match(depsFn, /skill_version/, 'check_dependencies: debe existir skill_version');
+  assert.match(depsFn, /crate::runtimes::resolve_skill\(\)/, 'check_dependencies: skill_version debe usar resolve_skill()');
+  assert.match(depsFn, /crate::engine::run_jintia_json/, 'check_dependencies: skill_version debe usar run_jintia_json');
+  assert.match(depsFn, /"capabilities"/, 'check_dependencies: smoke debe pasar "capabilities"');
+  assert.match(depsFn, /"profiles"/, 'check_dependencies: smoke debe pasar "profiles"');
+  assert.match(depsFn, /"--json"/, 'check_dependencies: smoke debe pasar "--json"');
+  assert.match(depsFn, /serde_json::Value/, 'check_dependencies: resultado del smoke debe parsearse como serde_json::Value');
+  assert.match(depsFn, /jintia_version\.clone\(\)/, 'check_dependencies: versión debe proceder de contract.jintia_version');
+
+  // run_jintia_json aparece exactamente una vez (un solo smoke)
+  const smokeCount = (depsFn.match(/run_jintia_json/g) || []).length;
+  assert.strictEqual(smokeCount, 1, 'check_dependencies: exactamente un smoke run_jintia_json para Jintia Skill');
+
+  // skill_ready derivado de skill_version
+  assert.match(depsFn, /skill_ready\s*=\s*skill_version\.is_some\(\)/, 'check_dependencies: skill_ready debe ser skill_version.is_some()');
+
+  // ── Bloque DependencyStatus de Jintia Skill ───────────────────────────────────
+  const jintiaBlockStart = depsFn.indexOf('"Jintia Skill"');
+  const vivBlockStart = depsFn.indexOf('"Vivliostyle CLI"');
+  assert.ok(jintiaBlockStart >= 0, 'check_dependencies: falta bloque "Jintia Skill"');
+  assert.ok(vivBlockStart > jintiaBlockStart, 'check_dependencies: "Vivliostyle CLI" debe aparecer después de "Jintia Skill"');
+  const jintiaBlock = depsFn.slice(jintiaBlockStart, vivBlockStart);
+
+  assert.match(jintiaBlock, /installed:\s*skill_ready/, 'Jintia Skill: installed debe ser skill_ready');
+  assert.match(jintiaBlock, /version:\s*skill_version/, 'Jintia Skill: version debe ser skill_version');
+  assert.match(jintiaBlock, /note:\s*if skill_ready/, 'Jintia Skill: note debe condicionarse a skill_ready');
+  assert.doesNotMatch(jintiaBlock, /resolve_skill\(\)\.is_some\(\)/, 'Jintia Skill: no debe usar resolve_skill().is_some() como autoridad de installed');
+  assert.doesNotMatch(jintiaBlock, /portable_skill_installed\(\)/, 'Jintia Skill: no debe usar portable_skill_installed() como autoridad del note');
+  assert.doesNotMatch(jintiaBlock, /version:\s*None/, 'Jintia Skill: no debe tener version: None');
+
+  // ── No ejecución directa desde course.rs ──────────────────────────────────────
+  assert.doesNotMatch(depsFn, /Command::new/, 'check_dependencies: no debe usar Command::new directamente');
+  assert.doesNotMatch(depsFn, /managed_node_command/, 'check_dependencies: no debe llamar managed_node_command directamente');
+  assert.doesNotMatch(depsFn, /portable_node_exe/, 'check_dependencies: no debe referenciar portable_node_exe');
+
+  // ── Engine Adapter: run_jintia_json delega en run_jintia ─────────────────────
+  const jsonFnStart = engine.indexOf('pub fn run_jintia_json');
+  assert.ok(jsonFnStart >= 0, 'engine: falta pub fn run_jintia_json');
+  const jsonFnEnd = engine.indexOf('\npub fn ', jsonFnStart + 1);
+  const jsonFn = engine.slice(jsonFnStart, jsonFnEnd > jsonFnStart ? jsonFnEnd : jsonFnStart + 400);
+  assert.match(jsonFn, /run_jintia\(/, 'engine: run_jintia_json debe delegar en run_jintia');
+  assert.match(jsonFn, /result\.success/, 'engine: run_jintia_json debe verificar result.success');
+  assert.match(jsonFn, /serde_json::from_str/, 'engine: run_jintia_json debe parsear JSON con serde_json::from_str');
+
+  // run_jintia usa la infraestructura administrada (no crea ruta propia)
+  const runFnStart = engine.indexOf('pub fn run_jintia(');
+  assert.ok(runFnStart >= 0, 'engine: falta pub fn run_jintia');
+  const runFnEnd = engine.indexOf('\npub fn ', runFnStart + 1);
+  const runFn = engine.slice(runFnStart, runFnEnd > runFnStart ? runFnEnd : runFnStart + 600);
+  assert.match(runFn, /runtimes::resolve_node/, 'engine: run_jintia debe usar runtimes::resolve_node');
+  assert.match(runFn, /runtimes::managed_node_command/, 'engine: run_jintia debe usar runtimes::managed_node_command');
+  assert.match(runFn, /managed_runtime_path/, 'engine: run_jintia debe usar managed_runtime_path');
+  assert.match(runFn, /\.output\(\)/, 'engine: run_jintia debe usar .output()');
+
+  // ── release.rs: managed_mcp_contract lee jintia_version del package.json ─────
+  const contractFnStart = release.indexOf('pub fn managed_mcp_contract(');
+  assert.ok(contractFnStart >= 0, 'release: falta pub fn managed_mcp_contract()');
+  assert.match(release, /portable_skill_npm_package_dir\(\)/, 'release: debe usar portable_skill_npm_package_dir()');
+  assert.match(release, /managed_mcp_contract_from/, 'release: debe usar managed_mcp_contract_from');
+
+  // parse_managed_mcp_contract obtiene la versión del package y la expone como jintia_version
+  const parseFnStart = release.indexOf('fn parse_managed_mcp_contract');
+  assert.ok(parseFnStart >= 0, 'release: falta fn parse_managed_mcp_contract');
+  const parseFnEnd = release.indexOf('\npub fn ', parseFnStart + 1);
+  const parseFn = release.slice(parseFnStart, parseFnEnd > parseFnStart ? parseFnEnd : parseFnStart + 600);
+  assert.match(parseFn, /"version"/, 'release: parse_managed_mcp_contract debe leer "version" del package');
+  assert.match(parseFn, /jintia_version/, 'release: parse_managed_mcp_contract debe exponer jintia_version');
+
+  // No versión hardcodeada en course.rs para Jintia
+  assert.doesNotMatch(depsFn, /11\.\d+\.\d+/, 'check_dependencies: no debe hardcodear versión de Jintia Skill');
+
+  // ── Downstream: una Skill no operativa vuelve al flujo de reparación ──────────
+  assert.match(onboarding, /dep\.required\s*&&\s*!dep\.installed/, 'onboarding: filtra por required && !installed');
+  assert.match(settings, /!d\.installed/, 'settings: bulk selecciona por !installed');
+  assert.match(settings, /BULK_INSTALL_TARGETS\.has\(d\.name\)/, 'settings: bulk filtra por BULK_INSTALL_TARGETS');
 });
