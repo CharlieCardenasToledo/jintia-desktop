@@ -12,6 +12,16 @@ function normalizeErrorMessage(error) {
   return trimmed || FALLBACK;
 }
 
+// Espera preparation y ejecuta cleanup() exactamente una vez (éxito o rechazo).
+// Propaga el rechazo sin capturarlo ni transformarlo.
+export async function awaitPreparationWithCleanup(preparation, cleanup) {
+  try {
+    return await preparation;
+  } finally {
+    cleanup();
+  }
+}
+
 // Ejecuta operation() y garantiza que:
 //   - onSettled() se invoca exactamente una vez (éxito o rechazo).
 //   - En caso de rechazo, onError(message) se invoca antes de onSettled().

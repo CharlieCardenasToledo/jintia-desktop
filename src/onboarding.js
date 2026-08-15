@@ -50,7 +50,7 @@ import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
 import { withDependencyProgress, applyDependencyProgressPresentation } from "./onboardingProgress.js";
 import { runSecondaryStage, normalizeProfileInstallResult, verifyPythonInstallResult } from "./onboardingInstall.js";
-import { runOperationWithFeedback } from "./onboardingOperation.js";
+import { runOperationWithFeedback, awaitPreparationWithCleanup } from "./onboardingOperation.js";
 import { runCompletionHandoff } from "./onboardingCompletion.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
@@ -586,17 +586,10 @@ async function showPreparedStep(fromStep, destination, { force = false, depFocus
     renderCurrentStep();
   }
 
-  try {
-    await preparation;
-  } catch (error) {
+  await awaitPreparationWithCleanup(preparation, () => {
     runtime.loadingStep = null;
     renderCurrentStep();
-    toast(`No se pudo preparar el paso: ${error}`, "error", 9000);
-    return;
-  } finally {
-    runtime.loadingStep = null;
-  }
-  renderCurrentStep();
+  });
 }
 
 // Git es opcional y no se muestra en el onboarding (solo en Configuración > Entorno).

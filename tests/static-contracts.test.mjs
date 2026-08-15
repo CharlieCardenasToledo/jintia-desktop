@@ -5185,7 +5185,7 @@ test('Python cambia a progreso indeterminado antes de instalar paquetes del perf
 // ── Tests de propagación de fallos en instalaciones compuestas ────────────────
 
 import { runSecondaryStage, normalizeProfileInstallResult, verifyPythonInstallResult } from '../src/onboardingInstall.js';
-import { runOperationWithFeedback } from '../src/onboardingOperation.js';
+import { runOperationWithFeedback, awaitPreparationWithCleanup } from '../src/onboardingOperation.js';
 import { runCompletionHandoff } from '../src/onboardingCompletion.js';
 
 test('no ejecuta la etapa secundaria cuando la primaria falla', async () => {
@@ -5551,4 +5551,83 @@ test('Python verifica antes del toast y usa el mismo snapshot', async () => {
   assert.match(fn, /runtime\.dependencies\s*=\s*freshDeps/);
   assert.ok(runtimeIdx > toastIdx || fn.indexOf('runtime.dependencies = freshDeps') > verifyIdx,
     'runtime.dependencies debe usar el mismo snapshot que la conciliación');
+});
+
+// ── Tests de preparación de pasos del onboarding ─────────────────────────────
+
+test('awaitPreparationWithCleanup conserva el éxito y limpia exactamente una vez', async () => {
+  let cleanupCalls = 0;
+  const value = { ok: true };
+  const result = await awaitPreparationWithCleanup(Promise.resolve(value), () => { cleanupCalls++; });
+  assert.equal(result, value, 'debe retornar el valor resuelto');
+  assert.equal(cleanupCalls, 1, 'cleanup debe llamarse exactamente una vez');
+});
+
+test('awaitPreparationWithCleanup propaga el mismo rechazo y limpia exactamente una vez', async () => {
+  let cleanupCalls = 0;
+  const sentinel = new Error('fallo de preparación');
+  let caught = null;
+  try {
+    await awaitPreparationWithCleanup(Promise.reject(sentinel), () => { cleanupCalls++; });
+  } catch (e) {
+    caught = e;
+  }
+  assert.equal(caught, sentinel, 'debe propagar exactamente el mismo objeto rechazado');
+  assert.equal(cleanupCalls, 1, 'cleanup debe llamarse exactamente una vez aunque haya rechazo');
+});
+
+test('preparación fallida usa el feedback central una sola vez', async () => {
+  const scenarios = [
+    new Error('tiempo de espera agotado'),
+    { message: 'sin conexión' },
+    42,
+  ];
+
+  for (const rejection of scenarios) {
+    let onErrorCalls = 0;
+    let onSettledCalls = 0;
+    let cleanupCalls = 0;
+    let errorMessage = null;
+
+    const result = await runOperationWithFeedback(
+      () => awaitPreparationWithCleanup(Promise.reject(rejection), () => { cleanupCalls++; }),
+      {
+        onError: (msg) => { onErrorCalls++; errorMessage = msg; },
+        onSettled: () => { onSettledCalls++; },
+      }
+    );
+
+    assert.equal(result.success, false);
+    assert.equal(onErrorCalls, 1, `debe producir exactamente un onError para: ${String(rejection)}`);
+    assert.equal(onSettledCalls, 1, 'debe producir exactamente un onSettled');
+    assert.equal(cleanupCalls, 1, 'cleanup debe ejecutarse exactamente una vez');
+    assert.ok(typeof errorMessage === 'string' && errorMessage.length > 0, 'mensaje no debe estar vacío');
+    assert.doesNotMatch(errorMessage, /^Error:/, 'no debe exponer el prefijo Error:');
+    assert.doesNotMatch(errorMessage, /\[object Object\]/, 'no debe serializar objetos arbitrariamente');
+    assert.doesNotMatch(errorMessage, /at\s+\w+\s*\(/, 'no debe exponer stacks');
+  }
+});
+
+test('showPreparedStep delega la limpieza y no emite feedback local', async () => {
+  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const fnStart = source.indexOf('async function showPreparedStep(');
+  const fnEnd = source.indexOf('\n// Git es opcional', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+
+  // Usa el helper para la limpieza
+  assert.match(fn, /awaitPreparationWithCleanup/, 'debe delegar en awaitPreparationWithCleanup');
+
+  // Limpia el estado de carga en el callback del helper
+  assert.match(fn, /runtime\.loadingStep\s*=\s*null/, 'debe limpiar loadingStep');
+  assert.match(fn, /renderCurrentStep\(\)/, 'debe llamar renderCurrentStep');
+
+  // No consume el rechazo localmente
+  assert.doesNotMatch(fn, /catch\s*\(/, 'no debe tener un catch local');
+  assert.doesNotMatch(fn, /No se pudo preparar el paso/, 'no debe tener el toast local eliminado');
+  assert.doesNotMatch(fn, /\$\{error\}/, 'no debe interpolar el error directamente');
+  assert.doesNotMatch(fn, /toast\(.*error.*\)/, 'no debe emitir toast dentro de showPreparedStep');
+
+  // Conserva animación y estado de carga
+  assert.match(fn, /animateStepTransition/, 'debe conservar la animación de transición');
+  assert.match(fn, /runtime\.loadingStep\s*=\s*destination/, 'debe mostrar el estado de carga para preparaciones lentas');
 });
