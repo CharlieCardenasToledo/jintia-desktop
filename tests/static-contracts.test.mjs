@@ -5181,3 +5181,82 @@ test('Python cambia a progreso indeterminado antes de instalar paquetes del perf
     'Python debe reportar fase indeterminada antes de instalar paquetes del perfil'
   );
 });
+
+// ── Tests de propagación de fallos en instalaciones compuestas ────────────────
+
+import { runSecondaryStage, normalizeProfileInstallResult } from '../src/onboardingInstall.js';
+
+test('no ejecuta la etapa secundaria cuando la primaria falla', async () => {
+  let secondaryCalls = 0;
+  const primary = { success: false, message: 'descarga falló' };
+  const result = await runSecondaryStage(primary, async () => { secondaryCalls++; return { success: true, message: 'ok' }; });
+  assert.equal(secondaryCalls, 0, 'la secundaria no debe ejecutarse si la primaria falló');
+  assert.deepEqual(result, primary, 'el resultado debe ser exactamente el fallo primario');
+});
+
+test('propaga el ActionResult fallido de Vivliostyle', async () => {
+  const primary = { success: true, message: 'Node instalado.' };
+  const vivliostyleFailure = { success: false, message: 'Vivliostyle CLI: error al instalar' };
+  const result = await runSecondaryStage(primary, async () => vivliostyleFailure);
+  assert.equal(result.success, false);
+  assert.equal(result.message, vivliostyleFailure.message, 'el mensaje del fallo secundario debe dominar');
+});
+
+test('conserva éxito únicamente cuando ambas etapas terminan correctamente', async () => {
+  let secondaryCalls = 0;
+  const primary = { success: true, message: 'Node instalado.' };
+  const result = await runSecondaryStage(primary, async () => { secondaryCalls++; return { success: true, message: 'Vivliostyle ok.' }; });
+  assert.equal(secondaryCalls, 1, 'la secundaria debe ejecutarse exactamente una vez');
+  assert.equal(result.success, true);
+  assert.deepEqual(result, primary, 'el resultado primario debe conservarse cuando ambas tienen éxito');
+});
+
+test('normaliza un error de paquetes del perfil', () => {
+  const profileResultPython = {
+    discipline: 'CS', profileId: 'cs-1',
+    pythonPackages: ['pkg'], nodePackages: [],
+    failedStage: 'python', error: 'pip salió con código 1',
+  };
+  const result = normalizeProfileInstallResult(profileResultPython);
+  assert.equal(result.success, false);
+  assert.ok(result.message.includes('python'), 'el mensaje debe identificar la etapa fallida');
+  assert.ok(result.message.includes('pip salió con código 1'), 'el mensaje debe incluir el error original');
+
+  const profileResultNode = {
+    discipline: 'CS', profileId: 'cs-1',
+    pythonPackages: [], nodePackages: ['pkg'],
+    failedStage: 'node', error: 'npm error',
+  };
+  const result2 = normalizeProfileInstallResult(profileResultNode);
+  assert.equal(result2.success, false);
+  assert.ok(result2.message.includes('node'));
+
+  // Resultado exitoso (sin error)
+  const successProfile = { discipline: 'CS', profileId: 'cs-1', pythonPackages: [], nodePackages: [] };
+  const ok = normalizeProfileInstallResult(successProfile);
+  assert.equal(ok.success, true);
+});
+
+test('performDependencyInstall usa el resultado compuesto antes del toast terminal', async () => {
+  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const fnStart = source.indexOf('async function performDependencyInstall');
+  const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+
+  // runSecondaryStage aparece antes del toast terminal
+  const secondaryIdx = fn.indexOf('runSecondaryStage');
+  const toastTerminalIdx = fn.indexOf('toast(result.message');
+  assert.ok(secondaryIdx >= 0, 'performDependencyInstall debe llamar a runSecondaryStage');
+  assert.ok(secondaryIdx < toastTerminalIdx, 'runSecondaryStage debe preceder al toast terminal');
+
+  // El resultado de la secundaria se asigna a result antes del toast
+  assert.match(fn, /result\s*=\s*await\s*runSecondaryStage/);
+
+  // Vivliostyle siempre asignado, nunca descartado
+  const nodeBlock = fn.slice(fn.indexOf('"Node.js"'), fn.indexOf('"Python"'));
+  assert.match(nodeBlock, /result\s*=\s*await\s*runSecondaryStage[\s\S]{0,100}?installVivliostyleCli/);
+
+  // Paquetes del perfil siempre asignados, nunca descartados
+  const pythonBlock = fn.slice(fn.indexOf('"Python"'), fn.indexOf('"Vivliostyle CLI"'));
+  assert.match(pythonBlock, /result\s*=\s*await\s*runSecondaryStage[\s\S]{0,150}?installDisciplinePackages/);
+});

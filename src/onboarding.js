@@ -49,6 +49,7 @@ import googleGLogo from "./assets/google-g.svg";
 import notebookLmWordmark from "./assets/notebooklm-wordmark.svg";
 import { ui, cx } from "./uiClasses.js";
 import { withDependencyProgress, applyDependencyProgressPresentation } from "./onboardingProgress.js";
+import { runSecondaryStage, normalizeProfileInstallResult } from "./onboardingInstall.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
 
@@ -1766,15 +1767,17 @@ async function performDependencyInstall(name, reporter = () => {}) {
         onboardingBusyMessage = "Instalando Vivliostyle CLI…";
         syncOnboardingBusyState();
         toast("Instalando Vivliostyle CLI…", "loading", 120000);
-        await installVivliostyleCli();
       }
+      result = await runSecondaryStage(result, () => installVivliostyleCli());
     } else if (name === "Python") {
       result = await withDependencyProgress(name, listen, () => downloadPythonRuntime(), reporter);
       if (result.success) {
         // Paquetes del perfil no emiten eventos: cambiar a fase indeterminada
         reporter({ message: "Instalando paquetes del perfil…", percent: null });
-        await installDisciplinePackages();
       }
+      result = await runSecondaryStage(result, async () =>
+        normalizeProfileInstallResult(await installDisciplinePackages())
+      );
     } else if (name === "Vivliostyle CLI") {
       result = await installVivliostyleCli();
     } else if (name === "Jintia Skill") {
