@@ -11,6 +11,15 @@ async function source(relativePath) {
   return readFile(path.join(root, relativePath), "utf8");
 }
 
+async function readRuntimesRs() {
+  const parts = await Promise.all(
+    ["mod.rs", "skill.rs", "node.rs", "npm.rs", "python.rs", "profile_binary.rs"].map(
+      f => readFile(path.join(root, "src-tauri", "src", "runtimes", f), "utf8").catch(() => "")
+    )
+  );
+  return parts.join("\n");
+}
+
 function block(text, startMarker, endMarker) {
   const start = text.indexOf(startMarker);
   assert.ok(start >= 0, `No se encontró ${startMarker}`);
@@ -41,7 +50,7 @@ test("skill:verify protege la autoridad npm administrada de Jintia", async () =>
   assert.match(paths, /jintia/);
   assert.match(paths, /skill.*bin.*jintia\.js/s);
 
-  const runtimes = await source("src-tauri/src/runtimes.rs");
+  const runtimes = await readRuntimesRs();
   const resolveSkill = block(runtimes, "pub fn resolve_skill()", "pub fn global_skill_available");
   const installSkill = block(runtimes, "pub fn download_portable_skill", "pub fn visual_install_profiles");
   assert.match(resolveSkill, /portable_skill_bin/);
