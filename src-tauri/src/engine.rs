@@ -38,6 +38,10 @@ fn managed_runtime_path(python: Option<&Path>) -> Result<OsString, String> {
             dirs.push(parent.to_path_buf());
         }
     }
+    // Los directorios administrados tienen prioridad; el PATH del sistema va al final
+    // para que herramientas instaladas globalmente (ej. vivliostyle via npm --global)
+    // sean accesibles desde dentro del runtime Node portátil.
+    dirs.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
     std::env::join_paths(dirs)
         .map_err(|error| format!("No se pudo construir el PATH administrado: {error}"))
 }
@@ -55,10 +59,16 @@ pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, Stri
     let python = crate::runtimes::resolve_python().map(PathBuf::from);
     let managed_path = managed_runtime_path(python.as_deref())?;
 
-    match crate::runtimes::managed_node_command(&node_bin)
-        .args(&cmd_args)
-        .env("PATH", managed_path)
-        .output()
+    let mut cmd = crate::runtimes::managed_node_command(&node_bin);
+    cmd.args(&cmd_args).env("PATH", managed_path);
+
+    // La skill no usa `where.exe` para encontrar herramientas administradas —
+    // pasamos la ruta absoluta directamente para evitar dependencias de PATH.
+    if let Some(vivliostyle_bin) = crate::runtimes::resolve_vivliostyle() {
+        cmd.env("JINTIA_VIVLIOSTYLE_BIN", vivliostyle_bin);
+    }
+
+    match cmd.output()
     {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -176,44 +186,26 @@ mod tests {
     }
 
     #[test]
-    fn managed_runtime_path_contains_only_managed_directories() {
+    fn managed_runtime_path_starts_with_node_and_includes_python() {
         let python = PathBuf::from("managed").join("python").join("python.exe");
         let joined = managed_runtime_path(Some(&python)).unwrap();
         let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
 
         // El primer directorio siempre es el bin de Node administrado.
         assert_eq!(dirs.first().unwrap(), &crate::paths::portable_node_bin_dir());
-        // El último directorio siempre es el directorio padre del ejecutable Python.
-        assert_eq!(dirs.last().unwrap(), python.parent().unwrap());
-        // Todos los directorios deben estar dentro del runtime administrado o ser el
-        // directorio padre del Python de prueba (que es una ruta relativa sintética).
-        let runtimes = crate::paths::portable_runtimes_dir();
-        for dir in &dirs {
-            let is_under_runtimes = dir.starts_with(&runtimes);
-            let is_python_parent = dir == python.parent().unwrap();
-            assert!(
-                is_under_runtimes || is_python_parent,
-                "Directorio inesperado en el PATH administrado: {}",
-                dir.display()
-            );
-        }
+        // El directorio padre de Python debe estar presente en algún lugar.
+        assert!(
+            dirs.contains(&python.parent().unwrap().to_path_buf()),
+            "El directorio padre de Python no está en el PATH administrado"
+        );
     }
 
     #[test]
-    fn managed_runtime_path_without_python_uses_only_node() {
+    fn managed_runtime_path_without_python_starts_with_node() {
         let joined = managed_runtime_path(None).unwrap();
         let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
 
         // El primer directorio siempre es el bin de Node administrado.
         assert_eq!(dirs.first().unwrap(), &crate::paths::portable_node_bin_dir());
-        // Todos los directorios deben estar dentro del runtime administrado.
-        let runtimes = crate::paths::portable_runtimes_dir();
-        for dir in &dirs {
-            assert!(
-                dir.starts_with(&runtimes),
-                "Directorio inesperado en el PATH administrado: {}",
-                dir.display()
-            );
-        }
     }
 }

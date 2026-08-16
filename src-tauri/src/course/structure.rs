@@ -75,11 +75,26 @@ pub fn run_self_test() -> serde_json::Value {
             return serde_json::json!({ "ok": false, "error": "Jintia Skill no está disponible." })
         }
     };
-    crate::engine::run_jintia_json::<serde_json::Value>(
-        Path::new(&skill_path),
-        &["self-test", "--json"],
-    )
-    .unwrap_or_else(|error| serde_json::json!({ "ok": false, "error": error }))
+    // `jintia self-test --json` escribe el JSON en stdout y sale con código 1
+    // cuando los checks fallan (exit code != 0 es parte del diseño CLI, no un error).
+    // Usamos run_jintia para leer stdout independientemente del exit code.
+    match crate::engine::run_jintia(Path::new(&skill_path), &["self-test", "--json"]) {
+        Ok(result) => match serde_json::from_str::<serde_json::Value>(&result.stdout) {
+            Ok(parsed) => {
+                if parsed.get("ok").is_some() {
+                    parsed
+                } else if let Some(obj) = parsed.as_object() {
+                    // formato plano {"pdf":"passed","render":"passed",...} → normalizar
+                    let ok = obj.values().all(|v| v.as_str() == Some("passed"));
+                    serde_json::json!({ "ok": ok, "checks": parsed })
+                } else {
+                    serde_json::json!({ "ok": false, "error": "Formato de respuesta inesperado." })
+                }
+            }
+            Err(_) => serde_json::json!({ "ok": false, "error": result.stderr }),
+        },
+        Err(error) => serde_json::json!({ "ok": false, "error": error }),
+    }
 }
 
 pub(super) fn write_course_settings(
