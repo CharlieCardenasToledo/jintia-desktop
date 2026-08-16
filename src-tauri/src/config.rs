@@ -399,6 +399,7 @@ pub fn setup_status() -> SetupStatus {
         openai_plugin_installed: openai.installed,
         openai_plugin_current: openai.current,
         openai_plugin_path: openai.target,
+        openai_plugin_state: openai.status,
         mcp_configured: desktop || code,
         mcp_desktop_configured: desktop,
         mcp_claude_code_configured: code,

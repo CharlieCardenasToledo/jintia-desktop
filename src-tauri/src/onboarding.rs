@@ -97,29 +97,31 @@ fn save(status: &mut OnboardingStatus) -> Result<(), String> {
 }
 
 fn validate_environment(dependencies: &[crate::models::DependencyStatus]) -> Result<(), String> {
-    let installed = |target: &str| {
-        dependencies
-            .iter()
-            .find(|dependency| dependency.name == target)
-            .is_some_and(|dependency| dependency.installed)
+    let missing = dependencies.iter().find(|dependency| {
+        dependency.blocking_scope == "onboarding" && dependency.status != "ready"
+    });
+    let Some(dependency) = missing else {
+        return Ok(());
     };
-
-    if !installed("Node.js") {
+    if dependency.id == "node" {
         return Err(
             "Falta instalar un componente necesario. Instálalo y pulsa “Verificar de nuevo”."
                 .to_string(),
         );
     }
-    if !installed("Python") {
+    if dependency.id == "python" {
         return Err("Instala Python para poder continuar.".to_string());
     }
-    if !installed("Vivliostyle CLI") {
+    if dependency.id == "vivliostyle" {
         return Err(
             "Vivliostyle CLI no está disponible. Se instalará automáticamente con el Node portable."
                 .to_string(),
         );
     }
-    Ok(())
+    Err(format!(
+        "Falta preparar {}. {}",
+        dependency.label, dependency.reason
+    ))
 }
 
 fn target_ready(target: &str) -> bool {
@@ -127,7 +129,9 @@ fn target_ready(target: &str) -> bool {
     match target {
         "claude-code" => setup.skill_current && setup.mcp_claude_code_configured,
         "openai" => setup.openai_plugin_current,
-        "both" => setup.skill_current && setup.mcp_claude_code_configured && setup.openai_plugin_current,
+        "both" => {
+            setup.skill_current && setup.mcp_claude_code_configured && setup.openai_plugin_current
+        }
         _ => false,
     }
 }
@@ -239,10 +243,7 @@ pub fn advance(step: u8, selected_target: Option<String>) -> OnboardingResult {
                 Err(auth.message)
             } else {
                 let target = selected_target.unwrap_or_else(|| status.selected_target.clone());
-                if !matches!(
-                    target.as_str(),
-                    "claude-code" | "openai" | "both"
-                ) {
+                if !matches!(target.as_str(), "claude-code" | "openai" | "both") {
                     Err("Selecciona dónde usarás la skill.".to_string())
                 } else if !target_ready(&target) {
                     Err("El destino seleccionado todavía no tiene skill y MCP completamente configurados.".to_string())
@@ -265,6 +266,22 @@ pub fn advance(step: u8, selected_target: Option<String>) -> OnboardingResult {
         return result(false, error, status);
     }
     result(true, "Paso completado.", status)
+}
+
+pub fn save_self_test_result(mut record: crate::models::SelfTestRecord) -> OnboardingResult {
+    let mut status = get_status();
+    // Si el frontend no envía la versión de la skill, la llenamos desde el
+    // contrato administrado para que la comparación en complete() funcione.
+    if record.skill_version.is_empty() {
+        record.skill_version = crate::release::managed_mcp_contract()
+            .map(|c| c.jintia_version)
+            .unwrap_or_default();
+    }
+    status.last_self_test = Some(record);
+    if let Err(error) = save(&mut status) {
+        return result(false, error, status);
+    }
+    result(true, "Resultado de la prueba final guardado.", status)
 }
 
 pub fn complete() -> OnboardingResult {
@@ -290,6 +307,36 @@ pub fn complete() -> OnboardingResult {
         status.current_step = 4;
         let _ = save(&mut status);
         return result(false, auth.message, status);
+    }
+
+    // Exigir que la prueba final haya pasado y sea vigente para la versión
+    // de skill actualmente instalada.
+    let self_test = match &status.last_self_test {
+        Some(record) => record.clone(),
+        None => {
+            return result(
+                false,
+                "Ejecuta la prueba final antes de completar la instalación.",
+                status,
+            )
+        }
+    };
+    if !self_test.passed {
+        return result(
+            false,
+            "La prueba final no fue exitosa. Revisa las herramientas instaladas e inténtalo de nuevo.",
+            status,
+        );
+    }
+    let current_skill_version = crate::release::managed_mcp_contract()
+        .map(|c| c.jintia_version)
+        .unwrap_or_default();
+    if !current_skill_version.is_empty() && self_test.skill_version != current_skill_version {
+        return result(
+            false,
+            "La versión de Jintia cambió desde la última prueba. Vuelve a ejecutar la prueba final.",
+            status,
+        );
     }
 
     status.completed = true;
@@ -318,8 +365,27 @@ mod tests {
     }
 
     fn dependency(name: &str, installed: bool) -> crate::models::DependencyStatus {
-        let required = matches!(name, "Node.js" | "Python" | "Jintia Skill" | "Vivliostyle CLI");
+        let required = matches!(
+            name,
+            "Node.js" | "Python" | "Jintia Skill" | "Vivliostyle CLI"
+        );
+        let id = match name {
+            "Node.js" => "node",
+            "Python" => "python",
+            "Jintia Skill" => "jintia-skill",
+            "Vivliostyle CLI" => "vivliostyle",
+            _ => "test",
+        };
         crate::models::DependencyStatus {
+            id: id.to_string(),
+            label: name.to_string(),
+            category: if required { "core" } else { "optional" }.to_string(),
+            status: if installed { "ready" } else { "missing" }.to_string(),
+            blocking_scope: if required { "onboarding" } else { "none" }.to_string(),
+            requires_consent: true,
+            operation: Some("test".to_string()),
+            reason: String::new(),
+            technical_detail: String::new(),
             name: name.to_string(),
             installed,
             version: None,

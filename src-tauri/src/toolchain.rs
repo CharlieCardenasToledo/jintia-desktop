@@ -19,6 +19,9 @@ pub struct OpenAiPluginStatus {
     pub installed: bool,
     pub current: bool,
     pub target: String,
+    /// Valor literal del campo "status" devuelto por `jintia plugin status --json`:
+    /// "not-installed" | "installed" | "outdated" | "incomplete" | "foreign"
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -114,7 +117,7 @@ fn parse_openai_plugin_status(stdout: &str) -> Result<OpenAiPluginStatus, String
     let status = data.get("status").and_then(Value::as_str).ok_or("status inválido en el status del plugin.")?;
     if !["not-installed", "installed", "outdated", "incomplete", "foreign"].contains(&status) { return Err("estado de plugin desconocido.".into()); }
     if data.get("marketplaceConfigured").and_then(Value::as_bool).is_none() { return Err("marketplaceConfigured inválido en el status del plugin.".into()); }
-    Ok(OpenAiPluginStatus { installed, current, target: target.to_owned() })
+    Ok(OpenAiPluginStatus { installed, current, target: target.to_owned(), status: status.to_owned() })
 }
 
 fn parse_openai_plugin_install(stdout: &str) -> Result<(String, String, bool), String> {

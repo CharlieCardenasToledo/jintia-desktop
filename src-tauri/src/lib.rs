@@ -14,10 +14,11 @@ mod runtimes;
 mod toolchain;
 
 use models::{
-    ActionResult, DependencyStatus, GeneratedPdf, InstitutionConfig, MigrationStatus, NotebookEntry,
-    NotebookLmAuthStatus, PdfProjectRoot, SetupStatus, TemplateMeta, WeekData,
+    ActionResult, DependencyStatus, GeneratedPdf, InstitutionConfig, MigrationStatus,
+    NotebookEntry, NotebookLmAuthStatus, OnboardingResult, PdfProjectRoot, SelfTestRecord,
+    SetupStatus, TemplateMeta, WeekData,
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
@@ -33,7 +34,8 @@ async fn download_node_runtime(app: tauri::AppHandle) -> ActionResult {
         runtimes::download_portable_node(&app)
             .map(|_| ActionResult::ok("Node.js portable instalado correctamente."))
             .unwrap_or_else(|e| ActionResult::error(e))
-    }).await
+    })
+    .await
     .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
 }
 
@@ -53,7 +55,8 @@ async fn download_python_runtime(app: tauri::AppHandle) -> ActionResult {
         runtimes::download_portable_python(&app)
             .map(|_| ActionResult::ok("Python portable instalado correctamente."))
             .unwrap_or_else(|e| ActionResult::error(e))
-    }).await
+    })
+    .await
     .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
 }
 
@@ -73,15 +76,28 @@ async fn download_skill_runtime(app: tauri::AppHandle) -> ActionResult {
         runtimes::download_portable_skill(&app)
             .map(|_| ActionResult::ok("Jintia portable instalada correctamente."))
             .unwrap_or_else(|e| ActionResult::error(e))
-    }).await
+    })
+    .await
     .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
 }
 
 #[tauri::command]
 async fn install_notebooklm_mcp_runtime(app: tauri::AppHandle) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
-        runtimes::emit_dependency_progress(&app, "NotebookLM MCP", "resolving", None, "Comprobando el contrato de NotebookLM MCP…");
-        runtimes::emit_dependency_progress(&app, "NotebookLM MCP", "installing", None, "Instalando el paquete y sus dependencias…");
+        runtimes::emit_dependency_progress(
+            &app,
+            "NotebookLM MCP",
+            "resolving",
+            None,
+            "Comprobando el contrato de NotebookLM MCP…",
+        );
+        runtimes::emit_dependency_progress(
+            &app,
+            "NotebookLM MCP",
+            "installing",
+            None,
+            "Instalando el paquete y sus dependencias…",
+        );
         let result = runtimes::install_notebooklm_mcp()
             .map(|_| ActionResult::ok("NotebookLM MCP administrado instalado correctamente."))
             .unwrap_or_else(ActionResult::error);
@@ -93,7 +109,9 @@ async fn install_notebooklm_mcp_runtime(app: tauri::AppHandle) -> ActionResult {
             &result.message,
         );
         result
-    }).await.unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar NotebookLM MCP: {e}")))
+    })
+    .await
+    .unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar NotebookLM MCP: {e}")))
 }
 
 #[tauri::command]
@@ -183,12 +201,18 @@ async fn get_skill_path() -> String {
 async fn install_skill() -> ActionResult {
     tauri::async_runtime::spawn_blocking(toolchain::install_global_claude_skill)
         .await
-        .unwrap_or_else(|error| ActionResult::error(format!("No se pudo instalar Jintia Skill: {error}")))
+        .unwrap_or_else(|error| {
+            ActionResult::error(format!("No se pudo instalar Jintia Skill: {error}"))
+        })
 }
 
 #[tauri::command]
 async fn install_openai_plugin() -> ActionResult {
-    tauri::async_runtime::spawn_blocking(toolchain::install_openai_plugin).await.unwrap_or_else(|e| ActionResult::error(format!("No se pudo instalar el plugin OpenAI: {e}")))
+    tauri::async_runtime::spawn_blocking(toolchain::install_openai_plugin)
+        .await
+        .unwrap_or_else(|e| {
+            ActionResult::error(format!("No se pudo instalar el plugin OpenAI: {e}"))
+        })
 }
 
 #[tauri::command]
@@ -218,7 +242,9 @@ async fn save_notebooks_config(entries: Vec<NotebookEntry>) -> ActionResult {
 
 #[tauri::command]
 async fn get_setup_status() -> SetupStatus {
-    tauri::async_runtime::spawn_blocking(config::setup_status).await.unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(config::setup_status)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -238,6 +264,25 @@ async fn run_notebooklm_auth() -> ActionResult {
         .unwrap_or_else(|error| {
             ActionResult::error(format!("No se pudo iniciar la autenticación: {error}"))
         })
+}
+
+#[tauri::command]
+async fn start_notebooklm_auth(app: tauri::AppHandle, operation_id: String) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let event_app = app.clone();
+        mcp::start_auth_operation(operation_id, move |status| {
+            let _ = event_app.emit("notebooklm-auth-progress", status);
+        })
+    })
+    .await
+    .unwrap_or_else(|error| {
+        ActionResult::error(format!("No se pudo iniciar la autenticación: {error}"))
+    })
+}
+
+#[tauri::command]
+async fn cancel_notebooklm_auth(operation_id: String) -> ActionResult {
+    mcp::cancel_auth(&operation_id)
 }
 
 #[tauri::command]
@@ -264,8 +309,8 @@ async fn create_course_structure(
         root_path,
         course_code,
         course_name,
-        0, // weeks no es usado
-        true, // initialize_readme
+        0,     // weeks no es usado
+        true,  // initialize_readme
         false, // include_graded_activities
     )
 }
@@ -308,9 +353,11 @@ async fn get_course_state(project_path: String) -> serde_json::Value {
 
 #[tauri::command]
 async fn check_week_guide_exists(project_path: String, week: u32) -> bool {
-    tauri::async_runtime::spawn_blocking(move || course_state::week_guide_exists(project_path, week))
-        .await
-        .unwrap_or(false)
+    tauri::async_runtime::spawn_blocking(move || {
+        course_state::week_guide_exists(project_path, week)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -318,16 +365,34 @@ async fn detect_harnesses(
     project_path: String,
     explicit_providers: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || harnesses::detect(project_path, explicit_providers))
-        .await
-        .map_err(|error| format!("No se pudieron detectar los harnesses: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        harnesses::detect(project_path, explicit_providers)
+    })
+    .await
+    .map_err(|error| format!("No se pudieron detectar los harnesses: {error}"))?
 }
 
 #[tauri::command]
-async fn manage_harnesses(operation: String, project_path: String, providers: Option<Vec<String>>, scope: String, confirm: bool) -> models::ToolchainReport {
-    tauri::async_runtime::spawn_blocking(move || toolchain::manage_harness(operation, project_path, providers.unwrap_or_default(), scope, confirm))
-        .await
-        .unwrap_or_else(|error| models::ToolchainReport::error(format!("No se pudo gestionar el harness: {error}")))
+async fn manage_harnesses(
+    operation: String,
+    project_path: String,
+    providers: Option<Vec<String>>,
+    scope: String,
+    confirm: bool,
+) -> models::ToolchainReport {
+    tauri::async_runtime::spawn_blocking(move || {
+        toolchain::manage_harness(
+            operation,
+            project_path,
+            providers.unwrap_or_default(),
+            scope,
+            confirm,
+        )
+    })
+    .await
+    .unwrap_or_else(|error| {
+        models::ToolchainReport::error(format!("No se pudo gestionar el harness: {error}"))
+    })
 }
 
 #[tauri::command]
@@ -392,7 +457,6 @@ async fn generate_syllabus(
     )
 }
 
-
 #[tauri::command]
 async fn list_templates() -> Vec<TemplateMeta> {
     config::list_templates()
@@ -417,7 +481,9 @@ async fn run_skill_tool(
 ) -> models::ToolchainReport {
     tauri::async_runtime::spawn_blocking(move || toolchain::run(operation, target, json, strict))
         .await
-        .unwrap_or_else(|error| models::ToolchainReport::error(format!("No se pudo ejecutar la toolchain: {error}")))
+        .unwrap_or_else(|error| {
+            models::ToolchainReport::error(format!("No se pudo ejecutar la toolchain: {error}"))
+        })
 }
 
 #[tauri::command]
@@ -436,7 +502,9 @@ async fn check_migration_needed(project_path: String) -> models::MigrationStatus
 async fn run_migration(project_path: String) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || course::run_migration(project_path))
         .await
-        .unwrap_or_else(|error| ActionResult::error(format!("No se pudo ejecutar la migración: {error}")))
+        .unwrap_or_else(|error| {
+            ActionResult::error(format!("No se pudo ejecutar la migración: {error}"))
+        })
 }
 
 #[tauri::command]
@@ -447,9 +515,40 @@ async fn run_skill_self_test() -> serde_json::Value {
 }
 
 #[tauri::command]
+async fn install_profile_binaries(app: tauri::AppHandle, binary_ids: Vec<String>) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        runtimes::install_profile_binaries(&app, &binary_ids)
+            .map(|installed| ActionResult::ok(format!("Binarios instalados: {}.", installed.join(", "))))
+            .unwrap_or_else(ActionResult::error)
+    })
+    .await
+    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
+
+#[tauri::command]
+async fn save_self_test_result(record: SelfTestRecord) -> OnboardingResult {
+    tauri::async_runtime::spawn_blocking(move || onboarding::save_self_test_result(record))
+        .await
+        .unwrap_or_else(|e| OnboardingResult {
+            success: false,
+            message: format!("No se pudo guardar el resultado de la prueba: {e}"),
+            status: onboarding::get_status(),
+        })
+}
+
+#[tauri::command]
 async fn install_profile_packages(app: tauri::AppHandle, packages: Vec<String>) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
-        runtimes::emit_dependency_progress(&app, "Python", "installing_pip", None, &format!("Instalando {} paquete(s) Python del perfil…", packages.len()));
+        runtimes::emit_dependency_progress(
+            &app,
+            "Python",
+            "installing_pip",
+            None,
+            &format!(
+                "Instalando {} paquete(s) Python del perfil…",
+                packages.len()
+            ),
+        );
         let result = runtimes::install_pip_packages(&packages)
             .map(|_| ActionResult::ok("Paquetes del perfil instalados correctamente."))
             .unwrap_or_else(ActionResult::error);
@@ -469,13 +568,31 @@ async fn install_profile_packages(app: tauri::AppHandle, packages: Vec<String>) 
 #[tauri::command]
 async fn install_vivliostyle_cli(app: tauri::AppHandle) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
-        runtimes::emit_dependency_progress(&app, "Vivliostyle CLI", "resolving", None, "Comprobando Node.js y npm administrados…");
-        runtimes::emit_dependency_progress(&app, "Vivliostyle CLI", "installing", None, "Instalando Vivliostyle CLI desde npm…");
+        runtimes::emit_dependency_progress(
+            &app,
+            "Vivliostyle CLI",
+            "resolving",
+            None,
+            "Comprobando Node.js y npm administrados…",
+        );
+        runtimes::emit_dependency_progress(
+            &app,
+            "Vivliostyle CLI",
+            "installing",
+            None,
+            "Instalando Vivliostyle CLI desde npm…",
+        );
         let result = runtimes::install_vivliostyle()
             .map(|_| ActionResult::ok("Vivliostyle CLI instalado correctamente."))
             .unwrap_or_else(ActionResult::error);
         if result.success {
-            runtimes::emit_dependency_progress(&app, "Vivliostyle CLI", "validating", None, "Validando el ejecutable de Vivliostyle…");
+            runtimes::emit_dependency_progress(
+                &app,
+                "Vivliostyle CLI",
+                "validating",
+                None,
+                "Validando el ejecutable de Vivliostyle…",
+            );
         }
         runtimes::emit_dependency_progress(
             &app,
@@ -493,7 +610,13 @@ async fn install_vivliostyle_cli(app: tauri::AppHandle) -> ActionResult {
 #[tauri::command]
 async fn install_npm_packages(app: tauri::AppHandle, packages: Vec<String>) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
-        runtimes::emit_dependency_progress(&app, "Paquetes Node del perfil", "installing", None, &format!("Instalando {} paquete(s) Node del perfil…", packages.len()));
+        runtimes::emit_dependency_progress(
+            &app,
+            "Paquetes Node del perfil",
+            "installing",
+            None,
+            &format!("Instalando {} paquete(s) Node del perfil…", packages.len()),
+        );
         let result = runtimes::install_npm_packages(&packages)
             .map(|_| ActionResult::ok("Paquetes npm instalados correctamente."))
             .unwrap_or_else(ActionResult::error);
@@ -559,6 +682,8 @@ pub fn run() {
             get_setup_status,
             check_notebooklm_auth,
             run_notebooklm_auth,
+            start_notebooklm_auth,
+            cancel_notebooklm_auth,
             list_notebooks_mcp,
             list_account_notebooks_mcp,
             get_default_course_root,
@@ -581,6 +706,8 @@ pub fn run() {
             install_vivliostyle_cli,
             install_npm_packages,
             run_skill_self_test,
+            install_profile_binaries,
+            save_self_test_result,
             check_migration_needed,
             run_migration,
         ])

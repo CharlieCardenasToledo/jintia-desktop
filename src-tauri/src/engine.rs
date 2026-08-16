@@ -31,6 +31,8 @@ fn managed_entrypoint(path: &Path) -> Result<PathBuf, String> {
 
 fn managed_runtime_path(python: Option<&Path>) -> Result<OsString, String> {
     let mut dirs = vec![crate::paths::portable_node_bin_dir()];
+    // Añade los bin/ de herramientas instaladas (graphviz, plantuml, etc.)
+    dirs.extend(crate::paths::managed_tool_bin_dirs());
     if let Some(python_exe) = python {
         if let Some(parent) = python_exe.parent() {
             dirs.push(parent.to_path_buf());
@@ -179,7 +181,22 @@ mod tests {
         let joined = managed_runtime_path(Some(&python)).unwrap();
         let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
 
-        assert_eq!(dirs, vec![crate::paths::portable_node_bin_dir(), python.parent().unwrap().to_path_buf()]);
+        // El primer directorio siempre es el bin de Node administrado.
+        assert_eq!(dirs.first().unwrap(), &crate::paths::portable_node_bin_dir());
+        // El último directorio siempre es el directorio padre del ejecutable Python.
+        assert_eq!(dirs.last().unwrap(), python.parent().unwrap());
+        // Todos los directorios deben estar dentro del runtime administrado o ser el
+        // directorio padre del Python de prueba (que es una ruta relativa sintética).
+        let runtimes = crate::paths::portable_runtimes_dir();
+        for dir in &dirs {
+            let is_under_runtimes = dir.starts_with(&runtimes);
+            let is_python_parent = dir == python.parent().unwrap();
+            assert!(
+                is_under_runtimes || is_python_parent,
+                "Directorio inesperado en el PATH administrado: {}",
+                dir.display()
+            );
+        }
     }
 
     #[test]
@@ -187,6 +204,16 @@ mod tests {
         let joined = managed_runtime_path(None).unwrap();
         let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
 
-        assert_eq!(dirs, vec![crate::paths::portable_node_bin_dir()]);
+        // El primer directorio siempre es el bin de Node administrado.
+        assert_eq!(dirs.first().unwrap(), &crate::paths::portable_node_bin_dir());
+        // Todos los directorios deben estar dentro del runtime administrado.
+        let runtimes = crate::paths::portable_runtimes_dir();
+        for dir in &dirs {
+            assert!(
+                dir.starts_with(&runtimes),
+                "Directorio inesperado en el PATH administrado: {}",
+                dir.display()
+            );
+        }
     }
 }

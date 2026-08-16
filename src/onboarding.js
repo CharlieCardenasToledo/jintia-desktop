@@ -23,7 +23,8 @@ import {
   listTemplates,
   openExternal,
   pickDirectory,
-  runNotebookLMAuth,
+  startNotebookLMAuth,
+  cancelNotebookLMAuth,
   setActiveTemplate,
   getCapabilitiesProfiles,
   getDefaultCourseRoot,
@@ -31,6 +32,8 @@ import {
   installVivliostyleCli,
   installNpmPackages,
   installProfilePackages,
+  installProfileBinaries,
+  saveSelfTestResult,
 } from "./api.js";
 import { escapeHtml } from "./dom.js";
 import { state, saveConfig } from "./state.js";
@@ -54,16 +57,30 @@ import { runOperationWithFeedback, awaitPreparationWithCleanup, operationFailure
 import { runCompletionHandoff } from "./onboardingCompletion.js";
 import { APP_META } from "./appMeta.js";
 import { BrandMark } from "./components/BrandMark.js";
+import {
+  capabilityStatusLabel,
+  installableBlockingCapabilities,
+  isOnboardingBlocking,
+  normalizeCapabilities,
+} from "./onboardingCapabilities.js";
+import {
+  clearProfileDraft,
+  loadProfileDraft,
+  persistProfileDraft,
+  profileDraftFromConfig,
+  validateProfileDraft,
+} from "./onboardingDraft.js";
+import { createOperationState, elapsedLabel, reduceOperationEvent } from "./onboardingLongOperation.js";
 
 // Esquema de 5 pasos (v3 en el backend; ver migrate_status en onboarding.rs).
 const TOTAL_STEPS = 5;
 const LARGE_DEPENDENCIES = new Set([]);
 const STEP_META = [
   { title: "Bienvenida", subtitle: "Convierte tu sílabo en guías PDF y trabaja con Claude, ChatGPT o Codex.", icon: "graduation-cap" },
-  { title: "Requisitos", subtitle: "Instalamos automáticamente lo que falte.", icon: "terminal" },
+  { title: "Herramientas", subtitle: "Revisa de una vez qué está listo y qué necesita Jintia.", icon: "terminal" },
   { title: "Tu perfil", subtitle: "Institución, autoría y plantilla de tus documentos.", icon: "building-2" },
-  { title: "Conexión", subtitle: "Verifica tu sesión de Google y elige dónde vas a trabajar.", icon: "notebook" },
-  { title: "Prueba final", subtitle: "Generamos un documento de muestra para confirmar que todo funciona.", icon: "check-circle-2" },
+  { title: "Integraciones", subtitle: "Conecta tus fuentes y el asistente con el que trabajarás.", icon: "notebook" },
+  { title: "Todo listo", subtitle: "Comprobamos que ya puedes crear tu primera asignatura.", icon: "check-circle-2" },
 ];
 let runtime = {
   status: null,
@@ -77,6 +94,13 @@ let runtime = {
   loads: new Map(),
   loadingStep: null,
   depFocusIndex: 0,
+  profileDraft: null,
+  capabilityProfiles: null,
+  dependencyOperations: new Map(),
+  authOperation: createOperationState({ title: "Conectar NotebookLM" }),
+  targetOperation: createOperationState({ title: "Preparar integración" }),
+  authElapsedTimer: null,
+  renderedStep: null,
 };
 let onboardingActionInFlight = false;
 let onboardingBusyMessage = "";
@@ -118,15 +142,29 @@ async function prepareOnboardingStep(step, { force = false } = {}) {
   }
   if (step === 2) {
     await loadOnce("dependencies", async () => {
-      runtime.dependencies = await checkDependencies();
+      runtime.dependencies = normalizeCapabilities(await checkDependencies());
     }, force);
   }
   if (step === 3) {
     await loadOnce("templates", async () => {
-      [runtime.templates, runtime.activeTemplate] = await Promise.all([
+      [runtime.templates, runtime.activeTemplate, runtime.capabilityProfiles] = await Promise.all([
         listTemplates(),
         getActiveTemplate(),
+        getCapabilitiesProfiles().catch(() => null),
       ]);
+      if (!runtime.profileDraft) {
+        runtime.profileDraft = loadProfileDraft(
+          localStorage,
+          profileDraftFromConfig(state.config, runtime.activeTemplate),
+        );
+      }
+      if (!runtime.profileDraft.templateId && runtime.activeTemplate) {
+        runtime.profileDraft = persistProfileDraft(localStorage, {
+          ...runtime.profileDraft,
+          templateId: runtime.activeTemplate,
+        });
+      }
+      runtime.activeTemplate = runtime.profileDraft.templateId || runtime.activeTemplate;
     }, force);
   }
   if (step === 4) {
@@ -150,7 +188,7 @@ function warmOnboardingData(currentStep) {
 
 const BTN_PRIMARY = cx(ui.button.base, ui.button.primary, "h-11 w-full cursor-pointer px-4");
 const BTN_SECONDARY = cx(ui.button.base, ui.button.secondary, "h-9 cursor-pointer px-4");
-const SCROLL_THIN = "[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden";
+const SCROLL_THIN = "onboarding-scrollbar";
 const CARD_LEAD = "max-w-md mx-auto mb-5 text-center text-gray-600 text-sm leading-relaxed";
 const CALLOUT = "flex gap-2.5 items-start max-w-lg mx-auto mt-4 p-3.5 rounded-xl bg-gray-100 text-gray-600 text-xs leading-relaxed";
 const INLINE_ERROR = "max-w-lg mx-auto mt-3 p-3 rounded-lg bg-red-50 border border-red-300 text-red-600 text-xs flex items-center gap-2";
@@ -317,6 +355,8 @@ function renderCurrentStep() {
   }
 
   const current = stepNumber();
+  const stepChanged = runtime.renderedStep !== current;
+  runtime.renderedStep = current;
   const meta = STEP_META[current - 1];
   root.innerHTML = `
     ${onboardingAmbientBackground()}
@@ -333,21 +373,28 @@ function renderCurrentStep() {
       <button class="${ui.windowControl.base}" id="onb-win-minimize" aria-label="Minimizar" title="Minimizar">${ic("minus", 16)}</button>
       <button class="${cx(ui.windowControl.base, ui.windowControl.close)}" id="onb-win-close" aria-label="Cerrar" title="Cerrar">${ic("x", 16)}</button>
     </div>
-    <div class="relative z-[1] mx-auto flex h-full w-full max-w-3xl flex-col p-6" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
-      <div class="flex min-h-0 flex-1 flex-col items-center overflow-y-auto pr-2 ${SCROLL_THIN}">
+    <main class="relative z-[1] mx-auto flex h-full w-full max-w-[1500px] flex-col px-6 pb-5 pt-16 sm:px-8 xl:px-12" aria-labelledby="onboarding-title">
+      <p id="onboarding-step-announcement" class="sr-only" aria-live="${stepChanged ? "polite" : "off"}" aria-atomic="true">Paso ${current} de ${TOTAL_STEPS}: ${escapeHtml(meta.title)}</p>
+      <div class="flex min-h-0 flex-1 flex-col items-stretch overflow-y-auto pr-2 ${SCROLL_THIN}">
         <div class="my-auto w-full">
-          <div class="mb-4 w-full text-center">
-            <h1 id="onboarding-title" class="text-4xl font-semibold tracking-tight text-gray-900 animate-[fade-in-up_0.5s_ease-out_forwards]">${escapeHtml(meta.title)}</h1>
-            <p class="mx-auto mt-3 max-w-md text-base leading-relaxed text-gray-600 animate-[fade-in-up_0.5s_ease-out_forwards] [animation-delay:75ms]">${escapeHtml(meta.subtitle)}</p>
+          <div class="mb-6 w-full border-b border-gray-200/80 pb-5 text-left">
+            <p class="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-teal-700">Paso ${current} de ${TOTAL_STEPS}</p>
+            <h1 id="onboarding-title" tabindex="-1" class="text-4xl font-semibold tracking-tight text-gray-900 animate-[fade-in-up_0.5s_ease-out_forwards] sm:text-5xl">${escapeHtml(meta.title)}</h1>
+            <p class="mt-3 max-w-3xl text-base leading-relaxed text-gray-600 animate-[fade-in-up_0.5s_ease-out_forwards] [animation-delay:75ms]">${escapeHtml(meta.subtitle)}</p>
           </div>
           <div id="onboarding-step-content" class="w-full"></div>
         </div>
       </div>
       <div id="onboarding-bottom-nav" class="flex-shrink-0"></div>
-    </div>`;
+    </main>`;
 
   document.getElementById("onb-win-minimize")?.addEventListener("click", () => getCurrentWindow().minimize());
-  document.getElementById("onb-win-close")?.addEventListener("click", () => getCurrentWindow().close());
+  document.getElementById("onb-win-close")?.addEventListener("click", async () => {
+    if (runtime.authOperation.id && runtime.authOperation.cancellable) {
+      await cancelNotebookLMAuth(runtime.authOperation.id).catch(() => {});
+    }
+    getCurrentWindow().close();
+  });
 
   const content = document.getElementById("onboarding-step-content");
   if (runtime.loadingStep === current) {
@@ -363,49 +410,30 @@ function renderCurrentStep() {
   }
   document.getElementById("onboarding-bottom-nav").innerHTML = renderBottomNav(current);
   bindStepEvents(current);
-  bindStepCarousels();
   refreshIcons();
   syncOnboardingBusyState();
+  if (stepChanged) requestAnimationFrame(() => document.getElementById("onboarding-title")?.focus({ preventScroll: true }));
 }
 
-// En el paso 2, el punto único se expande a un punto por herramienta.
 function progressDots(current) {
   const maxDone = Number(runtime.status.maxCompletedStep || 0);
-  const stepAvailable = step => step <= maxDone + 1;
-
-  const macroDot = step => {
-    const isActive = step === current;
-    const isCompleted = !isActive && step <= maxDone;
-    const available = stepAvailable(step);
-    const color = isCompleted ? "bg-path-500" : isActive ? "bg-brand-600" : "bg-gray-300";
-    const interactive = available ? "cursor-pointer hover:opacity-80" : "cursor-default";
-    return `<button type="button" class="onboarding-progress-dot-hit w-8 h-8 flex items-center justify-center border-0 bg-transparent p-0 ${interactive}" data-step-index="${step}" ${available ? `data-onboarding-step="${step}"` : "disabled"} aria-label="Ir al paso ${step}" aria-current="${isActive ? "step" : "false"}">
-      <span class="onboarding-progress-dot h-2.5 w-2.5 rounded-full ${color} transition-transform duration-200 ${isActive ? "scale-110 ring-4 ring-brand-600/15" : ""}"></span>
+  return STEP_META.map((meta, index) => {
+    const step = index + 1;
+    const active = step === current;
+    const available = step <= maxDone + 1;
+    return `<button type="button" class="min-h-11 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${active ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-white/60"}" ${available ? `data-onboarding-step="${step}"` : "disabled"} data-step-index="${step}" ${active ? 'aria-current="step"' : ""}>
+      <span class="mr-1 tabular-nums ${active ? "text-white/70" : "text-gray-400"}">${step}</span>${escapeHtml(meta.title)}
     </button>`;
-  };
+  }).join('<span class="text-gray-300" aria-hidden="true">·</span>');
+}
 
-  const toolDots = sequence => {
-    const available = stepAvailable(2);
-    return sequence.map((dep, index) => {
-      const isActive = current === 2 && index === runtime.depFocusIndex;
-      const color = dep.installed ? "bg-path-500" : isActive ? "bg-brand-600" : "bg-gray-300";
-      const interactive = available ? "cursor-pointer hover:opacity-80" : "cursor-default";
-      return `<button type="button" class="onboarding-progress-dot-hit w-8 h-8 flex items-center justify-center border-0 bg-transparent p-0 ${interactive}" data-dep-step-index="${index}" ${available ? "data-onboarding-dep-step" : "disabled"} aria-label="Ver ${escapeHtml(dep.name)}" aria-current="${isActive ? "step" : "false"}">
-        <span class="onboarding-progress-dot h-2 w-2 rounded-full ${color} transition-transform duration-200 ${isActive ? "scale-110 ring-4 ring-brand-600/15" : ""}"></span>
-      </button>`;
-    }).join("");
-  };
-
-  const parts = [];
-  for (let step = 1; step <= TOTAL_STEPS; step++) {
-    if (step === 2) {
-      const sequence = dependencySequence();
-      parts.push(sequence.length > 0 ? toolDots(sequence) : macroDot(2));
-    } else {
-      parts.push(macroDot(step));
-    }
-  }
-  return parts.join("");
+function openaiPluginLabel(setup) {
+  const state = setup.openai_plugin_state ?? "";
+  if (state === "outdated")   return "Actualizar plugin ChatGPT/Codex";
+  if (state === "foreign")    return "Reparar plugin ChatGPT/Codex";
+  if (state === "incomplete") return "Completar plugin ChatGPT/Codex";
+  if (setup.openai_plugin_installed) return "Actualizar para ChatGPT y Codex";
+  return "Preparar para ChatGPT y Codex";
 }
 
 function actionButton(label, action, disabled = false, secondary = false, iconHtml = "") {
@@ -419,22 +447,16 @@ function setFooter(label, action = "advance", disabled = false) {
 
 function renderBottomNav(current) {
   const canBack = current > 1;
-  const skipLink = current >= 2
-    ? `<button type="button" class="mt-3 cursor-pointer border-0 bg-transparent text-[11px] text-gray-400 underline-offset-2 transition-colors hover:text-gray-600 hover:underline" data-onboarding-action="skip-onboarding" title="Saltar el asistente de configuración">
-        Saltar configuración y acceder al dashboard →
-      </button>`
-    : "";
   return `<div class="flex flex-shrink-0 flex-col items-center pt-2">
-    <div id="onboarding-operation-status" class="mb-1 flex h-5 items-center justify-center gap-1.5 text-[11px] font-medium text-gray-500 transition-opacity ${onboardingActionInFlight ? "opacity-100" : "opacity-0"}" role="status" aria-live="polite" aria-atomic="true">
+    <div id="onboarding-operation-status" class="mb-1 flex h-5 items-center justify-center gap-1.5 text-xs font-medium text-gray-500 transition-opacity ${onboardingActionInFlight ? "opacity-100" : "opacity-0"}" role="status" aria-live="polite" aria-atomic="true">
       <span class="animate-spin">${ic("loader-2", 13)}</span>
       <span data-operation-message>${escapeHtml(onboardingBusyMessage || "Procesando…")}</span>
     </div>
     <div class="flex items-center justify-center gap-3">
-      <button type="button" class="onboarding-nav-arrow onboarding-nav-arrow--back liquid-control border border-white/45 bg-white/55 ${canBack ? "" : "pointer-events-none opacity-0"}" data-onboarding-action="back" aria-label="Paso anterior" title="Paso anterior">${ic("chevron-left", 18)}</button>
-      <div class="${cx(ui.liquid.group, "onboarding-progress relative flex items-center gap-0.5 px-1")}">${progressDots(current)}</div>
-      <button type="button" class="${cx(ui.button.base, ui.button.primary, "h-10 cursor-pointer pl-4 pr-3 text-[13px]")}" data-onboarding-action="${footerConfig.action}" ${footerConfig.disabled ? "disabled" : ""}><span>${escapeHtml(footerConfig.label)}</span>${ic("chevron-right", 16)}</button>
+      <button type="button" class="onboarding-nav-arrow onboarding-nav-arrow--back liquid-control border border-white/45 bg-white/55 ${canBack ? "" : "pointer-events-none opacity-0"}" data-operation-lock="global" data-onboarding-action="back" aria-label="Paso anterior" title="Paso anterior">${ic("chevron-left", 18)}</button>
+      <nav class="${cx(ui.liquid.group, "onboarding-progress relative flex flex-wrap items-center justify-center gap-1 px-1")}" aria-label="Progreso de configuración">${progressDots(current)}</nav>
+      <button type="button" class="${cx(ui.button.base, ui.button.primary, "h-11 cursor-pointer pl-4 pr-3 text-[13px]")}" data-operation-lock="global" data-onboarding-action="${footerConfig.action}" ${footerConfig.disabled ? "disabled" : ""}><span>${escapeHtml(footerConfig.label)}</span>${ic("chevron-right", 16)}</button>
     </div>
-    ${skipLink}
   </div>`;
 }
 
@@ -449,19 +471,8 @@ function syncOnboardingBusyState() {
   status?.classList.toggle("opacity-100", onboardingActionInFlight);
   if (message) message.textContent = onboardingBusyMessage || "Procesando…";
 
-  const controls = root.querySelectorAll(
-    "button:not(#onb-win-minimize):not(#onb-win-close), input, textarea, select",
-  );
-  controls.forEach(control => {
-    if (onboardingActionInFlight) {
-      if (!control.disabled) {
-        control.dataset.disabledByOperation = "true";
-        control.disabled = true;
-      }
-    } else if (control.dataset.disabledByOperation === "true") {
-      control.disabled = false;
-      delete control.dataset.disabledByOperation;
-    }
+  root.querySelectorAll("[data-operation-lock='global']").forEach(control => {
+    control.disabled = onboardingActionInFlight;
   });
 }
 
@@ -527,9 +538,6 @@ function animateStepTransition(fromStep, toStep) {
 // En el paso 2, el punto de entrada es la herramienta enfocada (runtime.depFocusIndex).
 function stepperDotFor(track, step) {
   if (!track) return null;
-  if (step === 2 && dependencySequence().length > 0) {
-    return track.querySelector(`[data-dep-step-index="${runtime.depFocusIndex}"]`);
-  }
   return track.querySelector(`[data-step-index="${step}"]`);
 }
 
@@ -592,56 +600,81 @@ async function showPreparedStep(fromStep, destination, { force = false, depFocus
   });
 }
 
-// Git es opcional y no se muestra en el onboarding (solo en Configuración > Entorno).
 function dependencySequence() {
-  return runtime.dependencies.filter(dep => dep.required);
+  return runtime.dependencies;
 }
 
-function dependencyCardShell(dep) {
-  return `
-    <div class="${DEP_CARD_BASE} ${DEP_ROW_CHECKING}" data-dep-row data-dep-name="${escapeHtml(dep.name)}">
-      <div class="flex items-center gap-2.5 min-w-0">
-        <div class="${DEP_CARD_STATUS_BASE} bg-neutral-100 text-neutral-400" data-dep-status><span class="animate-spin flex">${ic("loader-2", 18)}</span></div>
-        <div class="min-w-0">
-          <strong class="text-[15px] font-semibold text-gray-900 truncate block">${escapeHtml(dep.name)}</strong>
-          <span class="dep-detail text-xs text-gray-500 leading-snug">Verificando…</span>
+function operationPanelMarkup(operation, scope) {
+  if (!operation || operation.state === "idle") return `<div data-operation-panel="${escapeHtml(scope)}"></div>`;
+  const terminal = ["success", "warning", "error", "cancelled"].includes(operation.state);
+  const tone = operation.state === "error" ? "border-red-200 bg-red-50 text-red-800"
+    : operation.state === "success" ? "border-green-200 bg-green-50 text-green-800"
+    : operation.state === "cancelled" ? "border-gray-200 bg-gray-50 text-gray-700"
+    : "border-teal-200 bg-teal-50 text-teal-900";
+  const elapsed = elapsedLabel(operation.startedAt);
+  return `<div class="mt-3 rounded-lg border p-3 ${tone}" data-operation-panel="${escapeHtml(scope)}" role="status" aria-live="polite" aria-atomic="true">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0"><strong class="block text-sm">${escapeHtml(operation.title || "Operación")}</strong><span class="block text-xs leading-relaxed" data-operation-message>${escapeHtml(operation.message || "Preparando…")}</span></div>
+      ${elapsed ? `<time class="shrink-0 text-xs tabular-nums" data-operation-elapsed>${elapsed}</time>` : '<time class="hidden shrink-0 text-xs tabular-nums" data-operation-elapsed></time>'}
+    </div>
+    ${operation.percent !== null ? `<div class="mt-2 h-1.5 overflow-hidden rounded-full bg-black/10" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${operation.percent}"><div class="h-full bg-current transition-[width]" style="width:${operation.percent}%"></div></div>` : (!terminal ? `<div class="mt-2 h-1.5 overflow-hidden rounded-full bg-black/10"><div class="onboarding-indeterminate h-full w-1/3 bg-current"></div></div>` : "")}
+    ${operation.technicalDetail ? `<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold">Detalle técnico</summary><pre class="mt-2 whitespace-pre-wrap break-words rounded bg-gray-950 p-2 text-xs text-gray-100">${escapeHtml(operation.technicalDetail)}</pre></details>` : ""}
+    <div class="mt-2 flex flex-wrap gap-2">
+      ${operation.cancellable ? `<button type="button" class="${BTN_SECONDARY}" data-onboarding-action="cancel-auth">Cancelar</button>` : ""}
+      ${(operation.state === "error" || operation.state === "cancelled") && scope === "notebooklm-auth" ? `<button type="button" class="${BTN_SECONDARY}" data-onboarding-action="start-auth">Reintentar</button>` : ""}
+    </div>
+  </div>`;
+}
+
+function capabilityCard(dep) {
+  const operation = runtime.dependencyOperations.get(dep.id);
+  const status = operation && ["working", "checking"].includes(operation.state) ? "working"
+    : operation?.state === "error" ? "error" : dep.status;
+  const badgeTone = status === "ready" ? "bg-green-100 text-green-800"
+    : status === "working" ? "bg-teal-100 text-teal-800"
+    : status === "error" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800";
+  const icon = status === "ready" ? "check-circle-2" : status === "working" ? "loader-2" : status === "error" ? "circle-alert" : "download";
+  return `<article class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm" data-dep-row data-dep-id="${escapeHtml(dep.id)}" data-dep-name="${escapeHtml(dep.name)}">
+    <div class="flex items-start gap-3">
+      <span class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${badgeTone}" data-dep-status>${ic(icon, 19)}</span>
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <strong class="text-sm font-bold text-gray-900">${escapeHtml(dep.label)}</strong>
+          <span class="rounded-full px-2.5 py-1 text-xs font-bold ${badgeTone}">${capabilityStatusLabel(status)}</span>
         </div>
+        <p class="mt-1 text-xs leading-relaxed text-gray-600">${escapeHtml(dep.reason)}</p>
+        <p class="mt-1 text-xs text-gray-400">${dep.blockingScope === "onboarding" ? "Necesario para completar la preparación" : "Opcional; puedes prepararlo después"}</p>
+        ${status !== "ready" && dep.installable && status !== "working" ? `<button type="button" class="${BTN_SECONDARY} mt-3" data-install-dependency="${escapeHtml(dep.name)}">${dep.blockingScope === "none" ? "Instalar por separado" : "Instalar"}</button>` : ""}
+        ${status !== "ready" && !dep.installable ? `<button type="button" class="${BTN_SECONDARY} mt-3" data-show-capability-details="${escapeHtml(dep.id)}">Ver cómo habilitarla</button>` : ""}
+        <details id="capability-detail-${escapeHtml(dep.id)}" class="mt-3"><summary class="cursor-pointer text-xs font-semibold text-gray-500">Detalles técnicos</summary><div class="mt-2 rounded-lg bg-gray-950 p-2.5 font-mono text-xs text-gray-200">${escapeHtml(dep.technicalDetail)}${dep.version ? `<br>${escapeHtml(dep.version)}` : ""}</div></details>
+        ${operationPanelMarkup(operation, `dependency-${dep.id}`)}
       </div>
-    </div>`;
+    </div>
+  </article>`;
 }
 
-// Dibuja solo la tarjeta de la herramienta enfocada; la navegación entre
-// herramientas vive en la barra inferior (ver progressDots/animateStepTransition).
 function dependenciesStep() {
-  // Node.js, Python y el compilador LaTeX son obligatorios (required=true
-  // desde el backend); Git es opcional y no bloquea el avance.
-  const missing = runtime.dependencies.filter(dep => dep.required && !dep.installed);
-  const sequence = dependencySequence();
+  const missing = runtime.dependencies.filter(isOnboardingBlocking);
+  const installable = installableBlockingCapabilities(runtime.dependencies);
 
-  if (sequence.length === 0) {
+  if (runtime.dependencies.length === 0) {
     setFooter("Continuar", "advance", true);
     return `<section class="flex items-center justify-center py-10" aria-live="polite">
       <span class="text-gray-700 animate-spin">${ic("loader-2", 26)}</span>
     </section>`;
   }
 
-  runtime.depFocusIndex = Math.min(Math.max(runtime.depFocusIndex, 0), sequence.length - 1);
-  const focusIndex = runtime.depFocusIndex;
-  const isLast = focusIndex === sequence.length - 1;
-  // La flecha "Continuar" solo debe frenarte en la última herramienta: antes
-  // de eso, avanzar significa "ver la siguiente tarjeta", no salir del paso.
-  // El motivo del bloqueo puede estar en una tarjeta que ya no estás viendo,
-  // así que el aviso siempre nombra la causa real por su nombre.
-  const blockReason = missing.length > 0 ? `Falta instalar: ${missing.map(dep => dep.name).join(", ")}.` : null;
-  const nextBlocked = isLast && blockReason !== null;
-  setFooter("Continuar", "advance", nextBlocked);
+  const blockReason = missing.length ? `Falta preparar: ${missing.map(dep => dep.label).join(", ")}.` : null;
+  setFooter("Continuar", "advance", missing.length > 0);
+  const installLabel = installable.length === 1 ? "Instalar 1 componente necesario" : "Instalar todo lo necesario";
 
   return `<section>
-    <div class="max-w-xl mx-auto mb-3 rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-3">
-      <p class="text-xs text-gray-600 leading-relaxed">Estas herramientas permiten generar tus guías en PDF.</p>
+    <div class="mb-4 flex w-full flex-col gap-3 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <p class="text-sm leading-relaxed text-teal-950"><strong>Entorno privado de Jintia.</strong> Estas instalaciones no cambian tu Python ni tu Node global.</p>
+      ${installable.length ? `<button type="button" class="${BTN_PRIMARY} !w-auto shrink-0" data-onboarding-action="install-all-needed">${escapeHtml(installLabel)}</button>` : `<span class="shrink-0 rounded-full bg-green-100 px-3 py-1.5 text-xs font-bold text-green-800">Todo lo necesario está listo</span>`}
     </div>
-    <div class="max-w-xl mx-auto">${dependencyCardShell(sequence[focusIndex])}</div>
-    ${nextBlocked ? `<div class="${INLINE_ERROR} !max-w-xl">${ic("alert-circle", 14)} ${escapeHtml(blockReason)}</div>` : ""}
+    <div class="grid w-full gap-3 lg:grid-cols-2 2xl:grid-cols-3">${runtime.dependencies.map(capabilityCard).join("")}</div>
+    ${blockReason ? `<div class="${INLINE_ERROR} !max-w-none">${ic("alert-circle", 14)} ${escapeHtml(blockReason)}</div>` : ""}
   </section>`;
 }
 
@@ -776,174 +809,31 @@ async function jumpToDependencyTool(fromStep, toolIndex) {
 // secciones plegables que no bloquean el avance.
 function welcomeStep() {
   setFooter("Continuar", "advance", false);
-  const feature = (icon, title, desc) => `
-    <article class="${ui.surface.cardGlass} p-5 transition-all duration-200 hover:bg-white/50 hover:backdrop-blur-2xl hover:shadow-md">
-      <div class="w-10 h-10 rounded-lg bg-brand/15 text-brand-950 flex items-center justify-center mb-3 transition-transform duration-200 group-hover:scale-110">${ic(icon, 20)}</div>
-      <h3 class="text-sm font-semibold text-slate-900 mb-1.5">${title}</h3>
-      <p class="text-xs text-slate-600 leading-relaxed">${desc}</p>
-    </article>`;
-
-  const techCard = (name, src, icon) => `
-    <div class="flex items-center justify-center w-11 h-11 text-slate-700 transition-transform duration-200 hover:scale-110" title="${escapeHtml(name)}">
-      ${src ? `<img src="${src}" alt="${escapeHtml(name)}" class="w-full h-full object-contain">` : ic(icon, 40)}
-    </div>`;
-
-  const stepCarousel = (title, steps) => {
-    const stepsHtml = steps.map((step, idx) => `
-      <div class="step-carousel-item hidden" data-step-index="${idx}">
-        <div class="${ui.surface.cardGlass} p-5 mb-4 transition-all duration-300">
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="text-sm font-semibold text-slate-900">${step.title}</h3>
-            <span class="text-xs font-medium text-slate-500">${idx + 1}/${steps.length}</span>
-          </div>
-          <p class="text-xs text-slate-600 leading-relaxed mb-4">${step.desc}</p>
-          ${step.content || ""}
-        </div>
-      </div>
-    `).join("");
-
-    const prevBtn = `<button type="button" class="step-carousel-prev p-1.5 rounded-lg border border-white/20 bg-white/30 text-slate-700 hover:bg-white/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed" data-carousel-id="${title}" aria-label="Paso anterior">${ic("chevron_left", 16)}</button>`;
-    const nextBtn = `<button type="button" class="step-carousel-next p-1.5 rounded-lg border border-white/20 bg-white/30 text-slate-700 hover:bg-white/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed" data-carousel-id="${title}" aria-label="Siguiente paso">${ic("chevron_right", 16)}</button>`;
-
-    return `
-      <div class="max-w-2xl mx-auto mb-5" data-carousel-group="${title}">
-        <div class="step-carousel-items">
-          ${stepsHtml}
-        </div>
-        <div class="flex items-center justify-center gap-2">
-          ${prevBtn}
-          <div class="flex gap-1.5">
-            ${steps.map((_, idx) => `<button type="button" class="step-carousel-dot h-2 w-2 rounded-full transition-all duration-200 ${idx === 0 ? "bg-brand scale-125" : "bg-slate-300 hover:bg-slate-400"}" data-carousel-id="${title}" data-dot-index="${idx}" aria-label="Ir al paso ${idx + 1}"></button>`).join("")}
-          </div>
-          ${nextBtn}
-        </div>
-      </div>
-    `;
-  };
-
-  const journeySteps = [
-    {
-      title: "Sílabo",
-      desc: "Sube tu sílabo.",
-      content: `<div class="text-xs text-slate-600 space-y-2"><div class="font-semibold text-slate-700">Formatos:</div><div>PDF, Word, texto plano, Google Docs</div></div>`
-    },
-    {
-      title: "Análisis",
-      desc: "Sistema extrae estructura pedagógica.",
-      content: `<div class="text-xs text-slate-600 space-y-2"><div class="font-semibold text-slate-700">Se detecta:</div><div>Resultados de aprendizaje, temas, contenido temático</div></div>`
-    },
-    {
-      title: "Fuentes",
-      desc: "Integra NotebookLM para investigación.",
-      content: `<div class="text-xs text-slate-600 space-y-2"><div class="font-semibold text-slate-700">Indexa:</div><div>Libros, artículos, sitios web educativos, fuentes verificadas</div></div>`
-    },
-    {
-      title: "Estructura",
-      desc: "Cada semana se organiza automáticamente.",
-      content: `<div class="text-xs text-slate-600 space-y-2"><div class="font-semibold text-slate-700">Componentes:</div><div>Temas, actividades, bibliografía por semana</div></div>`
-    },
-    {
-      title: "Validación",
-      desc: "Se verifican criterios pedagógicos.",
-      content: `<div class="text-xs text-slate-600 space-y-2"><div class="font-semibold text-slate-700">Estándares:</div><div>UDL 3.0, Backward Design, Quality Matters, WCAG 2.2</div></div>`
-    },
-    {
-      title: "Generación",
-      desc: "Jintia Skill genera documentos con IA.",
-      content: `<div class="flex flex-wrap justify-center gap-4 mt-2">
-        ${techCard("Claude", claudeLogo)}
-        ${techCard("Gemini", geminiLogo)}
-      </div>`
-    }
-  ];
-
-  const foundationSteps = [
-    {
-      title: "UDL 3.0",
-      desc: "Múltiples modos de representación, acción y expresión.",
-      content: `<div class="text-xs text-slate-600"><strong class="text-slate-700 block mb-1">Implementado como:</strong><div>✓ Materiales en múltiples formatos</div><div>✓ Actividades variadas por nivel</div><div>✓ Espacios para que estudiantes demuestren lo aprendido</div></div>`
-    },
-    {
-      title: "Backward Design",
-      desc: "Resultados → Evaluación → Contenido.",
-      content: `<div class="text-xs text-slate-600"><strong class="text-slate-700 block mb-1">Tres fases:</strong><div>1. Desglosar objetivos de la asignatura</div><div>2. Proponer actividades y evaluación</div><div>3. Armar secuencia semanal coherente</div></div>`
-    },
-    {
-      title: "Quality Matters",
-      desc: "Estándares de calidad educativa verificados.",
-      content: `<div class="text-xs text-slate-600"><strong class="text-slate-700 block mb-1">Se valida:</strong><div>✓ Alineación objetivos-actividades-evaluación</div><div>✓ Instrucciones claras por semana</div><div>✓ Accesibilidad WCAG 2.2</div><div>✓ Inclusión y diversidad</div></div>`
-    }
-  ];
-
-  const workspacePath = state.config.courseRoot || "";
-  const workspaceLabel = workspacePath
-    ? escapeHtml(workspacePath)
-    : "Documentos / Jintia (predeterminada)";
-
-  return `<section>
-    <div class="${CALLOUT} !mb-4 !items-center !gap-3 !p-3">
-      ${ic("folder", 16)}
-      <div class="flex-1 min-w-0">
-        <span class="font-semibold text-slate-700">Carpeta de trabajo: </span>
-        <span id="onb-workspace-label" class="text-slate-500 break-all">${workspaceLabel}</span>
-      </div>
-      <button type="button" id="onb-change-workspace" class="${BTN_SECONDARY} flex-shrink-0 text-xs !h-7 !px-2.5">
-        ${ic("folder-open", 13)} Cambiar
-      </button>
+  const welcomeWorkspacePath = state.config.courseRoot || "";
+  const welcomeWorkspaceLabel = welcomeWorkspacePath ? escapeHtml(welcomeWorkspacePath) : "Documentos / Jintia (predeterminada)";
+  return `<section class="w-full">
+    <div class="mb-5 text-left">
+      <p class="max-w-4xl text-lg leading-relaxed text-gray-700 sm:text-xl">Prepara una vez tu espacio de trabajo y convierte el sílabo de cada asignatura en materiales claros, consistentes y listos para publicar.</p>
     </div>
-
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl mx-auto mb-6">
-      ${feature("brain", "Convierte tu sílabo", "Sube el sílabo de tu materia y quedará estructurado como guía.")}
-      ${feature("layout-dashboard", "Organiza por semanas", "Cada semana queda con sus temas, actividades y bibliografía.")}
-      ${feature("download", "Genera el PDF", "Descarga la guía lista para publicar, con tu identidad institucional.")}
+    <div class="grid gap-3 sm:grid-cols-3">
+      ${[
+        ["file-text", "Parte del sílabo", "Jintia organiza resultados, temas, actividades y bibliografía."],
+        ["calendar-range", "Trabaja por semanas", "Mantén cada unidad trazable y lista para revisar con tu criterio docente."],
+        ["file-down", "Publica en PDF", "Genera documentos con tu autoría, institución y formato elegido."],
+      ].map(([icon, title, description]) => `<article class="rounded-xl border border-white/50 bg-white/65 p-5 shadow-sm backdrop-blur-xl"><span class="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-teal-100 text-teal-800">${ic(icon, 20)}</span><h2 class="text-sm font-bold text-gray-900">${title}</h2><p class="mt-1 text-xs leading-relaxed text-gray-600">${description}</p></article>`).join("")}
     </div>
-
-    <div class="max-w-2xl mx-auto mb-6">
-      <h3 class="text-sm font-semibold text-slate-900 mb-4 text-center">📚 ¿Cómo funciona el proceso?</h3>
-      ${stepCarousel("recorrido", journeySteps)}
-      <div class="${CALLOUT}">${ic("shield-check", 16)} <span>Todo se guarda en tu computadora. Las búsquedas con NotebookLM solo se comparten cuando tú lo autorizas.</span></div>
+    <div class="mt-4 grid gap-3 lg:grid-cols-2">
+    <div class="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white/70 p-4 sm:flex-row sm:items-center">
+      <span class="text-teal-700">${ic("shield-check", 20)}</span>
+      <p class="flex-1 text-sm leading-relaxed text-gray-600"><strong class="text-gray-900">Tus cursos permanecen en tu equipo.</strong> Solo se usa la red cuando eliges instalar, consultar NotebookLM o analizar un sitio.</p>
     </div>
-
-    <div class="max-w-2xl mx-auto">
-      <h3 class="text-sm font-semibold text-slate-900 mb-4 text-center">🎓 Fundamentos pedagógicos</h3>
-      ${stepCarousel("fundamentos", foundationSteps)}
-    </div>
+    <div class="flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:flex-row sm:items-center">
+      ${ic("folder", 18)}<div class="min-w-0 flex-1"><strong class="block text-xs text-gray-900">Carpeta de trabajo</strong><span id="onb-workspace-label" class="block truncate text-xs text-gray-500">${welcomeWorkspaceLabel}</span></div>
+      <button type="button" id="onb-change-workspace" class="${BTN_SECONDARY}">${ic("folder-open", 14)} Cambiar carpeta</button>
+    </div></div>
   </section>`;
 }
 
-// Vincula eventos del carousel de pasos
-function bindStepCarousels() {
-  const carousels = document.querySelectorAll("[data-carousel-group]");
-  carousels.forEach(carousel => {
-    const id = carousel.dataset.carouselGroup;
-    const items = carousel.querySelectorAll(".step-carousel-item");
-    const dots = carousel.querySelectorAll(".step-carousel-dot");
-    const prevBtn = carousel.querySelector(".step-carousel-prev");
-    const nextBtn = carousel.querySelector(".step-carousel-next");
-
-    let currentIndex = 0;
-
-    const showStep = (index) => {
-      items.forEach((item, i) => item.classList.toggle("hidden", i !== index));
-      dots.forEach((dot, i) => {
-        dot.classList.toggle("bg-brand", i === index);
-        dot.classList.toggle("scale-125", i === index);
-        dot.classList.toggle("bg-slate-300", i !== index);
-      });
-      currentIndex = index;
-      prevBtn.disabled = currentIndex === 0;
-      nextBtn.disabled = currentIndex === items.length - 1;
-    };
-
-    prevBtn?.addEventListener("click", () => currentIndex > 0 && showStep(currentIndex - 1));
-    nextBtn?.addEventListener("click", () => currentIndex < items.length - 1 && showStep(currentIndex + 1));
-    dots.forEach(dot => {
-      dot.addEventListener("click", () => showStep(Number(dot.dataset.dotIndex)));
-    });
-
-    showStep(0);
-  });
-}
 
 const FIELD_INPUT = cx(ui.surface.input, "px-3 py-2 w-full");
 const FIELD_LABEL = "flex flex-col gap-1.5 text-gray-700 text-xs";
@@ -951,54 +841,57 @@ const FIELD_LABEL = "flex flex-col gap-1.5 text-gray-700 text-xs";
 // Institución + perfil + plantilla en una pantalla con un único guardado
 // (ver "save-profile-and-template" en performAction).
 function profileStep() {
-  const config = state.config;
+  const config = runtime.profileDraft || profileDraftFromConfig(state.config, runtime.activeTemplate);
   const value = key => escapeHtml(config[key] || "");
-  const selectedTemplate = runtime.activeTemplate;
+  const selectedTemplate = config.templateId || runtime.activeTemplate;
   const template = runtime.templates.find(item => item.id === selectedTemplate) || runtime.templates[0];
+  const profileId = runtime.capabilityProfiles?.disciplines?.[config.discipline];
+  const profile = profileId ? runtime.capabilityProfiles?.profiles?.[profileId] : null;
+  const pythonPackages = profile?.python?.packages || [];
+  const nodePackages = profile?.node?.packages || [];
+  const packageCount = pythonPackages.length + nodePackages.length;
   const templateCards = runtime.templates.map(t => {
     const isSelected = t.id === selectedTemplate;
     const cardCls = isSelected
       ? "border-gray-900 bg-gray-50 shadow-[0_0_0_3px_rgba(17,24,39,0.08)]"
       : "border-gray-200 bg-white hover:border-gray-400";
     return `
-    <button class="flex flex-col gap-1.5 p-4 rounded-xl border text-left cursor-pointer transition-all ${cardCls}" data-template-id="${escapeHtml(t.id)}">
+    <button type="button" role="radio" aria-checked="${isSelected}" class="flex min-h-11 flex-col gap-1.5 p-4 rounded-xl border text-left cursor-pointer transition-all ${cardCls}" data-template-id="${escapeHtml(t.id)}">
       <div class="flex items-center gap-2">
         <span class="transition-colors ${isSelected ? "text-green-600" : "text-gray-400"}">${ic(isSelected ? "check-circle-2" : "circle", 18)}</span>
         <strong class="text-[13px] font-bold text-gray-900">${escapeHtml(t.name)}</strong>
       </div>
-      <p class="text-[11.5px] text-gray-500 leading-relaxed m-0">${escapeHtml(t.description)}</p>
-      ${t.features ? `<ul class="mt-1 pl-3.5 text-[11px] text-gray-400 leading-loose list-disc">${t.features.map(f => `<li>${escapeHtml(f)}</li>`).join("")}</ul>` : ""}
+      <p class="text-xs text-gray-500 leading-relaxed m-0">${escapeHtml(t.description)}</p>
+      ${t.features ? `<ul class="mt-1 pl-3.5 text-xs text-gray-400 leading-loose list-disc">${t.features.map(f => `<li>${escapeHtml(f)}</li>`).join("")}</ul>` : ""}
     </button>`;
   }).join("");
 
   const sectionHeading = (index, title) => `
     <div class="flex items-center gap-2 mb-2">
-      <span class="flex-shrink-0 w-5 h-5 rounded-full bg-gray-900 text-white text-[10px] font-bold flex items-center justify-center">${index}</span>
-      <h2 class="text-[11.5px] font-bold uppercase tracking-wide text-gray-500">${title}</h2>
-      <span class="text-[10px] text-gray-300 font-medium ml-auto">${index} / 3</span>
+      <span class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-xs font-bold flex items-center justify-center">${index}</span>
+      <h2 class="text-xs font-bold uppercase tracking-wide text-gray-500">${title}</h2>
     </div>`;
 
   setFooter("Guardar y continuar", "save-profile-and-template", !template);
-  return `<section>
-    <div class="max-w-lg mx-auto mb-5">
+  return `<section class="grid w-full gap-6 lg:grid-cols-12 lg:items-start">
+    <div class="lg:col-span-8 xl:col-span-5">
       ${sectionHeading(1, "Institución")}
-      <p class="${CARD_LEAD} !max-w-lg !mb-3">Estos datos contextualizan las portadas, los casos y los metadatos de cada publicación.</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-        <label class="${FIELD_LABEL} sm:col-span-2">
+        <label class="${FIELD_LABEL} sm:col-span-2" for="onb-website">
           Sitio web de la institución <span class="text-gray-400 font-normal">(opcional)</span>
           <div class="flex gap-2">
-            <input class="${FIELD_INPUT}" id="onb-website" type="url" value="${value("website")}" placeholder="https://www.uide.edu.ec/">
+            <input class="${FIELD_INPUT}" id="onb-website" type="url" value="${value("website")}" placeholder="https://www.uide.edu.ec/" aria-describedby="onb-website-hint onb-website-error">
             <button class="${BTN_SECONDARY} flex-shrink-0" id="onb-extract-palette" type="button">
               ${ic("palette", 15)} <span>Analizar</span>
             </button>
           </div>
-          <span class="text-[10.5px] text-gray-400 font-normal">Usaremos el sitio para completar el nombre y proponer sus colores. Puedes omitir este paso.</span>
+          <span id="onb-website-hint" class="text-xs text-gray-400 font-normal">Usaremos el sitio para completar el nombre y proponer sus colores. Puedes omitir este paso.</span><span id="onb-website-error" class="text-xs text-red-700" hidden></span>
         </label>
         <div id="onb-site-analysis" class="sm:col-span-2" aria-live="polite">
           ${renderOnboardingSiteAnalysis()}
         </div>
-        <label class="${FIELD_LABEL} sm:col-span-2">Área del conocimiento
-          <select class="${FIELD_INPUT}" id="onb-discipline">
+        <label class="${FIELD_LABEL} sm:col-span-2" for="onb-discipline">Área del conocimiento
+          <select class="${FIELD_INPUT}" id="onb-discipline" required aria-describedby="onb-discipline-error">
             <option value="">— Selecciona tu área —</option>
             <option value="software-engineering" ${value("discipline") === "software-engineering" ? "selected" : ""}>Informática / Ingeniería de software</option>
             <option value="math-statistics" ${value("discipline") === "math-statistics" ? "selected" : ""}>Matemáticas / Estadística</option>
@@ -1009,31 +902,34 @@ function profileStep() {
             <option value="business" ${value("discipline") === "business" ? "selected" : ""}>Administración / Economía</option>
             <option value="design" ${value("discipline") === "design" ? "selected" : ""}>Diseño / Arquitectura</option>
             <option value="general" ${value("discipline") === "general" ? "selected" : ""}>General / Multidisciplinar</option>
-          </select>
+          </select><span id="onb-discipline-error" class="text-xs text-red-700" hidden></span>
         </label>
-        <label class="${FIELD_LABEL}">Institución<input class="${FIELD_INPUT}" id="onb-institution" value="${value("institution")}" placeholder="Universidad Ejemplo"></label>
-        <label class="${FIELD_LABEL}">Facultad<input class="${FIELD_INPUT}" id="onb-faculty" value="${value("faculty")}" placeholder="Facultad de Ingeniería"></label>
-        <label class="${FIELD_LABEL}">Carrera<input class="${FIELD_INPUT}" id="onb-career" value="${value("career")}" placeholder="Ingeniería de Software"></label>
+        <label class="${FIELD_LABEL}" for="onb-institution">Institución<input class="${FIELD_INPUT}" id="onb-institution" value="${value("institution")}" placeholder="Universidad Ejemplo" required aria-describedby="onb-institution-error"><span id="onb-institution-error" class="text-xs text-red-700" hidden></span></label>
+        <label class="${FIELD_LABEL}" for="onb-faculty">Facultad<input class="${FIELD_INPUT}" id="onb-faculty" value="${value("faculty")}" placeholder="Facultad de Ingeniería" required aria-describedby="onb-faculty-error"><span id="onb-faculty-error" class="text-xs text-red-700" hidden></span></label>
+        <label class="${FIELD_LABEL}" for="onb-career">Carrera<input class="${FIELD_INPUT}" id="onb-career" value="${value("career")}" placeholder="Ingeniería de Software" required aria-describedby="onb-career-error"><span id="onb-career-error" class="text-xs text-red-700" hidden></span></label>
         <label class="${FIELD_LABEL}">Color institucional<div class="flex items-center gap-2"><input class="${FIELD_INPUT} h-9 p-1" id="onb-color" type="color" value="${escapeHtml(config.colorHex || "#00796b")}"><span id="onb-color-preview" class="inline-block h-5 w-5 shrink-0 rounded border border-black/20" style="background:${escapeHtml(config.colorHex || "#00796b")}" aria-hidden="true"></span><span id="onb-color-label" class="text-[11px] text-gray-500">${escapeHtml(config.colorHex || "#00796b")}</span></div></label>
       </div>
     </div>
 
-    <div class="max-w-lg mx-auto mb-5 pt-5 border-t border-gray-200">
+    <div class="border-t border-gray-200 pt-5 lg:col-span-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 xl:col-span-3">
       ${sectionHeading(2, "Tu perfil")}
-      <p class="${CARD_LEAD} !max-w-lg !mb-3">Tu nombre aparecerá como autor de tus publicaciones.</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-        <label class="${FIELD_LABEL}">Nombre completo<input class="${FIELD_INPUT}" id="onb-author" value="${value("author")}" placeholder="Ana López"></label>
+        <label class="${FIELD_LABEL}" for="onb-author">Nombre completo<input class="${FIELD_INPUT}" id="onb-author" value="${value("author")}" placeholder="Ana López" required aria-describedby="onb-author-error"><span id="onb-author-error" class="text-xs text-red-700" hidden></span></label>
         <label class="${FIELD_LABEL}">Grado académico <span class="text-gray-400 font-normal">(opcional)</span><input class="${FIELD_INPUT}" id="onb-degree" value="${value("degree")}" placeholder="Mgtr."></label>
       </div>
     </div>
 
-    <div class="max-w-lg mx-auto pt-5 border-t border-gray-200">
+    <div class="border-t border-gray-200 pt-5 lg:col-span-12 xl:col-span-4 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
       ${sectionHeading(3, "Formato del documento")}
-      <p class="${CARD_LEAD} !max-w-lg !mb-3">Elige cómo se verá la guía final.</p>
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3">${templateCards}</div>
+      <div id="onb-template-group" class="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3" role="radiogroup" aria-label="Plantilla del documento" aria-describedby="onb-templateId-error">${templateCards}</div>
+      <span id="onb-templateId-error" class="mt-2 block text-xs text-red-700" hidden></span>
+      <div class="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong class="block text-sm text-gray-900">Herramientas recomendadas para tu área</strong><p class="mt-1 text-xs leading-relaxed text-gray-600">${packageCount ? `${packageCount} paquete(s): ${pythonPackages.length ? "procesamiento Python" : ""}${pythonPackages.length && nodePackages.length ? " y " : ""}${nodePackages.length ? "visualización Node" : ""}.` : "No hay paquetes adicionales para esta selección."} Se instalan dentro del entorno privado de Jintia y no modifican el sistema.</p></div>${packageCount ? `<button type="button" class="${BTN_SECONDARY} shrink-0" data-onboarding-action="prepare-profile-tools">Preparar herramientas recomendadas</button>` : ""}</div>
+        ${operationPanelMarkup(runtime.dependencyOperations.get("profile-packages"), "profile-packages")}
+      </div>
     </div>
 
-    <div class="${INLINE_ERROR}" id="onb-form-error" hidden></div>
+    <div class="${INLINE_ERROR} !max-w-none lg:col-span-12" id="onb-form-error" hidden></div>
   </section>`;
 }
 
@@ -1082,9 +978,11 @@ async function analyzeInstitutionWebsite() {
     runtime.detectedSiteName = result.site_name || "";
     const institution = document.getElementById("onb-institution");
     if (institution && result.site_name) institution.value = result.site_name;
-    state.config.website = url;
-    if (result.site_name) state.config.institution = result.site_name;
-    saveConfig();
+    runtime.profileDraft = persistProfileDraft(localStorage, {
+      ...(runtime.profileDraft || profileDraftFromConfig(state.config, runtime.activeTemplate)),
+      website: url,
+      institution: result.site_name || runtime.profileDraft?.institution || "",
+    });
     if (area) area.innerHTML = renderOnboardingSiteAnalysis();
     bindOnboardingPaletteButtons();
     refreshIcons();
@@ -1106,6 +1004,10 @@ function bindOnboardingPaletteButtons() {
       if (!hex) return toast("No se pudo convertir este color", "error");
       const picker = document.getElementById("onb-color");
       if (picker) picker.value = hex;
+      runtime.profileDraft = persistProfileDraft(localStorage, {
+        ...(runtime.profileDraft || profileDraftFromConfig(state.config, runtime.activeTemplate)),
+        colorHex: hex,
+      });
       document.querySelectorAll("[data-onb-palette-color]").forEach(item => item.classList.remove("border-gray-900", "ring-2", "ring-gray-900/10"));
       button.classList.add("border-gray-900", "ring-2", "ring-gray-900/10");
       toast(`Color institucional: ${hex}`, "success", 2200);
@@ -1132,69 +1034,61 @@ function connectStep() {
     { id: "both",           title: "Usar en todos",                 icon: "laptop",         desc: "Prepara Jintia para Claude Code, ChatGPT y Codex en el mismo equipo." },
   ];
 
-  // Checklist de pasos para el destino seleccionado
-  function checkItem(label, done) {
-    return `<div class="flex items-center gap-2 py-1.5 px-2.5 rounded-lg text-xs border ${done ? "bg-green-50 border-green-200" : "bg-gray-50 border-gray-200"}">
-      <span class="${done ? "text-green-600" : "text-gray-400"}">${ic(done ? "check-circle-2" : "circle", 15)}</span>
-      <span class="${done ? "text-green-600" : "text-gray-600"}">${escapeHtml(label)}</span>
-    </div>`;
-  }
-
-  let checklist = "";
-  let allReady  = false;
-  let actions   = "";
+  let allReady = false;
+  let actions  = "";
 
   if (selected === "claude-code") {
-    checklist = checkItem(skillReady ? `Skill ${setup.skill_version || ""} actualizada`.trim() : "Skill pendiente de instalar o actualizar", skillReady) +
-                checkItem("Claude Code puede abrir Jintia", setup.mcp_claude_code_configured);
-    allReady  = !!(skillReady && setup.mcp_claude_code_configured);
-    actions   = actionButton(setup.skill_installed ? "1. Actualizar skill" : "1. Instalar", "install-local", skillReady, true) +
-                actionButton("2. Conectar con Claude Code", "configure-code", !skillReady || setup.mcp_claude_code_configured, true);
+    allReady = !!(skillReady && setup.mcp_claude_code_configured);
+    actions  = actionButton(setup.skill_installed ? "Actualizar skill" : "Instalar skill", "install-local", skillReady, true) +
+               actionButton("Conectar con Claude Code", "configure-code", !skillReady || setup.mcp_claude_code_configured, true);
 
   } else if (selected === "openai") {
-    checklist = checkItem(
-      setup.openai_plugin_current ? `Plugin Jintia ${setup.available_skill_version || ""} preparado`.trim() : "Plugin pendiente de preparar o actualizar",
-      setup.openai_plugin_current
-    );
     allReady = !!setup.openai_plugin_current;
-    actions = actionButton(
-      setup.openai_plugin_installed ? "Actualizar para ChatGPT y Codex" : "Preparar para ChatGPT y Codex",
+    actions  = actionButton(
+      openaiPluginLabel(setup),
       "install-openai",
       setup.openai_plugin_current,
       true
     );
   } else { // all
-    checklist = checkItem(skillReady ? `Skill ${setup.skill_version || ""} actualizada`.trim() : "Skill pendiente de instalar o actualizar", skillReady) +
-                checkItem("Claude Code puede abrir Jintia", setup.mcp_claude_code_configured) +
-                checkItem("Plugin ChatGPT/Codex preparado", setup.openai_plugin_current);
-    allReady  = !!(skillReady && setup.mcp_claude_code_configured && setup.openai_plugin_current);
-    actions   = actionButton(setup.skill_installed ? "Actualizar (proyecto local)" : "Instalar (proyecto local)", "install-local", skillReady, true) +
-                actionButton(setup.openai_plugin_installed ? "Actualizar ChatGPT/Codex" : "Preparar ChatGPT/Codex", "install-openai", setup.openai_plugin_current, true) +
-                actionButton("Conectar con Claude Code", "configure-code", !setup.skill_installed || setup.mcp_claude_code_configured, true);
+    allReady = !!(skillReady && setup.mcp_claude_code_configured && setup.openai_plugin_current);
+    actions  = actionButton(setup.skill_installed ? "Actualizar (proyecto local)" : "Instalar (proyecto local)", "install-local", skillReady, true) +
+               actionButton(openaiPluginLabel(setup), "install-openai", setup.openai_plugin_current, true) +
+               actionButton("Conectar con Claude Code", "configure-code", !setup.skill_installed || setup.mcp_claude_code_configured, true);
   }
 
   setFooter("Continuar al paso final", "advance-target", !authenticated || !allReady);
-  return `<section>
-    <div class="max-w-lg mx-auto mb-5">
-      <div class="flex items-center justify-between gap-2 mb-2">
+  return `<section class="grid w-full gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] xl:items-start">
+    <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div class="flex items-center justify-between gap-2 mb-3">
         <h3 class="text-[11.5px] font-bold uppercase tracking-wide text-gray-400">Fuentes del curso</h3>
         <img src="${notebookLmWordmark}" alt="NotebookLM" class="h-4 w-auto shrink-0">
       </div>
-      <p class="${CARD_LEAD} !max-w-lg !mb-3">No diseña la guía ni reemplaza tu criterio docente: solo contrasta afirmaciones con las fuentes de tu curso.</p>
-      <button class="flex items-start sm:items-center gap-3 w-full p-3.5 rounded-xl border text-left cursor-pointer transition-colors ${statusCls}" data-onboarding-action="verify-auth" title="Volver a verificar">
-        <div class="${iconCls} flex flex-shrink-0 mt-0.5 sm:mt-0">${authenticated ? ic("check-circle-2", 18) : ic("lock-keyhole", 18)}</div>
-        <div class="flex flex-col gap-0.5 flex-1 min-w-0">
-          <strong class="text-gray-900 text-sm">${authenticated ? "Sesión verificada" : "Sesión pendiente"}</strong>
-          <span class="text-gray-500 text-xs">${escapeHtml(runtime.auth?.message || "Pulsa iniciar sesión y luego toca aquí para verificar.")}</span>
-        </div>
-        <div class="text-gray-400 flex-shrink-0">${ic("refresh-cw", 15)}</div>
-      </button>
-      <div class="flex justify-center mt-3">${actionButton("Iniciar sesión con Google", "start-auth", false, true, `<img src="${googleGLogo}" alt="" class="w-4 h-4">`)}</div>
+      ${authenticated
+        ? `<button class="flex items-center gap-3 w-full p-3.5 rounded-xl border border-gray-900 bg-gray-50 text-left cursor-pointer transition-colors" data-onboarding-action="verify-auth" title="Volver a verificar">
+             <span class="text-gray-900 flex-shrink-0">${ic("check-circle-2", 18)}</span>
+             <span class="flex flex-col gap-0.5 flex-1 min-w-0">
+               <strong class="text-gray-900 text-sm">Sesión verificada</strong>
+               <span class="text-gray-500 text-xs">${escapeHtml(runtime.auth?.message || "Conectado a NotebookLM.")}</span>
+             </span>
+             <span class="text-xs text-gray-400 flex-shrink-0 flex items-center gap-1">${ic("refresh-cw", 13)} Volver a verificar</span>
+           </button>`
+        : `<div class="flex items-center gap-3 w-full p-3.5 rounded-xl border border-amber-200 bg-amber-50">
+             <span class="text-amber-600 flex-shrink-0">${ic("lock-keyhole", 18)}</span>
+             <span class="flex flex-col gap-0.5 flex-1 min-w-0">
+               <strong class="text-gray-900 text-sm">Sesión pendiente</strong>
+               <span class="text-gray-500 text-xs">${escapeHtml(runtime.auth?.message || "Inicia sesión con Google para continuar.")}</span>
+             </span>
+           </div>`
+      }
+      ${!authenticated && !["working", "checking"].includes(runtime.authOperation.state)
+        ? `<div class="flex justify-center mt-3">${actionButton(runtime.authOperation.state === "error" || runtime.authOperation.state === "cancelled" ? "Reintentar conexión" : "Iniciar sesión con Google", "start-auth", false, true, `<img src="${googleGLogo}" alt="" class="w-4 h-4">`)}</div>`
+        : ""}
+      ${operationPanelMarkup(runtime.authOperation, "notebooklm-auth")}
     </div>
 
-    <div class="max-w-lg mx-auto pt-5 border-t border-gray-200">
-      <h3 class="text-[11.5px] font-bold uppercase tracking-wide text-gray-400 mb-2">Dónde trabajarás</h3>
-      <p class="${CARD_LEAD} !max-w-lg !mb-3 !mt-0 text-left">Elige desde dónde usarás Jintia para generar tus guías. Puedes cambiarlo después desde Ajustes.</p>
+    <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <h3 class="text-[11.5px] font-bold uppercase tracking-wide text-gray-400 mb-3">Dónde trabajarás</h3>
       <div class="grid gap-2">
         ${targets.map(t => `
           <label class="flex items-start sm:items-center gap-3 p-3.5 rounded-xl border cursor-pointer ${t.id === selected ? "border-gray-900 bg-gray-50" : "border-gray-200 bg-white"}">
@@ -1205,14 +1099,8 @@ function connectStep() {
           </label>`).join("")}
       </div>
 
-      <div class="my-4">
-        <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">
-          Pendiente para ${targets.find(t => t.id === selected)?.title || selected}
-        </div>
-        <div class="flex flex-col gap-1.5">${checklist}</div>
-      </div>
-
-      <div class="flex justify-center flex-wrap gap-2">${actions}</div>
+      <div class="mt-4 flex justify-center flex-wrap gap-2">${actions}</div>
+      ${operationPanelMarkup(runtime.targetOperation, "assistant-target")}
       ${selected === "openai" || selected === "both" ? `<p class="mt-3 text-xs leading-relaxed text-gray-500"><strong>ChatGPT y Codex:</strong> reinicia ChatGPT después de instalar y activa Jintia desde Plugins. Su disponibilidad puede depender del plan y la política del workspace.</p>` : ""}
       <div class="${INLINE_ERROR}" id="onb-target-message" hidden></div>
     </div>
@@ -1248,9 +1136,9 @@ function finalStep() {
     ...(connectionChecks[target] || connectionChecks["claude-code"]),
   ];
 
-  setFooter("Finalizar configuración", "complete", true);
+  setFooter("Crear mi primera asignatura", "complete-create", true);
   return `<section>
-    <div id="final-gen-area" class="mx-auto mb-6 max-w-md">
+    <div id="final-gen-area" class="mx-auto mb-6 w-full max-w-4xl">
 
       <!-- Carga (visible al inicio) -->
       <div id="final-loading" class="flex flex-col items-center gap-4 py-6">
@@ -1265,7 +1153,7 @@ function finalStep() {
         </div>
 
         <div id="final-loading-msg" role="status" aria-live="polite" class="text-[15px] font-bold text-gray-800 text-center">Preparando la prueba…</div>
-        <p class="text-[11px] text-gray-400 text-center -mt-2">Puedes seguir el avance sin abrir los detalles técnicos.</p>
+        <p class="text-xs text-gray-500 text-center -mt-2">Puedes seguir el avance sin abrir los detalles técnicos.</p>
 
         <!-- Barra de progreso -->
         <div class="w-full max-w-xs h-[3px] rounded-full bg-gray-200 overflow-hidden">
@@ -1273,40 +1161,40 @@ function finalStep() {
         </div>
 
         <div id="final-loading-steps" class="grid w-full max-w-sm grid-cols-5 gap-1" aria-label="Progreso de la prueba">
-          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="0">
+          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="0">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
             <span>Validar</span>
           </div>
-          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="1">
+          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="1">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
             <span>Renderizar</span>
           </div>
-          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="2">
+          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="2">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
             <span>Vivliostyle</span>
           </div>
-          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="3">
+          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="3">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
             <span>PDF</span>
           </div>
-          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-[9.5px] font-medium text-gray-500 opacity-30" data-check="4">
+          <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="4">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
             <span>Listo</span>
           </div>
         </div>
 
         <details id="compile-monitor" class="w-full max-w-sm overflow-hidden rounded-xl border border-gray-200 bg-white text-left">
-          <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-[11.5px] font-semibold text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900">
+          <summary class="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-xs font-semibold text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900">
             <span class="flex items-center gap-2">
               <span class="text-gray-500">${ic("terminal", 15)}</span>
               Ver detalles técnicos
             </span>
-            <span id="compile-elapsed" class="font-mono text-[10.5px] tabular-nums text-gray-400">00:00</span>
+            <span id="compile-elapsed" class="font-mono text-xs tabular-nums text-gray-500">00:00</span>
           </summary>
           <div class="border-t border-gray-100 px-3 pb-3 pt-2.5">
-            <div id="compile-current" class="mb-2 text-[11px] font-medium text-gray-600">Esperando al compilador…</div>
-            <pre id="compile-live-log" aria-live="polite" class="m-0 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 px-3 py-2.5 font-mono text-[10px] leading-relaxed text-gray-200">La actividad aparecerá aquí.</pre>
-            <button type="button" id="btn-copy-live-diagnostic" class="mt-2 inline-flex items-center gap-1.5 border-0 bg-transparent p-0 text-[10.5px] font-semibold text-gray-500 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900">
+            <div id="compile-current" class="mb-2 text-xs font-medium text-gray-600">Esperando al compilador…</div>
+            <pre id="compile-live-log" aria-live="polite" class="m-0 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 px-3 py-2.5 font-mono text-xs leading-relaxed text-gray-200">La actividad aparecerá aquí.</pre>
+            <button type="button" id="btn-copy-live-diagnostic" class="mt-2 inline-flex min-h-11 items-center gap-1.5 border-0 bg-transparent p-0 text-xs font-semibold text-gray-500 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900">
               ${ic("copy", 14)}
               Copiar actividad
             </button>
@@ -1493,7 +1381,7 @@ async function animateFinalStep() {
       wrapEl.style.transition = "opacity .4s";
       requestAnimationFrame(() => { wrapEl.style.opacity = "1"; });
     }
-    document.querySelector("[data-onboarding-action='complete']").disabled = false;
+    document.querySelector("[data-onboarding-action='complete-create']").disabled = false;
 
     const assetUrl = convertFileSrc(pdfPath);
     document.getElementById("btn-open-pdf")?.addEventListener("click", () => window.open(assetUrl));
@@ -1537,12 +1425,19 @@ async function animateFinalStep() {
     const wrapEl    = document.getElementById("final-result-wrap");
     const contentEl = document.getElementById("final-result-content");
     if (loadingEl) loadingEl.style.display = "none";
+    const target = runtime.status?.selectedTarget || state.config.onboardingTarget || "claude-code";
+    const integrationLabel = ({ "claude-code": "Claude Code", openai: "ChatGPT y Codex", both: "Claude Code, ChatGPT y Codex" })[target] || target;
     if (contentEl) contentEl.innerHTML = `
       <div class="border-[1.5px] border-green-300/60 rounded-xl p-6 text-center bg-green-50/60">
         <span class="text-green-600 block mb-2.5">${ic("check-circle-2", 36)}</span>
-        <div class="text-[15px] font-bold text-green-600 mb-1.5">¡Jintia está listo!</div>
-        <div class="text-[12.5px] text-gray-700 mb-3">Tu entorno está configurado correctamente. Ya puedes abrir Claude o Codex y empezar a trabajar.</div>
+        <div class="text-[15px] font-bold text-green-600 mb-1.5">Todo listo para crear tu primera asignatura</div>
+        <div class="text-[12.5px] text-gray-700 mb-3">El entorno Jintia, el renderizado, la generación PDF y tus integraciones superaron la comprobación.</div>
+        <ul class="mx-auto mb-3 max-w-sm space-y-2 text-left text-xs text-gray-700">
+          ${["Entorno privado de Jintia", "Renderizado de la guía", "Generación de PDF", `Integraciones: ${integrationLabel}`].map(label => `<li class="flex items-center gap-2">${ic("check", 14)}<span>${escapeHtml(label)}</span></li>`).join("")}
+        </ul>
+        <details class="mx-auto max-w-sm rounded-lg border border-green-200 bg-white/70 text-left"><summary class="min-h-11 cursor-pointer px-3 py-3 text-xs font-semibold text-gray-700">Detalles técnicos</summary><pre class="m-0 whitespace-pre-wrap break-words border-t border-green-100 p-3 text-xs text-gray-600">${escapeHtml(JSON.stringify(selfTest?.checks || {}, null, 2))}</pre></details>
         ${syllabusPath ? `<div class="text-[11px] text-gray-400 p-3 bg-black/[0.03] rounded-lg break-all text-left"><strong>Sílabo generado:</strong> ${escapeHtml(syllabusPath)}</div>` : ""}
+        <button type="button" class="${BTN_SECONDARY} mt-3" data-onboarding-action="complete-dashboard">Ir al panel</button>
       </div>`;
     refreshIcons();
     if (wrapEl) {
@@ -1551,7 +1446,8 @@ async function animateFinalStep() {
       wrapEl.style.transition = "opacity .4s";
       requestAnimationFrame(() => { wrapEl.style.opacity = "1"; });
     }
-    document.querySelector("[data-onboarding-action='complete']").disabled = false;
+    document.querySelector("[data-onboarding-action='complete-create']").disabled = false;
+    document.querySelector("[data-onboarding-action='complete-dashboard']")?.addEventListener("click", () => handleAction("complete-dashboard", 5));
     syncOnboardingBusyState();
   }
 
@@ -1600,6 +1496,17 @@ async function animateFinalStep() {
   setRow(4, "active");
   setProgress(96);
   await new Promise(r => setTimeout(r, 300));
+
+  try {
+    await saveSelfTestResult({
+      skillVersion: "",
+      passed: true,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+  } catch (err) {
+    console.warn("No se pudo persistir el resultado de la prueba final:", err);
+  }
+
   setRow(4, "done");
   setProgress(100);
   setMsg("¡Listo!");
@@ -1632,8 +1539,25 @@ function bindStepEvents(current) {
       }
     });
   }
-  if (current === 2) revealFocusedDependency();
   if (current === 3) {
+    const fieldMap = {
+      "onb-website": "website", "onb-institution": "institution", "onb-faculty": "faculty",
+      "onb-career": "career", "onb-author": "author", "onb-degree": "degree",
+      "onb-discipline": "discipline", "onb-color": "colorHex",
+    };
+    Object.entries(fieldMap).forEach(([id, key]) => {
+      const control = root.querySelector(`#${id}`);
+      const remember = () => {
+        runtime.profileDraft = persistProfileDraft(localStorage, {
+          ...(runtime.profileDraft || profileDraftFromConfig(state.config, runtime.activeTemplate)),
+          [key]: control.value,
+        });
+        const error = root.querySelector(`#${id}-error`);
+        if (error && String(control.value).trim()) error.hidden = true;
+      };
+      control?.addEventListener("input", remember);
+      control?.addEventListener("change", remember);
+    });
     root.querySelector("#onb-extract-palette")?.addEventListener("click", () => runOnboardingOperation(
       "Analizando el sitio institucional…",
       analyzeInstitutionWebsite,
@@ -1660,6 +1584,13 @@ function bindStepEvents(current) {
     });
   }));
   root.querySelectorAll("[data-install-dependency]").forEach(button => button.addEventListener("click", () => requestDependencyInstall(button.dataset.installDependency, button)));
+  root.querySelectorAll("[data-show-capability-details]").forEach(button => button.addEventListener("click", () => {
+    const details = root.querySelector(`#capability-detail-${CSS.escape(button.dataset.showCapabilityDetails)}`);
+    if (details) {
+      details.open = true;
+      details.querySelector("summary")?.focus();
+    }
+  }));
   root.querySelectorAll("[data-onboarding-dep-step]").forEach(dot => dot.addEventListener("click", () => {
     if (onboardingActionInFlight) return;
     const toolIndex = Number(dot.dataset.depStepIndex);
@@ -1672,6 +1603,10 @@ function bindStepEvents(current) {
   root.querySelectorAll("[data-template-id]").forEach(button => button.addEventListener("click", () => {
     if (onboardingActionInFlight) return;
     runtime.activeTemplate = button.dataset.templateId;
+    runtime.profileDraft = persistProfileDraft(localStorage, {
+      ...(runtime.profileDraft || profileDraftFromConfig(state.config, runtime.activeTemplate)),
+      templateId: runtime.activeTemplate,
+    });
     renderCurrentStep();
   }));
   root.querySelectorAll("input[name=onboarding-target]").forEach(input => input.addEventListener("change", event => {
@@ -1691,12 +1626,7 @@ function bindStepEvents(current) {
 }
 
 function dependencyInstallConfirmMessage(name) {
-  if (name === "Python") {
-    return "Jintia instalará Python 3.13 oficial para tu usuario de Windows. No requiere administrador; quedará disponible en la computadora y se añadirá al PATH del usuario. ¿Continuar?";
-  }
-  return LARGE_DEPENDENCIES.has(name)
-    ? `${name} puede descargar componentes grandes y requiere permisos del sistema. ¿Instalarlo ahora?`
-    : `Vamos a instalar ${name} en tu sistema. ¿Continuar?`;
+  return `Jintia instalará ${name} dentro de su entorno privado. No modificará la instalación global de tu sistema. ¿Continuar?`;
 }
 
 // Diálogo de confirmación propio del onboarding: la app no tiene barra de
@@ -1710,6 +1640,8 @@ function confirmInOnboarding(message) {
       resolve(false);
       return;
     }
+    const opener = document.activeElement;
+    const background = root.querySelector("main");
     const wrapper = document.createElement("div");
     wrapper.innerHTML = `
       <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/45 px-6" role="alertdialog" aria-modal="true" aria-labelledby="onboarding-confirm-message">
@@ -1723,14 +1655,24 @@ function confirmInOnboarding(message) {
       </div>`;
     const overlay = wrapper.firstElementChild;
     root.appendChild(overlay);
+    if (background) background.inert = true;
 
     const cleanup = value => {
       overlay.removeEventListener("keydown", onKeydown);
       overlay.remove();
+      if (background) background.inert = false;
+      opener?.focus?.();
       resolve(value);
     };
     const onKeydown = event => {
       if (event.key === "Escape") cleanup(false);
+      if (event.key === "Tab") {
+        const controls = [...overlay.querySelectorAll("button:not([disabled])")];
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
     };
     overlay.querySelector('[data-onboarding-confirm="cancel"]').addEventListener("click", () => cleanup(false));
     overlay.querySelector('[data-onboarding-confirm="ok"]').addEventListener("click", () => cleanup(true));
@@ -1746,16 +1688,46 @@ async function requestDependencyInstall(name, button) {
   if (onboardingActionInFlight) return;
   const confirmed = await confirmInOnboarding(dependencyInstallConfirmMessage(name));
   if (!confirmed) return;
-  const row = button?.closest("[data-dep-row]");
-  let reporter = () => {};
-  if (row) {
-    reporter = beginDependencyInstallProgress(row, row.querySelector("[data-dep-status]"), row.querySelector(".dep-detail"), button);
-  }
-  await runOnboardingOperation(`Instalando ${name}…`, () => performDependencyInstall(name, reporter));
+  await runOnboardingOperation(`Instalando ${name}…`, () => performDependencyInstall(name));
 }
 
-async function performDependencyInstall(name, reporter = () => {}) {
-  toast(`Instalando ${name}…`, "loading", 120000);
+function updateDependencyOperation(name, patch) {
+  const dep = runtime.dependencies.find(item => item.name === name || item.id === name);
+  const id = dep?.id || name;
+  const previous = runtime.dependencyOperations.get(id) || createOperationState({ id, title: `Preparar ${dep?.label || name}` });
+  const next = { ...previous, ...patch, id, startedAt: previous.startedAt || patch.startedAt || Date.now() };
+  runtime.dependencyOperations.set(id, next);
+  const panel = document.querySelector(`[data-operation-panel="dependency-${CSS.escape(id)}"]`);
+  if (panel) panel.outerHTML = operationPanelMarkup(next, `dependency-${id}`);
+  refreshIcons();
+  return next;
+}
+
+async function installAllNeeded() {
+  const pending = installableBlockingCapabilities(runtime.dependencies);
+  if (!pending.length) return;
+  const confirmed = await confirmInOnboarding(`Se instalarán ${pending.length} componentes dentro del entorno privado de Jintia, uno por uno. No se modificará Node ni Python global. ¿Continuar?`);
+  if (!confirmed) return;
+  await runOnboardingOperation("Preparando todas las herramientas necesarias…", async () => {
+    for (const capability of pending) {
+      const current = runtime.dependencies.find(item => item.id === capability.id);
+      if (!current || current.status === "ready" || runtime.dependencyOperations.get(current.id)?.state === "working") continue;
+      const result = await performDependencyInstall(current.name);
+      if (!result?.success) break;
+    }
+  });
+}
+
+async function performDependencyInstall(name, externalReporter = null) {
+  const reporter = payload => {
+    const progress = updateDependencyOperation(name, {
+      state: "working",
+      message: payload.message || `Preparando ${name}…`,
+      percent: payload.percent,
+    });
+    externalReporter?.(progress);
+  };
+  updateDependencyOperation(name, { state: "working", message: `Preparando ${name}…`, percent: null, technicalDetail: "" });
   let result;
   try {
     if (name === "Node.js") {
@@ -1765,7 +1737,6 @@ async function performDependencyInstall(name, reporter = () => {}) {
         reporter({ message: "Instalando Vivliostyle CLI…", percent: null });
         onboardingBusyMessage = "Instalando Vivliostyle CLI…";
         syncOnboardingBusyState();
-        toast("Instalando Vivliostyle CLI…", "loading", 120000);
       }
       result = await runSecondaryStage(
         result,
@@ -1778,13 +1749,6 @@ async function performDependencyInstall(name, reporter = () => {}) {
       );
     } else if (name === "Python") {
       result = await withDependencyProgress(name, listen, () => downloadPythonRuntime(), reporter);
-      if (result.success) {
-        // Paquetes del perfil no emiten eventos: cambiar a fase indeterminada
-        reporter({ message: "Instalando paquetes del perfil…", percent: null });
-      }
-      result = await runSecondaryStage(result, async () =>
-        normalizeProfileInstallResult(await installDisciplinePackages(reporter))
-      );
     } else if (name === "Vivliostyle CLI") {
       result = await withDependencyProgress(name, listen, () => installVivliostyleCli(), reporter);
     } else if (name === "Jintia Skill") {
@@ -1800,24 +1764,31 @@ async function performDependencyInstall(name, reporter = () => {}) {
   // La autoridad definitiva es checkDependencies(); solo Python concilia con ese snapshot.
   // Si el antivirus escanea el binario recién instalado puede bloquearlo unos segundos;
   // se reintenta una vez antes de declarar fallo.
-  let freshDeps = await checkDependencies();
+  let freshDeps = normalizeCapabilities(await checkDependencies());
   if (name === "Python" && result.success) {
     const pyDep = freshDeps.find(d => d.name === "Python");
     if (!pyDep || !pyDep.installed) {
       await new Promise(resolve => setTimeout(resolve, 3000));
-      freshDeps = await checkDependencies();
+      freshDeps = normalizeCapabilities(await checkDependencies());
     }
   }
   if (name === "Python") {
     result = verifyPythonInstallResult(result, freshDeps);
   }
-  toast(result.message, result.success ? "success" : "error", 9000);
   runtime.dependencies = freshDeps;
+  updateDependencyOperation(name, {
+    state: result.success ? "success" : "error",
+    message: result.message,
+    percent: result.success ? 100 : null,
+    technicalDetail: result.success ? "" : result.message,
+  });
+  toast(result.message, result.success ? "success" : "error", 9000);
   renderCurrentStep();
+  return result;
 }
 
-async function installDisciplinePackages(reporter = null) {
-  const discipline = state.config.discipline ?? "";
+async function installDisciplinePackages(reporter = null, disciplineOverride = null) {
+  const discipline = disciplineOverride ?? state.config.discipline ?? "";
 
   if (!discipline) {
     return {
@@ -1840,12 +1811,6 @@ async function installDisciplinePackages(reporter = null) {
     const npmPackages = profile?.node?.packages ?? [];
 
     if (pipPackages.length > 0) {
-      toast(
-        "Instalando paquetes Python del perfil…",
-        "loading",
-        60000
-      );
-
       const pipResult = reporter
         ? await withDependencyProgress("Python", listen, () => installProfilePackages(pipPackages), reporter, GENERIC_DEPENDENCY_EVENT)
         : await installProfilePackages(pipPackages);
@@ -1863,12 +1828,6 @@ async function installDisciplinePackages(reporter = null) {
     }
 
     if (npmPackages.length > 0) {
-      toast(
-        "Instalando paquetes Node del perfil…",
-        "loading",
-        60000
-      );
-
       const npmResult = reporter
         ? await withDependencyProgress("Paquetes Node del perfil", listen, () => installNpmPackages(npmPackages), reporter)
         : await installNpmPackages(npmPackages);
@@ -1885,11 +1844,32 @@ async function installDisciplinePackages(reporter = null) {
       }
     }
 
+    const binaryIds = (profile?.binaries ?? []).map(b => b.id).filter(Boolean);
+
+    if (binaryIds.length > 0) {
+      const binResult = reporter
+        ? await withDependencyProgress("Herramientas del perfil", listen, () => installProfileBinaries(binaryIds), reporter)
+        : await installProfileBinaries(binaryIds);
+
+      if (!binResult?.success) {
+        return {
+          discipline,
+          profileId: profileId ?? null,
+          pythonPackages: pipPackages,
+          nodePackages: npmPackages,
+          binaryIds,
+          failedStage: "binaries",
+          error: binResult?.message || "No se pudieron instalar las herramientas del perfil.",
+        };
+      }
+    }
+
     return {
       discipline,
       profileId: profileId ?? null,
       pythonPackages: pipPackages,
       nodePackages: npmPackages,
+      binaryIds: binaryIds.length > 0 ? binaryIds : undefined,
     };
   } catch (error) {
     console.warn(
@@ -1907,20 +1887,149 @@ async function installDisciplinePackages(reporter = null) {
   }
 }
 
+function beginAuthElapsedClock() {
+  clearInterval(runtime.authElapsedTimer);
+  runtime.authElapsedTimer = setInterval(() => {
+    const label = elapsedLabel(runtime.authOperation.startedAt);
+    const element = document.querySelector('[data-operation-panel="notebooklm-auth"] [data-operation-elapsed]');
+    if (element && label) {
+      element.textContent = label;
+      element.classList.remove("hidden");
+    }
+  }, 1000);
+}
+
+function refreshAuthOperationPanel() {
+  const panel = document.querySelector('[data-operation-panel="notebooklm-auth"]');
+  if (!panel) return;
+  panel.outerHTML = operationPanelMarkup(runtime.authOperation, "notebooklm-auth");
+  document.querySelector('[data-operation-panel="notebooklm-auth"] [data-onboarding-action="cancel-auth"]')
+    ?.addEventListener("click", cancelNotebookLMAuthentication);
+  refreshIcons();
+}
+
+async function startNotebookLMAuthentication() {
+  if (["working", "checking"].includes(runtime.authOperation.state)) return;
+  const operationId = globalThis.crypto?.randomUUID?.() || `notebooklm-${Date.now()}`;
+  runtime.authOperation = createOperationState({
+    id: operationId,
+    state: "working",
+    phase: "opening_browser",
+    title: "Conectar NotebookLM",
+    message: "Se abrirá una ventana de Google. Inicia sesión y vuelve a Jintia.",
+    cancellable: true,
+    browserOpen: true,
+    startedAt: Date.now(),
+  });
+  renderCurrentStep();
+  beginAuthElapsedClock();
+  let unlisten = null;
+  try {
+    unlisten = await listen("notebooklm-auth-progress", ({ payload }) => {
+      if (payload?.operationId !== operationId) return;
+      runtime.authOperation = reduceOperationEvent(runtime.authOperation, payload);
+      if (stepNumber() === 4) refreshAuthOperationPanel();
+    });
+    const result = await startNotebookLMAuth(operationId);
+    if (result.success) {
+      runtime.auth = { authenticated: true, message: result.message };
+      rememberSuccessfulLoad("notebooklm-auth");
+    }
+    if (!["success", "error", "cancelled"].includes(runtime.authOperation.state)) {
+      runtime.authOperation = {
+        ...runtime.authOperation,
+        state: result.success ? "success" : "error",
+        phase: result.success ? "done" : "error",
+        message: result.message,
+        cancellable: false,
+        browserOpen: false,
+      };
+    }
+    toast(result.message, result.success ? "success" : "error", 9000);
+  } catch (error) {
+    runtime.authOperation = {
+      ...runtime.authOperation,
+      state: "error",
+      phase: "error",
+      message: "No se pudo completar la conexión. Comprueba la red y vuelve a intentarlo.",
+      technicalDetail: String(error),
+      cancellable: false,
+      browserOpen: false,
+    };
+  } finally {
+    unlisten?.();
+    clearInterval(runtime.authElapsedTimer);
+    runtime.authElapsedTimer = null;
+    if (stepNumber() === 4) renderCurrentStep();
+  }
+}
+
+async function cancelNotebookLMAuthentication() {
+  const operationId = runtime.authOperation.id;
+  if (!operationId || !runtime.authOperation.cancellable) return;
+  runtime.authOperation = {
+    ...runtime.authOperation,
+    message: "Cancelando y cerrando el proceso de NotebookLM…",
+    cancellable: false,
+  };
+  refreshAuthOperationPanel();
+  const result = await cancelNotebookLMAuth(operationId);
+  if (!result.success) {
+    runtime.authOperation = {
+      ...runtime.authOperation,
+      state: "warning",
+      message: result.message,
+      technicalDetail: result.message,
+    };
+    renderCurrentStep();
+  }
+}
+
+function updateProfilePackagesOperation(patch) {
+  const previous = runtime.dependencyOperations.get("profile-packages") || createOperationState({
+    id: "profile-packages",
+    title: "Herramientas recomendadas",
+  });
+  const next = { ...previous, ...patch, startedAt: previous.startedAt || patch.startedAt || Date.now() };
+  runtime.dependencyOperations.set("profile-packages", next);
+  const panel = document.querySelector('[data-operation-panel="profile-packages"]');
+  if (panel) panel.outerHTML = operationPanelMarkup(next, "profile-packages");
+  refreshIcons();
+}
+
+async function prepareProfileTools() {
+  const discipline = runtime.profileDraft?.discipline || "";
+  if (!discipline) {
+    const field = document.getElementById("onb-discipline");
+    const error = document.getElementById("onb-discipline-error");
+    if (error) { error.textContent = "Selecciona un área antes de preparar sus herramientas."; error.hidden = false; }
+    field?.focus();
+    return;
+  }
+  updateProfilePackagesOperation({ state: "working", message: "Resolviendo los paquetes del perfil…", percent: null });
+  const profileResult = await installDisciplinePackages(progress => updateProfilePackagesOperation({
+    state: "working",
+    message: progress.message || "Instalando paquetes dentro de Jintia…",
+    percent: progress.percent,
+  }), discipline);
+  const result = normalizeProfileInstallResult(profileResult);
+  updateProfilePackagesOperation({
+    state: result.success ? "success" : "error",
+    message: result.message,
+    percent: result.success ? 100 : null,
+    technicalDetail: result.success ? "" : result.message,
+  });
+  toast(result.message, result.success ? "success" : "error", 7000);
+}
+
 // Dentro del paso 2, las flechas Atrás/Continuar del pie primero recorren
 // las herramientas (sin tocar el backend) y solo al llegar al borde -primera
 // o última- hacen lo que siempre hicieron: retroceder al paso 1 o avanzar al
 // 3. Así la pista de abajo se siente como una sola secuencia continua.
 async function handleAction(action, current) {
-  if (current === 2 && (action === "advance" || action === "back")) {
-    const sequence = dependencySequence();
-    if (sequence.length > 0) {
-      const nextIndex = runtime.depFocusIndex + (action === "advance" ? 1 : -1);
-      if (nextIndex >= 0 && nextIndex < sequence.length) {
-        return moveDependencyFocus(nextIndex);
-      }
-    }
-  }
+  if (action === "start-auth") return startNotebookLMAuthentication();
+  if (action === "cancel-auth") return cancelNotebookLMAuthentication();
+  if (action === "install-all-needed") return installAllNeeded();
   return runOnboardingOperation(
     actionBusyMessage(action, current),
     () => performAction(action, current),
@@ -1964,54 +2073,44 @@ async function performAction(action, current) {
     else toast(result.message, "error");
     return;
   }
-  if (action === "start-auth") {
-    toast("Completa el inicio de sesión en Chrome. Esto puede tardar unos minutos…", "loading", 630000);
-    const result = await runNotebookLMAuth();
-    if (result.success) {
-      runtime.auth = {
-        authenticated: true,
-        message: result.message || "Sesión iniciada y verificada con NotebookLM.",
-      };
-      rememberSuccessfulLoad("notebooklm-auth");
-    }
-    toast(result.message, result.success ? "success" : "error", 10000);
-    renderCurrentStep();
-    return;
-  }
   if (action === "verify-auth") {
     await prepareOnboardingStep(4, { force: true });
     renderCurrentStep();
     return;
   }
   if (action === "save-profile-and-template") {
-    const color = document.getElementById("onb-color").value;
+    const draft = runtime.profileDraft || profileDraftFromConfig(state.config, runtime.activeTemplate);
+    const color = draft.colorHex;
     const rgb = hexToRgb(color);
-    const discipline = document.getElementById("onb-discipline")?.value ?? "";
+    const discipline = draft.discipline;
     const config = {
       ...state.config,
-      website: document.getElementById("onb-website").value.trim(),
-      institution: document.getElementById("onb-institution").value.trim(),
-      faculty: document.getElementById("onb-faculty").value.trim(),
-      career: document.getElementById("onb-career").value.trim(),
+      website: draft.website.trim(),
+      institution: draft.institution.trim(),
+      faculty: draft.faculty.trim(),
+      career: draft.career.trim(),
       colorHex: color,
       colorR: rgb.r,
       colorG: rgb.g,
       colorB: rgb.b,
-      author: document.getElementById("onb-author").value.trim(),
-      degree: document.getElementById("onb-degree").value.trim(),
+      author: draft.author.trim(),
+      degree: draft.degree.trim(),
       discipline,
     };
     const errorEl = document.getElementById("onb-form-error");
-    const missingLabels = { author: "Nombre completo", institution: "Institución", faculty: "Facultad", career: "Carrera" };
-    const missing = Object.keys(missingLabels).filter(key => !config[key]);
+    const missing = validateProfileDraft(draft);
+    document.querySelectorAll("[id$='-error']").forEach(element => { element.hidden = true; });
     if (missing.length > 0) {
       errorEl.hidden = false;
-      errorEl.textContent = `Completa los campos obligatorios: ${missing.map(key => missingLabels[key]).join(", ")}.`;
-      return;
-    }
-    if (!runtime.activeTemplate) {
-      errorEl.hidden = false;
-      errorEl.textContent = "Elige una plantilla para continuar.";
+      errorEl.textContent = `Completa los campos obligatorios: ${missing.map(item => item.label).join(", ")}.`;
+      missing.forEach(item => {
+        const fieldError = document.getElementById(`onb-${item.key}-error`);
+        if (fieldError) {
+          fieldError.textContent = `${item.label} es obligatorio.`;
+          fieldError.hidden = false;
+        }
+      });
+      document.getElementById(missing[0].fieldId)?.focus();
       return;
     }
     errorEl.hidden = true;
@@ -2031,37 +2130,33 @@ async function performAction(action, current) {
     }
     const result = await applyInstitutionConfig({ author: config.author, degree: config.degree, institution: config.institution, website: config.website, faculty: config.faculty, career: config.career, ecosystem: config.ecosystem || "", discipline: config.discipline || "", color_r: config.colorR, color_g: config.colorG, color_b: config.colorB });
     if (!result.success) { toast(result.message, "error", 8000); return; }
-    const templateResult = await setActiveTemplate(runtime.activeTemplate);
+    const templateResult = await setActiveTemplate(draft.templateId);
     toast(templateResult.message, templateResult.success ? "success" : "error", 7000);
     if (!templateResult.success) return;
-    // La disciplina ya está guardada en state.config.
-    // Ahora sí puede resolverse el perfil declarado por la Skill.
-    const profileInstall = await installDisciplinePackages();
-    if (profileInstall?.error) {
-      toast(
-        `No se pudo preparar el perfil: ${profileInstall.error}`,
-        "error",
-        8000
-      );
-      return;
-    }
-    if (profileInstall?.profileId) {
-      toast(
-        `Perfil ${profileInstall.profileId} preparado para ${discipline}.`,
-        "success",
-        4500
-      );
-    }
+    runtime.activeTemplate = draft.templateId;
+    clearProfileDraft(localStorage);
+    runtime.profileDraft = null;
     return advance(current);
   }
+  if (action === "install-all-needed") return installAllNeeded();
+  if (action === "prepare-profile-tools") return prepareProfileTools();
   if (action === "install-local") {
-    const result = await installSkill(); toast(result.message, result.success ? "success" : "error", 9000); await refreshTarget(); renderCurrentStep(); return;
+    const result = await installSkill();
+    targetOperationResult("Preparar Jintia para Claude Code", result);
+    toast(result.message, result.success ? "success" : "error", 9000);
+    await refreshTarget(); renderCurrentStep(); return;
   }
   if (action === "install-openai") {
-    const result = await installOpenAIPlugin(); toast(result.message, result.success ? "success" : "error", 10000); await refreshTarget(); renderCurrentStep(); return;
+    const result = await installOpenAIPlugin();
+    targetOperationResult("Preparar Jintia para ChatGPT y Codex", result);
+    toast(result.message, result.success ? "success" : "error", 10000);
+    await refreshTarget(); renderCurrentStep(); return;
   }
   if (action === "configure-code" || action === "configure-desktop") {
-    const result = await configureMcp(action === "configure-code" ? "claude-code" : "desktop"); toast(result.message, result.success ? "success" : "error", 9000); await refreshTarget(); renderCurrentStep(); return;
+    const result = await configureMcp(action === "configure-code" ? "claude-code" : "desktop");
+    targetOperationResult("Conectar el asistente", result);
+    toast(result.message, result.success ? "success" : "error", 9000);
+    await refreshTarget(); renderCurrentStep(); return;
   }
   if (action === "advance-target") {
     if (!runtime.auth?.authenticated) {
@@ -2076,22 +2171,11 @@ async function performAction(action, current) {
     if (!ready) { document.getElementById("onb-target-message").hidden = false; document.getElementById("onb-target-message").textContent = "Completa las acciones del destino y vuelve a verificar."; return; }
     return advance(current, target);
   }
-  if (action === "skip-onboarding") {
-    const stepResult = await goToOnboardingStep(5);
-    if (!stepResult.success) { toast(stepResult.message, "error"); return; }
-    const result = await completeOnboarding();
-    if (result.success) {
-      toast("Configuración omitida. Abriendo el dashboard…", "success", 3000);
-      await doCompletionHandoff("Configuración omitida. Abriendo el dashboard…");
-    } else {
-      toast(result.message, "error", 6000);
-    }
-    return;
-  }
-  if (action === "complete") {
+  if (action === "complete-create" || action === "complete-dashboard") {
     const result = await completeOnboarding();
     if (result.success) {
       runtime.status = result.status;
+      if (action === "complete-create") sessionStorage.setItem("jintia.openCreateCourse", "true");
       toast(result.message, "success", 3000);
       await doCompletionHandoff(result.message);
     } else {
@@ -2117,6 +2201,19 @@ async function advance(step, selectedTarget) {
 async function refreshTarget() {
   runtime.setup = await getSetupStatus();
   rememberSuccessfulLoad("setup");
+}
+
+function targetOperationResult(title, result) {
+  const backup = result?.backupPath || result?.backup_path;
+  runtime.targetOperation = {
+    ...createOperationState({ title }),
+    state: result?.success ? "success" : "error",
+    message: result?.success
+      ? `${result.message}${backup ? " Conservamos una copia de seguridad de tu configuración anterior." : ""}`
+      : "No se pudo completar esta integración. Revisa la indicación y vuelve a intentarlo.",
+    technicalDetail: result?.success ? (backup ? `Backup: ${backup}` : "") : (result?.message || "Error sin detalle."),
+    percent: result?.success ? 100 : null,
+  };
 }
 
 function targetReady(target) {

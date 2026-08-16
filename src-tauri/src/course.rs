@@ -18,7 +18,6 @@ static SYLLABUS_WRITE_OPERATION: Mutex<()> = Mutex::new(());
 const COURSE_CODE_SLUG_MAX: usize = 24;
 const COURSE_NAME_SLUG_MAX: usize = 48;
 
-
 fn dependency_cache() -> &'static Mutex<Option<(Instant, Vec<DependencyStatus>)>> {
     DEPENDENCY_CACHE.get_or_init(|| Mutex::new(None))
 }
@@ -40,6 +39,25 @@ fn command_exists(command: &str) -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+/// Busca un ejecutable en el directorio de herramientas administradas de Jintia
+/// (runtimes/tools/<id>/bin/) antes de recurrir al PATH global del sistema.
+/// Esto garantiza que check_dependencies() refleje exactamente el mismo entorno
+/// con el que Jintia se ejecuta (ver engine::managed_runtime_path).
+fn managed_or_system_command_exists(command: &str) -> bool {
+    // Mapeo de comandos a sus IDs de herramienta administrada.
+    let managed_id = match command {
+        "dot" => Some("graphviz"),
+        "plantuml" => Some("plantuml"),
+        _ => None,
+    };
+    if let Some(id) = managed_id {
+        if crate::paths::portable_tool_exe(id, command).is_file() {
+            return true;
+        }
+    }
+    command_exists(command)
 }
 
 fn chrome_executable() -> Option<PathBuf> {
@@ -91,7 +109,6 @@ fn version(command: &str, args: &[&str]) -> Option<String> {
 }
 
 pub fn check_dependencies() -> Vec<DependencyStatus> {
-
     let node_version = crate::runtimes::node_version();
     let node_ready = node_version.is_some();
 
@@ -118,6 +135,18 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
 
     let mut dependencies = vec![
         DependencyStatus {
+            id: "node".to_string(),
+            label: "Node.js".to_string(),
+            category: "core".to_string(),
+            status: if node_ready { "ready" } else { "missing" }.to_string(),
+            blocking_scope: "onboarding".to_string(),
+            requires_consent: true,
+            operation: Some("download_node_runtime".to_string()),
+            reason: "Ejecuta el motor editorial y las herramientas de publicación.".to_string(),
+            technical_detail: format!(
+                "node --version · {}",
+                node_version.as_deref().unwrap_or("No encontrado")
+            ),
             name: "Node.js".to_string(),
             installed: node_ready,
             version: node_version,
@@ -131,6 +160,15 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             command: "node --version".to_string(),
         },
         DependencyStatus {
+            id: "git".to_string(),
+            label: "Git".to_string(),
+            category: "optional".to_string(),
+            status: if git { "ready" } else { "missing" }.to_string(),
+            blocking_scope: "none".to_string(),
+            requires_consent: true,
+            operation: Some("install_dependency".to_string()),
+            reason: "Conserva el historial de cambios de tus asignaturas.".to_string(),
+            technical_detail: "git --version".to_string(),
             name: "Git".to_string(),
             installed: git,
             version: version("git", &["--version"]),
@@ -140,6 +178,18 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             command: "git --version".to_string(),
         },
         DependencyStatus {
+            id: "python".to_string(),
+            label: "Python".to_string(),
+            category: "core".to_string(),
+            status: if python_ready { "ready" } else { "missing" }.to_string(),
+            blocking_scope: "onboarding".to_string(),
+            requires_consent: true,
+            operation: Some("download_python_runtime".to_string()),
+            reason: "Procesa bibliografía y recursos de las guías.".to_string(),
+            technical_detail: format!(
+                "python --version · {}",
+                python_version.as_deref().unwrap_or("No encontrado")
+            ),
             name: "Python".to_string(),
             installed: python_ready,
             version: python_version,
@@ -153,6 +203,16 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             command: "python --version".to_string(),
         },
         DependencyStatus {
+            id: "jintia-skill".to_string(),
+            label: "Jintia Skill".to_string(),
+            category: "assistant".to_string(),
+            status: if skill_ready { "ready" } else { "missing" }.to_string(),
+            blocking_scope: "onboarding".to_string(),
+            requires_consent: true,
+            operation: Some("download_skill_runtime".to_string()),
+            reason: "Da a tu asistente las instrucciones para crear materiales con Jintia."
+                .to_string(),
+            technical_detail: "jintia capabilities profiles --json".to_string(),
             name: "Jintia Skill".to_string(),
             installed: skill_ready,
             version: skill_version,
@@ -161,11 +221,26 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             note: if skill_ready {
                 "Usando Jintia portable de esta app.".to_string()
             } else {
-                "Motor editorial para renderizar guías. Descárgalo desde Configuración > Entorno.".to_string()
+                "Motor editorial para renderizar guías. Descárgalo desde Configuración > Entorno."
+                    .to_string()
             },
             command: "jintia contract".to_string(),
         },
         DependencyStatus {
+            id: "vivliostyle".to_string(),
+            label: "Vivliostyle".to_string(),
+            category: "core".to_string(),
+            status: if vivliostyle_ready {
+                "ready"
+            } else {
+                "missing"
+            }
+            .to_string(),
+            blocking_scope: "onboarding".to_string(),
+            requires_consent: true,
+            operation: Some("install_vivliostyle_cli".to_string()),
+            reason: "Convierte tus guías en documentos PDF listos para publicar.".to_string(),
+            technical_detail: "vivliostyle --version".to_string(),
             name: "Vivliostyle CLI".to_string(),
             installed: vivliostyle_ready,
             version: vivliostyle_version,
@@ -187,11 +262,22 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
         .as_ref()
         .is_some_and(crate::runtimes::portable_notebooklm_mcp_installed_for);
     let mcp_version = if mcp_installed {
-        managed_contract.as_ref().map(|contract| contract.version.clone())
+        managed_contract
+            .as_ref()
+            .map(|contract| contract.version.clone())
     } else {
         None
     };
     dependencies.push(DependencyStatus {
+        id: "notebooklm-mcp".to_string(),
+        label: "NotebookLM MCP".to_string(),
+        category: "integration".to_string(),
+        status: if mcp_installed { "ready" } else { "missing" }.to_string(),
+        blocking_scope: "onboarding".to_string(),
+        requires_consent: true,
+        operation: Some("install_notebooklm_mcp_runtime".to_string()),
+        reason: "Conecta las fuentes de NotebookLM con el asistente que elijas.".to_string(),
+        technical_detail: "Node administrado + ejecutable MCP verificado".to_string(),
         name: "NotebookLM MCP".to_string(),
         installed: mcp_installed,
         version: mcp_version,
@@ -203,39 +289,112 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
 
     let latex = command_exists("pdflatex") && command_exists("biber");
     dependencies.push(DependencyStatus {
+        id: "latex".to_string(),
+        label: "Compilador LaTeX".to_string(),
+        category: "optional".to_string(),
+        status: if latex { "ready" } else { "missing" }.to_string(),
+        blocking_scope: "none".to_string(),
+        requires_consent: true,
+        operation: None,
+        reason: "Habilita plantillas LaTeX avanzadas; el flujo habitual usa Vivliostyle."
+            .to_string(),
+        technical_detail: "Instalación manual opcional: instala una distribución LaTeX de confianza y reinicia Jintia. Verificación: pdflatex --version · biber --version".to_string(),
         name: "Compilador LaTeX".to_string(),
         installed: latex,
         version: version("pdflatex", &["--version"]),
         required: false,
-        installable: true,
-        note: "Opcional: plantillas LaTeX avanzadas. La skill usa HTML/Vivliostyle por defecto.".to_string(),
+        installable: false,
+        note: "Opcional: plantillas LaTeX avanzadas. La skill usa HTML/Vivliostyle por defecto."
+            .to_string(),
         command: "pdflatex --version".to_string(),
     });
 
     let optional_visual_tools = [
-        ("Graphviz", "dot", &["-V"][..], "Redes, mapas conceptuales y grafos."),
-        ("PlantUML", "plantuml", &["-version"][..], "UML y diagramas técnicos formales."),
-        ("D2", "d2", &["--version"][..], "Diagramas declarativos y cronologías."),
-        ("Vega-Lite CLI", "vl2svg", &["--version"][..], "Gráficos cuantitativos reproducibles."),
-        ("WaveDrom", "wavedrom-cli", &["--version"][..], "Señales digitales."),
-        ("Inkscape", "inkscape", &["--version"][..], "Conversión SVG, PDF y previsualizaciones."),
+        (
+            "Graphviz",
+            "dot",
+            &["-V"][..],
+            "Redes, mapas conceptuales y grafos.",
+        ),
+        (
+            "PlantUML",
+            "plantuml",
+            &["-version"][..],
+            "UML y diagramas técnicos formales.",
+        ),
+        (
+            "D2",
+            "d2",
+            &["--version"][..],
+            "Diagramas declarativos y cronologías.",
+        ),
+        (
+            "Vega-Lite CLI",
+            "vl2svg",
+            &["--version"][..],
+            "Gráficos cuantitativos reproducibles.",
+        ),
+        (
+            "WaveDrom",
+            "wavedrom-cli",
+            &["--version"][..],
+            "Señales digitales.",
+        ),
+        (
+            "Inkscape",
+            "inkscape",
+            &["--version"][..],
+            "Conversión SVG, PDF y previsualizaciones.",
+        ),
     ];
     dependencies.extend(optional_visual_tools.into_iter().map(
-        |(name, command, version_args, note)| DependencyStatus {
-            name: name.to_string(),
-            installed: command_exists(command),
-            version: version(command, version_args),
-            required: false,
-            installable: false,
-            note: format!("{note} Capacidad visual opcional; Jintia aplicará un fallback cuando sea válido."),
-            command: format!("{command} {}", version_args.join(" ")),
+        |(name, command, version_args, note)| {
+            let available = managed_or_system_command_exists(command);
+            let managed_id = match command {
+                "dot" => Some("graphviz"),
+                "plantuml" => Some("plantuml"),
+                _ => None,
+            };
+            let is_managed = managed_id
+                .is_some_and(|id| crate::paths::portable_tool_exe(id, command).is_file());
+            let detail = if is_managed {
+                format!("Usando {} administrado por Jintia.", name)
+            } else {
+                format!("Instalación manual opcional: usa el gestor de paquetes de tu sistema y reinicia Jintia. Verificación: {command} {}", version_args.join(" "))
+            };
+            DependencyStatus {
+                id: name.to_ascii_lowercase().replace(' ', "_").replace('-', "_"),
+                label: name.to_string(),
+                category: "optional".to_string(),
+                status: if available { "ready" } else { "missing" }.to_string(),
+                blocking_scope: "none".to_string(),
+                requires_consent: false,
+                operation: None,
+                reason: note.to_string(),
+                technical_detail: detail,
+                name: name.to_string(),
+                installed: available,
+                version: if available { version(command, version_args) } else { None },
+                required: false,
+                installable: false,
+                note: format!("{note} Capacidad visual opcional; Jintia aplicará un fallback cuando sea válido."),
+                command: format!("{command} {}", version_args.join(" ")),
+            }
         },
     ));
 
-    let mermaid =
-        crate::runtimes::resolve_node_cli("mmdc");
+    let mermaid = crate::runtimes::resolve_node_cli("mmdc");
 
     dependencies.push(DependencyStatus {
+        id: "mermaid-cli".to_string(),
+        label: "Mermaid CLI".to_string(),
+        category: "optional".to_string(),
+        status: if mermaid.is_some() { "ready" } else { "missing" }.to_string(),
+        blocking_scope: "none".to_string(),
+        requires_consent: false,
+        operation: None,
+        reason: "Crea flujos y diagramas sencillos cuando el perfil lo necesita.".to_string(),
+        technical_detail: "Se prepara desde Herramientas recomendadas cuando el perfil lo requiere. Verificación: mmdc --version".to_string(),
         name: "Mermaid CLI".to_string(),
         installed: mermaid.is_some(),
         version: crate::runtimes::node_cli_version(
@@ -255,6 +414,15 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
     });
     let chrome = chrome_executable();
     dependencies.push(DependencyStatus {
+        id: "google-chrome".to_string(),
+        label: "Google Chrome".to_string(),
+        category: "optional".to_string(),
+        status: if chrome.is_some() { "ready" } else { "missing" }.to_string(),
+        blocking_scope: "none".to_string(),
+        requires_consent: false,
+        operation: None,
+        reason: "Permite capturas HTML reproducibles durante el renderizado.".to_string(),
+        technical_detail: chrome.as_ref().map(|path| path_text(path)).unwrap_or_else(|| "CHROME_PATH".to_string()),
         name: "Google Chrome".to_string(),
         installed: chrome.is_some(),
         version: None,
@@ -302,22 +470,30 @@ pub fn install_dependency(name: String, _confirmed: bool) -> ActionResult {
 
     // LaTeX es opcional. No se ofrece instalación automática.
     if name == "Compilador LaTeX" {
-        return ActionResult::error("LaTeX es opcional. Instálalo manualmente según tu SO si lo necesitas.");
+        return ActionResult::error(
+            "LaTeX es opcional. Instálalo manualmente según tu SO si lo necesitas.",
+        );
     }
 
     // Node.js se descarga como portable via comando Tauri
     if name == "Node.js" {
-        return ActionResult::error("Usa el botón 'Descargar Node.js portable' en el panel de dependencias.");
+        return ActionResult::error(
+            "Usa el botón 'Descargar Node.js portable' en el panel de dependencias.",
+        );
     }
 
     // Python se descarga como portable via comando Tauri (solo Windows)
     if name == "Python" {
-        return ActionResult::error("Usa el botón 'Descargar Python oficial portable' en el panel de dependencias.");
+        return ActionResult::error(
+            "Usa el botón 'Descargar Python oficial portable' en el panel de dependencias.",
+        );
     }
 
     // Jintia Skill se descarga como portable via comando Tauri
     if name == "Jintia Skill" {
-        return ActionResult::error("Usa el botón 'Descargar Jintia Skill' en el panel de dependencias.");
+        return ActionResult::error(
+            "Usa el botón 'Descargar Jintia Skill' en el panel de dependencias.",
+        );
     }
     if name == "NotebookLM MCP" {
         return crate::runtimes::install_notebooklm_mcp()
@@ -480,7 +656,11 @@ pub fn create_course_structure(
 
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => return ActionResult::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
+        None => {
+            return ActionResult::error(
+                "Jintia Skill no está instalada. Ve a Configuración > Entorno.",
+            )
+        }
     };
     let course_path_str = course.to_string_lossy().to_string();
     let args = [
@@ -502,10 +682,7 @@ pub fn create_course_structure(
                 ))
                 .with_path(crate::paths::path_text(&course))
             } else {
-                ActionResult::error(format!(
-                    "Error al crear el proyecto:\n{}",
-                    result.stderr
-                ))
+                ActionResult::error(format!("Error al crear el proyecto:\n{}", result.stderr))
             }
         }
         Err(error) => ActionResult::error(error),
@@ -515,7 +692,9 @@ pub fn create_course_structure(
 pub fn run_self_test() -> serde_json::Value {
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => return serde_json::json!({ "ok": false, "error": "Jintia Skill no está disponible." }),
+        None => {
+            return serde_json::json!({ "ok": false, "error": "Jintia Skill no está disponible." })
+        }
     };
     crate::engine::run_jintia_json::<serde_json::Value>(
         Path::new(&skill_path),
@@ -992,7 +1171,10 @@ mod tests {
     fn non_windows_unknown_dependency_is_rejected() {
         let result = install_dependency("Herramienta desconocida".to_string(), false);
         assert!(!result.success);
-        assert_eq!(result.message, "Dependencia desconocida: Herramienta desconocida");
+        assert_eq!(
+            result.message,
+            "Dependencia desconocida: Herramienta desconocida"
+        );
         assert!(!result.message.contains("brew install git"));
         assert!(!result.message.contains("apt install git"));
     }
@@ -1030,9 +1212,7 @@ mod tests {
     }
 }
 
-pub fn check_migration_needed(
-    course_path: String,
-) -> crate::models::MigrationStatus {
+pub fn check_migration_needed(course_path: String) -> crate::models::MigrationStatus {
     let root = PathBuf::from(course_path.trim());
     if !root.is_dir() {
         return crate::models::MigrationStatus {
@@ -1057,7 +1237,8 @@ pub fn check_migration_needed(
                     latex_dirs += 1;
                     if let Ok(tex_entries) = std::fs::read_dir(&latex_path) {
                         for tex_entry in tex_entries.flatten() {
-                            if tex_entry.path().extension().and_then(|s| s.to_str()) == Some("tex") {
+                            if tex_entry.path().extension().and_then(|s| s.to_str()) == Some("tex")
+                            {
                                 tex_files += 1;
                             }
                         }
@@ -1111,7 +1292,11 @@ pub fn run_migration(course_path: String) -> ActionResult {
 
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(p) => p,
-        None => return ActionResult::error("Jintia Skill no está instalada. Ve a Configuración > Entorno."),
+        None => {
+            return ActionResult::error(
+                "Jintia Skill no está instalada. Ve a Configuración > Entorno.",
+            )
+        }
     };
     let course_path_str = root.to_string_lossy().to_string();
     let args = ["migrate", &course_path_str, "--json"];

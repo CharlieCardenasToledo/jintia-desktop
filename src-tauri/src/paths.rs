@@ -387,6 +387,53 @@ pub fn portable_notebooklm_mcp_lock() -> PathBuf {
     portable_notebooklm_mcp_prefix().join("package-lock.json")
 }
 
+pub fn portable_tools_dir() -> PathBuf {
+    portable_runtimes_dir().join("tools")
+}
+
+pub fn portable_tool_dir(id: &str) -> PathBuf {
+    portable_tools_dir().join(id)
+}
+
+pub fn portable_tool_bin_dir(id: &str) -> PathBuf {
+    portable_tool_dir(id).join("bin")
+}
+
+pub fn portable_tool_exe(id: &str, exe_name: &str) -> PathBuf {
+    let bin = portable_tool_bin_dir(id);
+    if cfg!(target_os = "windows") {
+        bin.join(format!("{exe_name}.exe"))
+    } else {
+        bin.join(exe_name)
+    }
+}
+
+/// Devuelve los directorios bin/ de todas las herramientas instaladas en el
+/// directorio administrado. Solo incluye subdirectorios que realmente existen
+/// en disco para evitar entradas fantasma en el PATH.
+pub fn managed_tool_bin_dirs() -> Vec<PathBuf> {
+    let tools_dir = portable_tools_dir();
+    if !tools_dir.is_dir() {
+        return vec![];
+    }
+    let mut dirs = std::fs::read_dir(&tools_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                let bin = path.join("bin");
+                if bin.is_dir() { Some(bin) } else { None }
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs
+}
+
 pub fn portable_skill_bin() -> PathBuf {
     portable_skill_source_dir().join("bin").join("jintia.js")
 }

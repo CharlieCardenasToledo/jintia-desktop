@@ -25,7 +25,15 @@ pub struct ToolchainReport {
 
 impl ToolchainReport {
     pub fn error(message: impl Into<String>) -> Self {
-        Self { success: false, message: message.into(), operation: String::new(), stdout: String::new(), stderr: String::new(), exit_code: None, report: None }
+        Self {
+            success: false,
+            message: message.into(),
+            operation: String::new(),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: None,
+            report: None,
+        }
     }
 }
 
@@ -79,15 +87,45 @@ impl ActionResult {
     }
 }
 
+/// Contrato explícito de una capacidad de Jintia.
+///
+/// Los campos `name`, `installed`, `required`, `note` y `command` se conservan
+/// durante la migración para clientes anteriores. El frontend nuevo toma sus
+/// decisiones de `status` y `blocking_scope`, no de `required`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct DependencyStatus {
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityStatus {
+    pub id: String,
+    pub label: String,
+    pub category: String,
+    pub status: String,
+    pub blocking_scope: String,
+    pub installable: bool,
+    pub requires_consent: bool,
+    pub operation: Option<String>,
+    pub reason: String,
+    pub technical_detail: String,
+    // Compatibilidad temporal con el contrato DependencyStatus v1.
     pub name: String,
     pub installed: bool,
     pub version: Option<String>,
     pub required: bool,
-    pub installable: bool,
     pub note: String,
     pub command: String,
+}
+
+pub type DependencyStatus = CapabilityStatus;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LongOperationStatus {
+    pub operation_id: String,
+    pub state: String,
+    pub phase: String,
+    pub message: String,
+    pub percent: Option<f64>,
+    pub cancellable: bool,
+    pub browser_open: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -180,8 +218,7 @@ pub struct NotebookLmEntry {
     pub description: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SetupStatus {
     pub skill_installed: bool,
     pub skill_current: bool,
@@ -190,12 +227,29 @@ pub struct SetupStatus {
     pub openai_plugin_installed: bool,
     pub openai_plugin_current: bool,
     pub openai_plugin_path: String,
+    /// Estado granular del plugin OpenAI tal como lo reporta `jintia plugin status --json`:
+    /// "" (no disponible) | "not-installed" | "installed" | "outdated" | "incomplete" | "foreign"
+    pub openai_plugin_state: String,
     pub mcp_configured: bool,
     pub mcp_desktop_configured: bool,
     pub mcp_claude_code_configured: bool,
     pub institution_configured: bool,
     pub skill_path: String,
     pub mcp_config_path: String,
+}
+
+/// Registro del último `jintia self-test` ejecutado satisfactoriamente.
+/// Se persiste en el estado de onboarding para que `complete()` pueda
+/// exigir una prueba final vigente antes de marcar la instalación como lista.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SelfTestRecord {
+    /// Versión de la skill con la que se ejecutó la prueba.
+    pub skill_version: String,
+    /// `true` solo cuando todos los checks de `jintia self-test` pasaron.
+    pub passed: bool,
+    /// Epoch Unix (segundos) del momento en que se guardó este registro.
+    pub timestamp: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -212,18 +266,23 @@ pub struct OnboardingStatus {
     /// Solo se llena en el momento en que se detecta la regresión.
     #[serde(default)]
     pub regression_reason: Option<String>,
+    /// Resultado del último `jintia self-test` guardado desde el frontend.
+    /// `complete()` exige que este campo exista y que `passed == true`.
+    #[serde(default)]
+    pub last_self_test: Option<SelfTestRecord>,
 }
 
 impl Default for OnboardingStatus {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             completed: false,
             current_step: 1,
             max_completed_step: 0,
             selected_target: String::new(),
             last_updated: 0,
             regression_reason: None,
+            last_self_test: None,
         }
     }
 }

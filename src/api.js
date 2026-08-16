@@ -127,6 +127,14 @@ export async function runNotebookLMAuth() {
   return invoke("run_notebooklm_auth");
 }
 
+export async function startNotebookLMAuth(operationId) {
+  return invoke("start_notebooklm_auth", { operationId });
+}
+
+export async function cancelNotebookLMAuth(operationId) {
+  return invoke("cancel_notebooklm_auth", { operationId });
+}
+
 export async function saveNotebooksConfig(entries) {
   return invoke("save_notebooks_config", { entries });
 }
@@ -210,8 +218,16 @@ export async function installProfilePackages(packages) {
   return invoke("install_profile_packages", { packages });
 }
 
+export async function installProfileBinaries(binaryIds) {
+  return invoke("install_profile_binaries", { binaryIds });
+}
+
 export async function runSkillSelfTest() {
   return invoke("run_skill_self_test");
+}
+
+export async function saveSelfTestResult(record) {
+  return invoke("save_self_test_result", { record });
 }
 
 export async function installVivliostyleCli() {

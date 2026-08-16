@@ -44,7 +44,7 @@ jobs:
             @charlie.act7/jintia@latest
           node \
             "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/bin/jintia.js" \
-            doctor \
+            self-test \
             --json
         shell: bash
       - name: NotebookLM MCP browser contract smoke

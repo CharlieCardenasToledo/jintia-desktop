@@ -5,9 +5,10 @@ preparar sílabos e instalar Jintia Skill para Claude, ChatGPT y Codex.
 
 Este repositorio contiene únicamente la aplicación. La skill se desarrolla y
 publica de forma independiente en
-[`jintia`](https://github.com/CharlieCardenasToledo/jintia).
-Desktop consume una release inmutable declarada en `skill.lock.json`; durante
-el build verifica el manifest y los SHA-256 antes de incorporar los payloads.
+[`jintia`](https://github.com/CharlieCardenasToledo/jintia) y se descarga en
+tiempo de ejecución desde el registro npm (`@charlie.act7/jintia`). El contrato
+entre ambos repositorios está declarado en el `release-config.json` del paquete
+skill (consumido por Desktop en `src-tauri/src/release.rs`).
 
 ## Desarrollo
 
@@ -34,26 +35,21 @@ Para ejecutar la aplicación Tauri:
 npm run tauri:dev
 ```
 
-## Actualizar la skill incorporada
+## Modelo de distribución de la skill
 
-Las releases de la skill son el único contrato entre ambos repositorios:
+Desktop descarga la skill en tiempo de ejecución usando el paso de onboarding
+("Instalar Jintia Skill"). No hay ZIPs ni archivos lock versionados en este
+repositorio; la versión mínima compatible se declara en `minimumDesktopVersion`
+dentro del `release-config.json` del paquete skill.
 
-```bash
-npm run skill:sync -- --tag=vX.Y.Z
-npm run skill:verify
-npm test
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-El comando descarga el manifest y los ZIP oficiales, verifica tamaño y hash, y
-actualiza `skill.lock.json`. Los ZIP se versionan para conservar builds offline
-y reproducibles. No se copian archivos directamente desde el checkout de la
-skill.
+Para probar Desktop con una versión específica de la skill, instálala
+manualmente en el entorno del usuario desde la pantalla de configuración o
+directamente con `npm install --global @charlie.act7/jintia@X.Y.Z`.
 
 ## Distribución
 
 Los tags `v*` activan instaladores Windows y macOS. La versión de Desktop es
-independiente de la versión bloqueada de la skill. Consulta
+independiente de la versión de la skill. Consulta
 [`docs/releasing.md`](docs/releasing.md) y [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md).
 
 ## Privacidad y licencia
