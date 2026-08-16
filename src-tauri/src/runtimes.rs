@@ -3321,85 +3321,54 @@ fn current_platform_key() -> &'static str {
     "unknown"
 }
 
-/// Especificación de descarga para un binario de perfil en la plataforma actual.
-pub struct ProfileBinaryPlatformSpec {
-    pub url: String,
-    pub sha256: String,
-    /// "zip" | "tar.gz"
-    pub archive_type: String,
-    /// Subdirectorio dentro del archivo comprimido cuyos contenidos se copian a bin/.
-    pub bin_subdir: Option<String>,
-}
+/// Re-exporta los tipos del contrato para que los consumidores no necesiten
+/// importar `release` directamente.
+pub use crate::release::BinaryPlatformSpec;
 
-/// Lee la especificación de descarga de un binario de perfil desde el
-/// `release-config.json` del skill instalado.  Falla con mensaje accionable si
-/// la plataforma no está configurada o si los valores son placeholders.
-pub fn profile_binary_platform_spec(binary_id: &str) -> Result<ProfileBinaryPlatformSpec, String> {
-    let release_path = paths::portable_skill_npm_package_dir()
-        .join("release")
-        .join("release-config.json");
-    let bytes = fs::read(&release_path).map_err(|_| {
-        "No se pudo leer release-config.json del skill instalado.".to_string()
+/// Devuelve la especificación de instalación para `binary_id` en la plataforma
+/// actual, leyendo el contrato tipado de `release`.
+///
+/// - `Ok(BinaryPlatformSpec::Download(_))`: descarga automática disponible.
+/// - `Ok(BinaryPlatformSpec::ManualOnly { hint })`: requiere instalación manual.
+/// - `Err(_)`: el binario no está declarado en el contrato o el contrato no está disponible.
+pub fn profile_binary_platform_spec(binary_id: &str) -> Result<BinaryPlatformSpec, String> {
+    let contract = crate::release::managed_release_contract()?;
+    let binary = contract.profile_binaries.get(binary_id).ok_or_else(|| {
+        format!(
+            "'{binary_id}' no está declarado en profileBinaries del contrato Jintia. \
+             Actualiza Jintia desde Configuración > Entorno."
+        )
     })?;
-    let release: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|_| "release-config.json inválido.".to_string())?;
-
-    let platform = current_platform_key();
-    let spec = release
-        .get("profileBinaries")
-        .and_then(|b| b.get(binary_id))
-        .and_then(|b| b.get("platforms"))
-        .and_then(|p| p.get(platform))
-        .ok_or_else(|| {
-            format!(
-                "'{binary_id}' no está configurado para descarga en esta plataforma ({platform}). \
-                 Instálalo manualmente desde las herramientas de tu sistema."
-            )
-        })?;
-
-    let url = spec
-        .get("url")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty() && !s.starts_with("PENDING"))
-        .ok_or_else(|| format!("URL de '{binary_id}' no configurada para {platform}."))?
-        .to_string();
-
-    let sha256 = spec
-        .get("sha256")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty() && !s.starts_with("PENDING"))
-        .ok_or_else(|| {
-            format!(
-                "SHA-256 de '{binary_id}' no configurado para {platform}. \
-                 Actualiza Jintia a una versión que incluya los checksums verificados."
-            )
-        })?
-        .to_string();
-
-    let archive_type = spec
-        .get("archiveType")
-        .and_then(|v| v.as_str())
-        .unwrap_or("zip")
-        .to_string();
-
-    let bin_subdir = spec
-        .get("binSubdir")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-
-    Ok(ProfileBinaryPlatformSpec { url, sha256, archive_type, bin_subdir })
+    binary.current_platform_spec.clone().ok_or_else(|| {
+        let platform = current_platform_key();
+        format!(
+            "'{binary_id}' no tiene una especificación para esta plataforma ({platform}). \
+             Instálalo manualmente desde las herramientas de tu sistema."
+        )
+    })
 }
 
 /// Descarga, verifica e instala un binario de perfil en
 /// `runtimes/tools/<id>/bin/`.  Si ya existe una instalación anterior la
 /// reemplaza con backup y rollback en caso de fallo.
+///
+/// Retorna `Err` con instrucciones accionables si el binario requiere
+/// instalación manual en esta plataforma.
 pub fn install_profile_binary(app: &AppHandle, binary_id: &str) -> Result<(), String> {
     let _lock = try_runtime_mutation_lock(
         &TOOLS_MUTATION_LOCK,
         &format!("el binario de perfil {binary_id}"),
     )?;
 
-    let spec = profile_binary_platform_spec(binary_id)?;
+    let platform_spec = profile_binary_platform_spec(binary_id)?;
+    let spec = match platform_spec {
+        BinaryPlatformSpec::ManualOnly { hint } => {
+            return Err(format!(
+                "'{binary_id}' requiere instalación manual en esta plataforma. {hint}"
+            ));
+        }
+        BinaryPlatformSpec::Download(download_spec) => download_spec,
+    };
 
     let tools_dir = paths::portable_tools_dir();
     fs::create_dir_all(&tools_dir)

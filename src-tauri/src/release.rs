@@ -1,7 +1,10 @@
 use semver::{Version, VersionReq};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+// ── Contrato MCP (retrocompatibilidad) ─────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedMcpContract {
@@ -10,6 +13,100 @@ pub struct ManagedMcpContract {
     pub node_requirement: String,
     pub npm_integrity: String,
     pub jintia_version: String,
+}
+
+// ── Contrato completo release-config.json ──────────────────────────────────
+
+/// Contrato completo de una release de Jintia, combinando package.json y
+/// release-config.json.  Es el único lugar del proyecto que debe leer esos
+/// archivos; el resto del código consume tipos de aquí.
+#[derive(Debug, Clone)]
+pub struct JintiaReleaseContract {
+    pub jintia_version: String,
+    pub minimum_desktop_version: Version,
+    /// Requisito de Node para ejecutar la skill (runtime.node).
+    pub runtime_node_requirement: VersionReq,
+    pub mcp: ManagedMcpContract,
+    /// Binarios de perfil declarados en profileBinaries, indexados por id.
+    pub profile_binaries: HashMap<String, ProfileBinaryContract>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProfileBinaryContract {
+    pub version: String,
+    /// Especificación para la plataforma actual; None si no está declarada.
+    pub current_platform_spec: Option<BinaryPlatformSpec>,
+}
+
+/// Variantes de instalación de un binario de perfil.
+#[derive(Debug, Clone)]
+pub enum BinaryPlatformSpec {
+    /// El binario puede descargarse automáticamente.
+    Download(BinaryDownloadSpec),
+    /// Requiere instalación manual; se incluye un hint accionable para el usuario.
+    ManualOnly { hint: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct BinaryDownloadSpec {
+    pub url: String,
+    pub sha256: String,
+    /// "zip" | "tar.gz"
+    pub archive_type: String,
+    /// Subdirectorio dentro del archivo comprimido cuyos contenidos van a bin/.
+    pub bin_subdir: Option<String>,
+}
+
+/// Clave de la plataforma actual (mismos valores que `current_platform_key()` en runtimes.rs).
+fn platform_key() -> &'static str {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    return "win32-x64";
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    return "darwin-arm64";
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    return "darwin-x64";
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    return "linux-x64";
+    #[allow(unreachable_code)]
+    "unknown"
+}
+
+fn parse_binary_platform_spec(spec: &Value) -> Option<BinaryPlatformSpec> {
+    if let Some(hint) = spec.get("manualInstallHint").and_then(Value::as_str) {
+        return Some(BinaryPlatformSpec::ManualOnly { hint: hint.to_string() });
+    }
+    let url = spec.get("url").and_then(Value::as_str).filter(|s| !s.is_empty() && !s.starts_with("PENDING"))?;
+    let sha256 = spec.get("sha256").and_then(Value::as_str).filter(|s| !s.is_empty() && !s.starts_with("PENDING"))?;
+    let archive_type = spec.get("archiveType").and_then(Value::as_str).unwrap_or("zip");
+    let bin_subdir = spec.get("binSubdir").and_then(Value::as_str).map(str::to_string);
+    Some(BinaryPlatformSpec::Download(BinaryDownloadSpec {
+        url: url.to_string(),
+        sha256: sha256.to_string(),
+        archive_type: archive_type.to_string(),
+        bin_subdir,
+    }))
+}
+
+fn parse_profile_binaries(release: &Value) -> HashMap<String, ProfileBinaryContract> {
+    let platform = platform_key();
+    let Some(binaries_obj) = release.get("profileBinaries").and_then(Value::as_object) else {
+        return HashMap::new();
+    };
+    binaries_obj
+        .iter()
+        .map(|(id, entry)| {
+            let version = entry
+                .get("version")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let current_platform_spec = entry
+                .get("platforms")
+                .and_then(|p| p.get(platform))
+                .and_then(parse_binary_platform_spec);
+            (id.clone(), ProfileBinaryContract { version, current_platform_spec })
+        })
+        .collect()
 }
 
 fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -53,11 +150,14 @@ fn parse_stable_version(value: &str, label: &str) -> Result<Version, String> {
     Ok(version)
 }
 
-pub fn parse_managed_mcp_contract(
+/// Parsea el contrato completo a partir de los bytes de `package.json` y
+/// `release-config.json`.  Es el único punto de entrada de parsing; todas las
+/// funciones públicas delegan aquí.
+pub fn parse_release_contract(
     package_json_bytes: &[u8],
     release_config_bytes: &[u8],
     desktop_version: &str,
-) -> Result<ManagedMcpContract, String> {
+) -> Result<JintiaReleaseContract, String> {
     let package: Value = serde_json::from_slice(package_json_bytes)
         .map_err(|e| format!("package.json de Jintia inválido: {e}"))?;
     let release: Value = serde_json::from_slice(release_config_bytes)
@@ -73,15 +173,22 @@ pub fn parse_managed_mcp_contract(
         return Err("El contrato Jintia no pertenece al repositorio canónico.".into());
     }
     let minimum = required_string(&release, "minimumDesktopVersion")?;
-    let minimum_version =
+    let minimum_desktop_version =
         Version::parse(minimum).map_err(|e| format!("minimumDesktopVersion inválida: {e}"))?;
     let desktop =
         Version::parse(desktop_version).map_err(|e| format!("Versión Desktop inválida: {e}"))?;
-    if desktop < minimum_version {
+    if desktop < minimum_desktop_version {
         return Err(format!(
             "Jintia requiere Desktop >= {minimum}, pero se ejecuta {desktop}."
         ));
     }
+    let runtime_node_str = release
+        .get("runtime")
+        .and_then(|r| r.get("node"))
+        .and_then(Value::as_str)
+        .unwrap_or(">=22.13.0");
+    let runtime_node_requirement = VersionReq::parse(runtime_node_str)
+        .map_err(|e| format!("runtime.node inválido en el contrato Jintia: {e}"))?;
     let mcp = release
         .get("mcp")
         .ok_or("El contrato Jintia no contiene mcp.")?;
@@ -91,25 +198,44 @@ pub fn parse_managed_mcp_contract(
     }
     let version = required_string(mcp, "version")?.to_string();
     parse_stable_version(&version, "Versión MCP")?;
-    let node_requirement = required_string(mcp, "node")?.to_string();
-    VersionReq::parse(&node_requirement).map_err(|e| format!("Requisito Node inválido: {e}"))?;
+    let mcp_node_requirement = required_string(mcp, "node")?.to_string();
+    VersionReq::parse(&mcp_node_requirement)
+        .map_err(|e| format!("Requisito Node del MCP inválido: {e}"))?;
     let npm_integrity = required_string(mcp, "npmIntegrity")?.to_string();
     if !valid_sri(&npm_integrity) {
         return Err("npmIntegrity no es un SRI SHA-512 válido.".into());
     }
-    Ok(ManagedMcpContract {
+    let mcp_contract = ManagedMcpContract {
         package: package_name.to_string(),
         version,
-        node_requirement,
+        node_requirement: mcp_node_requirement,
         npm_integrity,
+        jintia_version: jintia_version.clone(),
+    };
+    let profile_binaries = parse_profile_binaries(&release);
+    Ok(JintiaReleaseContract {
         jintia_version,
+        minimum_desktop_version,
+        runtime_node_requirement,
+        mcp: mcp_contract,
+        profile_binaries,
     })
 }
 
-pub fn managed_mcp_contract_from(
-    package_root: &Path,
+/// Mantiene la firma original para no romper consumidores existentes.
+pub fn parse_managed_mcp_contract(
+    package_json_bytes: &[u8],
+    release_config_bytes: &[u8],
     desktop_version: &str,
 ) -> Result<ManagedMcpContract, String> {
+    parse_release_contract(package_json_bytes, release_config_bytes, desktop_version)
+        .map(|c| c.mcp)
+}
+
+pub fn managed_release_contract_from(
+    package_root: &Path,
+    desktop_version: &str,
+) -> Result<JintiaReleaseContract, String> {
     let root = fs::canonicalize(package_root)
         .map_err(|e| format!("No se pudo resolver el package Jintia: {e}"))?;
     if !root.is_dir() {
@@ -127,10 +253,24 @@ pub fn managed_mcp_contract_from(
         return Err("El contrato Jintia escapa del package administrado.".into());
     }
     let package_json = fs::read(package_path)
-        .map_err(|_| "El Jintia administrado no contiene el contrato MCP distribuido. Actualiza Jintia desde Configuración > Entorno.".to_string())?;
+        .map_err(|_| "El Jintia administrado no contiene el contrato distribuido. Actualiza Jintia desde Configuración > Entorno.".to_string())?;
     let release_config = fs::read(release_path)
-        .map_err(|_| "El Jintia administrado no contiene el contrato MCP distribuido. Actualiza Jintia desde Configuración > Entorno.".to_string())?;
-    parse_managed_mcp_contract(&package_json, &release_config, desktop_version)
+        .map_err(|_| "El Jintia administrado no contiene el contrato distribuido. Actualiza Jintia desde Configuración > Entorno.".to_string())?;
+    parse_release_contract(&package_json, &release_config, desktop_version)
+}
+
+pub fn managed_release_contract() -> Result<JintiaReleaseContract, String> {
+    managed_release_contract_from(
+        &crate::paths::portable_skill_npm_package_dir(),
+        env!("CARGO_PKG_VERSION"),
+    )
+}
+
+pub fn managed_mcp_contract_from(
+    package_root: &Path,
+    desktop_version: &str,
+) -> Result<ManagedMcpContract, String> {
+    managed_release_contract_from(package_root, desktop_version).map(|c| c.mcp)
 }
 
 pub fn managed_mcp_contract() -> Result<ManagedMcpContract, String> {
