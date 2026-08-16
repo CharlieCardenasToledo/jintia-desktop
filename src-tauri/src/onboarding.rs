@@ -1,5 +1,4 @@
 use crate::config;
-use crate::course;
 use crate::mcp;
 use crate::models::{OnboardingResult, OnboardingStatus};
 use crate::paths::{app_config_dir, atomic_write, timestamp};
@@ -141,9 +140,9 @@ fn first_invalid_step(
     refresh_environment: bool,
 ) -> Option<(u8, &'static str)> {
     let dependencies = if refresh_environment {
-        course::check_dependencies()
+        crate::capabilities::check_dependencies()
     } else {
-        course::check_dependencies_cached()
+        crate::capabilities::check_dependencies_cached()
     };
     if validate_environment(&dependencies).is_err() {
         // El motivo exacto se muestra en la tarjeta del paso 2;
@@ -224,7 +223,7 @@ pub fn advance(step: u8, selected_target: Option<String>) -> OnboardingResult {
 
     let validation = match step {
         1 => Ok(()),
-        2 => validate_environment(&course::check_dependencies_cached()),
+        2 => validate_environment(&crate::capabilities::check_dependencies_cached()),
         3 => {
             if !config::institution_is_configured() {
                 Err(

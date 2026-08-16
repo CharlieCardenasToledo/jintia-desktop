@@ -1,3 +1,4 @@
+mod capabilities;
 mod config;
 mod course;
 mod course_state;
@@ -23,7 +24,7 @@ use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 async fn check_dependencies() -> Vec<DependencyStatus> {
-    tauri::async_runtime::spawn_blocking(course::check_dependencies)
+    tauri::async_runtime::spawn_blocking(capabilities::check_dependencies)
         .await
         .unwrap_or_default()
 }
@@ -141,7 +142,7 @@ async fn get_visual_install_profiles() -> serde_json::Value {
 #[tauri::command]
 async fn install_dependency(name: String, confirmed: Option<bool>) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
-        course::install_dependency(name, confirmed.unwrap_or(false))
+        capabilities::install_dependency(name, confirmed.unwrap_or(false))
     })
     .await
     .unwrap_or_else(|error| {
