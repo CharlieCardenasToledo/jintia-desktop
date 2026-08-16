@@ -238,14 +238,35 @@ pub struct SetupStatus {
     pub mcp_config_path: String,
 }
 
-/// Registro del último `jintia self-test` ejecutado satisfactoriamente.
-/// Se persiste en el estado de onboarding para que `complete()` pueda
-/// exigir una prueba final vigente antes de marcar la instalación como lista.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Huella de readiness persistida tras un `jintia self-test` exitoso.
+///
+/// `complete()` valida que los campos críticos del registro coincidan con
+/// el estado actual del sistema antes de marcar el onboarding como listo.
+/// Los campos marcados con `#[serde(default)]` pueden estar ausentes en
+/// registros anteriores; se tratan como vacíos y no bloquean la validación.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SelfTestRecord {
-    /// Versión de la skill con la que se ejecutó la prueba.
+    /// Versión de la skill administrada cuando se ejecutó la prueba.
     pub skill_version: String,
+    /// Versión de Desktop cuando se ejecutó la prueba.
+    #[serde(default)]
+    pub desktop_version: String,
+    /// Versión del paquete MCP cuando se ejecutó la prueba.
+    #[serde(default)]
+    pub mcp_version: String,
+    /// Versión de Node.js activa durante la prueba (informativo).
+    #[serde(default)]
+    pub node_version: String,
+    /// Versión de Vivliostyle activa durante la prueba (informativo).
+    #[serde(default)]
+    pub vivliostyle_version: String,
+    /// Perfil/disciplina seleccionada al momento de la prueba.
+    #[serde(default)]
+    pub profile_id: String,
+    /// Destino de integración seleccionado ("claude-code" | "openai" | "both").
+    #[serde(default)]
+    pub selected_target: String,
     /// `true` solo cuando todos los checks de `jintia self-test` pasaron.
     pub passed: bool,
     /// Epoch Unix (segundos) del momento en que se guardó este registro.

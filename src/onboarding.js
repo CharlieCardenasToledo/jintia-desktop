@@ -1500,6 +1500,12 @@ async function animateFinalStep() {
   try {
     await saveSelfTestResult({
       skillVersion: "",
+      desktopVersion: "",
+      mcpVersion: "",
+      nodeVersion: selfTest?.nodeVersion ?? "",
+      vivliostyleVersion: selfTest?.vivliostyleVersion ?? selfTest?.checks?.vivliostyleVersion ?? "",
+      profileId: state.config?.discipline ?? "",
+      selectedTarget: "",
       passed: true,
       timestamp: Math.floor(Date.now() / 1000),
     });

@@ -290,6 +290,15 @@ pub fn get_active_template() -> String {
     active_theme_from_settings()
 }
 
+pub fn get_discipline() -> String {
+    config_file_path("institution.json")
+        .ok()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|value| value.get("discipline").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_default()
+}
+
 pub fn institution_is_configured() -> bool {
     config_file_path("institution.json")
         .ok()

@@ -270,12 +270,23 @@ pub fn advance(step: u8, selected_target: Option<String>) -> OnboardingResult {
 
 pub fn save_self_test_result(mut record: crate::models::SelfTestRecord) -> OnboardingResult {
     let mut status = get_status();
-    // Si el frontend no envía la versión de la skill, la llenamos desde el
-    // contrato administrado para que la comparación en complete() funcione.
-    if record.skill_version.is_empty() {
-        record.skill_version = crate::release::managed_mcp_contract()
-            .map(|c| c.jintia_version)
-            .unwrap_or_default();
+    // Campos auto-rellenados desde el contrato y el estado actual del sistema.
+    if let Ok(contract) = crate::release::managed_release_contract() {
+        if record.skill_version.is_empty() {
+            record.skill_version = contract.mcp.jintia_version.clone();
+        }
+        if record.mcp_version.is_empty() {
+            record.mcp_version = contract.mcp.version.clone();
+        }
+    }
+    if record.desktop_version.is_empty() {
+        record.desktop_version = env!("CARGO_PKG_VERSION").to_string();
+    }
+    if record.selected_target.is_empty() {
+        record.selected_target = status.selected_target.clone();
+    }
+    if record.profile_id.is_empty() {
+        record.profile_id = crate::config::get_discipline();
     }
     status.last_self_test = Some(record);
     if let Err(error) = save(&mut status) {
@@ -328,13 +339,56 @@ pub fn complete() -> OnboardingResult {
             status,
         );
     }
-    let current_skill_version = crate::release::managed_mcp_contract()
-        .map(|c| c.jintia_version)
-        .unwrap_or_default();
-    if !current_skill_version.is_empty() && self_test.skill_version != current_skill_version {
+    // Validar huella de readiness — todos los campos críticos deben coincidir
+    // con el estado actual del sistema.
+    if let Ok(contract) = crate::release::managed_release_contract() {
+        if !contract.mcp.jintia_version.is_empty()
+            && !self_test.skill_version.is_empty()
+            && self_test.skill_version != contract.mcp.jintia_version
+        {
+            return result(
+                false,
+                "La versión de Jintia cambió desde la última prueba. Vuelve a ejecutar la prueba final.",
+                status,
+            );
+        }
+        if !contract.mcp.version.is_empty()
+            && !self_test.mcp_version.is_empty()
+            && self_test.mcp_version != contract.mcp.version
+        {
+            return result(
+                false,
+                "El MCP de NotebookLM se actualizó desde la última prueba. Vuelve a ejecutar la prueba final.",
+                status,
+            );
+        }
+    }
+    let current_desktop = env!("CARGO_PKG_VERSION");
+    if !self_test.desktop_version.is_empty() && self_test.desktop_version != current_desktop {
         return result(
             false,
-            "La versión de Jintia cambió desde la última prueba. Vuelve a ejecutar la prueba final.",
+            "Desktop se actualizó desde la última prueba. Vuelve a ejecutar la prueba final.",
+            status,
+        );
+    }
+    if !self_test.selected_target.is_empty()
+        && !status.selected_target.is_empty()
+        && self_test.selected_target != status.selected_target
+    {
+        return result(
+            false,
+            "El destino de integración cambió desde la última prueba. Vuelve a ejecutar la prueba final.",
+            status,
+        );
+    }
+    let current_profile = crate::config::get_discipline();
+    if !self_test.profile_id.is_empty()
+        && !current_profile.is_empty()
+        && self_test.profile_id != current_profile
+    {
+        return result(
+            false,
+            "El perfil disciplinar cambió desde la última prueba. Vuelve a ejecutar la prueba final.",
             status,
         );
     }
