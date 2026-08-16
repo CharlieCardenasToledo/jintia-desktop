@@ -4,10 +4,48 @@ import { access, readFile, readdir } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
 
+async function readCourseRs() {
+  const parts = await Promise.all([
+    // capabilities.rs contiene check_dependencies y helpers de detección
+    readFile(new URL('src-tauri/src/capabilities.rs', root), 'utf8').catch(() => ''),
+    ...['mod.rs', 'structure.rs', 'syllabus.rs', 'migration.rs'].map(
+      f => readFile(new URL(`src-tauri/src/course/${f}`, root), 'utf8').catch(() => '')
+    ),
+  ]);
+  return parts.join('\n');
+}
+
+async function readOnboardingJs() {
+  const parts = await Promise.all(
+    ['store.js', 'ui.js', 'steps.js', 'actions.js', 'controller.js', 'index.js'].map(
+      f => readFile(new URL(`src/onboarding/${f}`, root), 'utf8').catch(() => '')
+    )
+  );
+  return parts.join('\n');
+}
+
+async function readRuntimesRs() {
+  const parts = await Promise.all(
+    ['mod.rs', 'node.rs', 'npm.rs', 'profile_binary.rs', 'python.rs', 'skill.rs'].map(
+      f => readFile(new URL(`src-tauri/src/runtimes/${f}`, root), 'utf8').catch(() => '')
+    )
+  );
+  return parts.join('\n');
+}
+
+async function readMcpRs() {
+  const parts = await Promise.all(
+    ['mod.rs', 'auth.rs', 'client.rs', 'config.rs', 'notebooks.rs'].map(
+      f => readFile(new URL(`src-tauri/src/mcp/${f}`, root), 'utf8').catch(() => '')
+    )
+  );
+  return parts.join('\n');
+}
+
 test('Jintia es la identidad canónica en la aplicación y los instaladores', async () => {
   const [main, onboarding, html, tauriText, appPackageText, brandText, paths] = await Promise.all([
     readFile(new URL('src/main.js', root), 'utf8'),
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readOnboardingJs(),
     readFile(new URL('index.html', root), 'utf8'),
     readFile(new URL('src-tauri/tauri.conf.json', root), 'utf8'),
     readFile(new URL('package.json', root), 'utf8'),
@@ -55,8 +93,8 @@ test('Desktop no conserva el manifest release legacy', async () => {
 test('NotebookLM MCP usa el bin público y provisiona su browser', async () => {
   const [paths, mcp, runtimes, smoke, release] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readMcpRs(),
+    readRuntimesRs(),
     readFile(new URL('scripts/smoke-notebooklm-browser.mjs', root), 'utf8'),
     readFile(new URL('src-tauri/src/release.rs', root), 'utf8'),
   ]);
@@ -187,9 +225,9 @@ test('la arquitectura separa la app de escritorio y el paquete instalable de la 
 test('la configuración y el curso consumen el contrato MCP dinámico', async () => {
   const [config, course, mcp, runtimes, build] = await Promise.all([
     readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readCourseRs(),
+    readMcpRs(),
+    readRuntimesRs(),
     readFile(new URL('src-tauri/build.rs', root), 'utf8'),
   ]);
   assert.match(config, /server_matches_managed_mcp/);
@@ -355,7 +393,10 @@ test('Desktop no reconstruye ni exporta el artefacto OpenAI', async () => {
 
 test('Desktop no conserva exportación manual de Skill', async () => {
   await assert.rejects(access(new URL('src-tauri/src/payload.rs', root)), error => error?.code === 'ENOENT');
-  const sources = await Promise.all(['src-tauri/src/lib.rs','src/api.js','src/onboarding.js','src/pages/settings.js','src/pages/activate.js','src/mocks/tauri-core.mock.js'].map(path => readFile(new URL(path, root), 'utf8')));
+  const sources = await Promise.all([
+    ...['src-tauri/src/lib.rs','src/api.js','src/pages/settings.js','src/pages/activate.js','src/mocks/tauri-core.mock.js'].map(path => readFile(new URL(path, root), 'utf8')),
+    readOnboardingJs(),
+  ]);
   for (const source of sources) assert.doesNotMatch(source, /export_skill_zip|exportSkillZip|btn-export-skill|export-zip|lastSkillZip|last_export_path|record_export|portable_skill_export_source|claude-cowork/);
 });
 test('el modo mock no anuncia plantillas que el backend no incorpora', async () => {
@@ -403,7 +444,7 @@ test('todo ícono usado con ic(name) está registrado en icons.js (si no, Lucide
     'src/pages/templates.js', 'src/pages/settings.js', 'src/pages/docs.js'];
   const missing = [];
   for (const file of files) {
-    const source = await readFile(new URL(file, root), 'utf8');
+    const source = file === 'src/onboarding.js' ? await readOnboardingJs() : await readFile(new URL(file, root), 'utf8');
     for (const match of source.matchAll(/\bic\(\s*["'`]([a-z0-9-]+)["'`]/g)) {
       const pascal = kebabToPascal(match[1]);
       if (!registered.has(pascal)) missing.push(`${file}: ic("${match[1]}") -> ${pascal}`);
@@ -413,7 +454,7 @@ test('todo ícono usado con ic(name) está registrado en icons.js (si no, Lucide
 });
 
 test('el onboarding colapsó a cinco pasos y conserva la llamada de finalización', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   assert.match(source, /TOTAL_STEPS\s*=\s*5/);
   assert.match(source, /completeOnboarding/);
   assert.match(source, /advanceOnboarding/);
@@ -424,7 +465,7 @@ test('el onboarding colapsó a cinco pasos y conserva la llamada de finalizació
 });
 
 test('el onboarding no bloquea la carga inicial con NotebookLM', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const start = source.indexOf('export async function renderOnboarding');
   const end = source.indexOf('function stepNumber', start);
   const initialRender = source.slice(start, end);
@@ -438,7 +479,7 @@ test('el onboarding no bloquea la carga inicial con NotebookLM', async () => {
 });
 
 test('institución, perfil académico y plantilla viven en un solo paso fusionado', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const start = source.indexOf('function profileStep');
   const end = source.indexOf('function renderOnboardingSiteAnalysis', start);
   assert.ok(start >= 0, 'profileStep debe existir');
@@ -459,7 +500,7 @@ test('institución, perfil académico y plantilla viven en un solo paso fusionad
 });
 
 test('el onboarding presenta el flujo de producción editorial aprobado', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   assert.match(source, /Sílabo[\s\S]*Análisis[\s\S]*Fuentes[\s\S]*Estructura[\s\S]*Validación[\s\S]*Generación/);
   assert.match(source, /No diseña la guía ni reemplaza tu criterio docente/);
   assert.match(source, /Preparando la prueba/);
@@ -468,7 +509,7 @@ test('el onboarding presenta el flujo de producción editorial aprobado', async 
 });
 
 test('el copy del onboarding no repite jerga técnica ni referencias obsoletas al esquema de 10 pasos', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   // Textos visibles: nada de "skill" expuesto al usuario final fuera de las
   // llamadas internas a la API (installSkill, getSkillPath, exportSkillZip).
   const stepMetaStart = source.indexOf('const STEP_META');
@@ -481,7 +522,7 @@ test('el copy del onboarding no repite jerga técnica ni referencias obsoletas a
 
 test('el copy visible no reintroduce jerga técnica ya eliminada por auditoría de UX', async () => {
   const [onboarding, settings] = await Promise.all([
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readOnboardingJs(),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
   ]);
   const banned = /Sistema editorial|motor de producción|perfil editorial|Zona peligrosa|Instalando skill/;
@@ -491,7 +532,7 @@ test('el copy visible no reintroduce jerga técnica ya eliminada por auditoría 
 
 test('el stepper usa el nodo de camino Jintia y controles Liquid Glass', async () => {
   const [source, css] = await Promise.all([
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readOnboardingJs(),
     readFile(new URL('src/styles.css', root), 'utf8'),
   ]);
   const bottomNavStart = source.indexOf('function renderBottomNav');
@@ -511,7 +552,7 @@ test('el stepper usa el nodo de camino Jintia y controles Liquid Glass', async (
 });
 
 test('el onboarding bloquea clics repetidos y explica la operación activa', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   assert.match(source, /async function runOnboardingOperation/);
   assert.match(source, /if \(onboardingActionInFlight\) return/);
   assert.match(source, /root\.setAttribute\("aria-busy"/);
@@ -522,7 +563,7 @@ test('el onboarding bloquea clics repetidos y explica la operación activa', asy
 });
 
 test('instalar una dependencia siempre pide autorización explícita antes de tocar el sistema', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const fnStart = source.indexOf('async function requestDependencyInstall');
   const fnEnd = source.indexOf('\n}', fnStart);
   const fn = source.slice(fnStart, fnEnd);
@@ -532,7 +573,7 @@ test('instalar una dependencia siempre pide autorización explícita antes de to
 });
 
 test('la confirmación de instalar dependencias es un modal propio, no un diálogo nativo del SO', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   assert.doesNotMatch(source, /@tauri-apps\/plugin-dialog/);
   assert.match(source, /function confirmInOnboarding/);
   assert.match(source, /document\.getElementById\("onboarding-root"\)/);
@@ -540,9 +581,9 @@ test('la confirmación de instalar dependencias es un modal propio, no un diálo
 
 test('el entorno base usa Node, Python, Jintia y Vivliostyle; LaTeX es opcional', async () => {
   const [onboarding, settings, course, onboardingRs] = await Promise.all([
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readOnboardingJs(),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readCourseRs(),
     readFile(new URL('src-tauri/src/onboarding.rs', root), 'utf8'),
   ]);
 
@@ -584,8 +625,8 @@ test('el entorno base usa Node, Python, Jintia y Vivliostyle; LaTeX es opcional'
 test('Vivliostyle se resuelve únicamente desde el runtime portable administrado', async () => {
   const [paths, runtimes, course] = await Promise.all([
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readRuntimesRs(),
+    readCourseRs(),
   ]);
 
   assert.match(
@@ -644,10 +685,7 @@ test('Vivliostyle se resuelve únicamente desde el runtime portable administrado
 });
 
 test('Vivliostyle consulta su versión únicamente con el runtime Node administrado', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
   const versionStart = runtimes.indexOf(
     'pub fn vivliostyle_version()'
   );
@@ -673,10 +711,7 @@ test('Vivliostyle consulta su versión únicamente con el runtime Node administr
 });
 
 test('CLIs Node administrados consultan su versión sin heredar NODE_OPTIONS del host', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const builderStart = runtimes.indexOf('fn build_managed_node_cli_version_command');
   const builderEnd = runtimes.indexOf('fn build_managed_npm_install_command', builderStart);
@@ -709,10 +744,7 @@ test('CLIs Node administrados consultan su versión sin heredar NODE_OPTIONS del
 });
 
 test('el onboarding delega la prueba final a jintia self-test --json', async () => {
-  const source = await readFile(
-    new URL('src/onboarding.js', root),
-    'utf8'
-  );
+  const source = await readOnboardingJs();
 
   const navigationStart = source.indexOf('function bindStepEvents');
   const navigationEnd = source.indexOf(
@@ -770,7 +802,7 @@ test('el onboarding delega la prueba final a jintia self-test --json', async () 
 });
 
 test('la barra inferior tiene CTA visible y stepper textual accesible', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const start = source.indexOf('function renderBottomNav');
   const end = source.indexOf('function syncOnboardingBusyState', start);
   const bottomNav = source.slice(start, end);
@@ -787,13 +819,13 @@ test('la barra inferior tiene CTA visible y stepper textual accesible', async ()
 });
 
 test('el paso de herramientas bloquea el avance nombrando la herramienta faltante', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   assert.match(source, /runtime\.dependencies\.filter\(isOnboardingBlocking\)/);
   assert.match(source, /Falta preparar: \$\{missing\.map/);
 });
 
 test('el onboarding muestra todas las capacidades, incluido Git opcional', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const start = source.indexOf('function dependencySequence');
   const end = source.indexOf('\n}', start);
   const fn = source.slice(start, end);
@@ -802,7 +834,7 @@ test('el onboarding muestra todas las capacidades, incluido Git opcional', async
 });
 
 test('los destinos distinguen Claude del plugin universal de ChatGPT y Codex', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const start = source.indexOf('function connectStep()');
   const end = source.indexOf('function finalStep()', start);
   assert.ok(start >= 0 && end > start);
@@ -816,7 +848,7 @@ test('los destinos distinguen Claude del plugin universal de ChatGPT y Codex', a
 });
 test('Entorno detecta motores visuales opcionales sin instalarlos silenciosamente', async () => {
   const [course, models, setup, settings] = await Promise.all([
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readCourseRs(),
     readFile(new URL('src-tauri/src/models.rs', root), 'utf8'),
     readFile(new URL('src/pages/setup.js', root), 'utf8'),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
@@ -846,7 +878,7 @@ test('Entorno ofrece perfiles visuales desde el runtime npm sin instalación aut
 });
 
 test('cambiar el destino mantiene sincronizada la selección visible del onboarding', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const start = source.indexOf('input[name=onboarding-target]');
   const end = source.indexOf('root.querySelectorAll("[data-onboarding-action]"', start);
   const handler = source.slice(start, end);
@@ -855,7 +887,7 @@ test('cambiar el destino mantiene sincronizada la selección visible del onboard
 });
 
 test('el checklist final depende del destino elegido (no asume Skill instalada siempre)', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const start = source.indexOf('function finalStep');
   const end = source.indexOf('function animateFinalStep', start);
   const final = source.slice(start, end);
@@ -865,7 +897,7 @@ test('el checklist final depende del destino elegido (no asume Skill instalada s
 });
 
 test('el paso de perfil fusionado tiene divisores visuales numerados entre secciones', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const start = source.indexOf('function profileStep');
   const end = source.indexOf('function renderOnboardingSiteAnalysis', start);
   const profile = source.slice(start, end);
@@ -876,7 +908,7 @@ test('el paso de perfil fusionado tiene divisores visuales numerados entre secci
 test('los botones de Conexiones en Settings usan los targets que el backend realmente acepta', async () => {
   const [settings, mcp] = await Promise.all([
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
-    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
+    readMcpRs(),
   ]);
   // configure_mcp() en mcp.rs solo reconoce "claude-code" y "desktop"; usar
   // "claude_code" (guion bajo), "cowork" o "all" hace que el botón siempre
@@ -898,7 +930,7 @@ test('el dashboard permite minimizar, maximizar, cerrar y arrastrar sin añadir 
   const [capabilityText, main, onboarding, windowMock] = await Promise.all([
     readFile(new URL('src-tauri/capabilities/default.json', root), 'utf8'),
     readFile(new URL('src/main.js', root), 'utf8'),
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readOnboardingJs(),
     readFile(new URL('src/mocks/tauri-window.mock.js', root), 'utf8'),
   ]);
   const capability = JSON.parse(capabilityText);
@@ -946,7 +978,7 @@ test('Liquid Glass tiene fallbacks completos de accesibilidad', async () => {
   assert.match(css, /backdrop-filter:\s*none/);
   assert.match(css, /\.liquid-control::before,[\s\S]*display:\s*none\s*!important/);
   assert.match(css, /prefers-reduced-motion/);
-  const onboarding = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const onboarding = await readOnboardingJs();
   assert.match(onboarding, /matchMedia\("\(prefers-reduced-motion: reduce\)"\)/);
 });
 
@@ -1092,7 +1124,7 @@ test('Plantillas muestra el catálogo completo sin cortar resultados', async () 
 test('Plantillas comparten una guía semanal de demostración realista', async () => {
   const templates = await readFile(new URL('src/pages/templates.js', root), 'utf8');
   const sample = await readFile(new URL('src/sampleGuide.js', root), 'utf8');
-  const course = await readFile(new URL('src-tauri/src/course.rs', root), 'utf8');
+  const course = await readCourseRs();
 
   // onboarding ya no usa muestra sintética: delega a `jintia init` para la prueba final real
   assert.match(templates, /buildSampleGuideData\(state\.config/);
@@ -1115,7 +1147,12 @@ test('Configuración distingue una skill instalada de una skill actualizada', as
   assert.match(setup, /skill_version:\s*claude\.version/); assert.match(setup, /available_skill_version:\s*claude\.available_version/); assert.match(setup, /skill_path:\s*claude\.target/);
 });
 test('Jintia se gestiona como plugin universal para ChatGPT y Codex', async () => {
-  const [pluginToolchain, pluginOnboarding, pluginApi, pluginLib] = await Promise.all(['src-tauri/src/toolchain.rs','src/onboarding.js','src/api.js','src-tauri/src/lib.rs'].map(path => readFile(new URL(path, root), 'utf8')));
+  const [pluginToolchain, pluginOnboarding, pluginApi, pluginLib] = await Promise.all([
+    readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
+    readOnboardingJs(),
+    readFile(new URL('src/api.js', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+  ]);
   const statusStart = pluginToolchain.indexOf('fn openai_plugin_status_args()');
   const installStart = pluginToolchain.indexOf('fn openai_plugin_install_args()');
   const statusBlock = pluginToolchain.slice(statusStart, installStart);
@@ -1155,7 +1192,7 @@ test('Ayuda navega a la sección visible de Configuración, no a un panel oculto
 
 test('la prueba final transmite progreso y permite copiar un diagnóstico', async () => {
   const [onboarding, lib] = await Promise.all([
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readOnboardingJs(),
     readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
   ]);
   // El mecanismo de progress events cambió: ya no usa emit_compile_progress
@@ -1286,7 +1323,7 @@ test('las asignaturas usan Documentos por defecto y permiten cambiar la ubicaci�
   assert.match(courses, /El proyecto se preparará automáticamente/);
   assert.match(courses, /project_status: "preparing"/);
   assert.doesNotMatch(courses, /m-prepare-now|prepareNow|Registrar asignatura/);
-  assert.match(await readFile(new URL('src-tauri/src/course.rs', root), 'utf8'), /course_folder_name/);
+  assert.match(await readCourseRs(), /course_folder_name/);
 });
 
 test('el sílabo reutiliza la ruta preparada antes de pedir otra carpeta', async () => {
@@ -1298,7 +1335,7 @@ test('el sílabo reutiliza la ruta preparada antes de pedir otra carpeta', async
 
 test('la estructura del curso delega a jintia init via Engine Adapter', async () => {
   const [course, engine] = await Promise.all([
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readCourseRs(),
     readFile(new URL('src-tauri/src/engine.rs', root), 'utf8'),
   ]);
   assert.match(course, /engine::run_jintia/);
@@ -1359,10 +1396,7 @@ test('eliminar una asignatura usa un modal propio de Jintia, no un diálogo nati
 });
 
 test('guardar el perfil no instala paquetes y la preparación queda como acción independiente', async () => {
-  const source = await readFile(
-    new URL('src/onboarding.js', root),
-    'utf8'
-  );
+  const source = await readOnboardingJs();
 
   const actionStart = source.indexOf(
     'if (action === "save-profile-and-template")'
@@ -1449,10 +1483,7 @@ test('guardar el perfil no instala paquetes y la preparación queda como acción
 });
 
 test('los paquetes Node disciplinares usan exclusivamente Node npm CLI y PATH administrados', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const start = runtimes.indexOf(
     'pub fn install_npm_packages'
@@ -1541,10 +1572,7 @@ test('los paquetes Node disciplinares usan exclusivamente Node npm CLI y PATH ad
 });
 
 test('los paquetes pip disciplinares usan exclusivamente Python y PATH administrados', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const installerStart = runtimes.indexOf(
     'pub fn install_pip_packages'
@@ -1605,10 +1633,7 @@ test('los paquetes pip disciplinares usan exclusivamente Python y PATH administr
 });
 
 test('Python administrado usa modo aislado en validación e instalación pip', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const validatorStart = runtimes.indexOf('fn validate_python_runtime');
   const validatorEnd = runtimes.indexOf(
@@ -1645,20 +1670,8 @@ test('Python administrado usa modo aislado en validación e instalación pip', a
 test('Mermaid CLI se detecta únicamente desde el Node portable administrado', async () => {
   const [runtimes, course] =
     await Promise.all([
-      readFile(
-        new URL(
-          'src-tauri/src/runtimes.rs',
-          root
-        ),
-        'utf8'
-      ),
-      readFile(
-        new URL(
-          'src-tauri/src/course.rs',
-          root
-        ),
-        'utf8'
-      ),
+      readRuntimesRs(),
+      readCourseRs(),
     ]);
 
   const resolverStart =
@@ -1783,10 +1796,7 @@ test('Mermaid CLI se detecta únicamente desde el Node portable administrado', a
 });
 
 test('Node portable nunca se activa sin checksum SHA-256 verificado', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const downloadStart = runtimes.indexOf(
     'pub fn download_portable_node('
@@ -1863,10 +1873,7 @@ test('Node portable nunca se activa sin checksum SHA-256 verificado', async () =
 });
 
 test('Node portable valida staging y restaura el runtime anterior si falla la activación', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const downloadStart = runtimes.indexOf(
     'pub fn download_portable_node('
@@ -1940,10 +1947,7 @@ test('Node portable valida staging y restaura el runtime anterior si falla la ac
 });
 
 test('Node portable valida el staging sin heredar NODE_OPTIONS del host', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const builderStart = runtimes.indexOf('fn build_staged_node_version_command');
   const validatorStart = runtimes.indexOf('fn validate_node_runtime', builderStart);
@@ -1969,10 +1973,7 @@ test('Node portable valida el staging sin heredar NODE_OPTIONS del host', async 
 });
 
 test('Node portable informa su versión sin heredar NODE_OPTIONS del host', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const builderStart = runtimes.indexOf('fn build_portable_node_version_command');
   const versionerStart = runtimes.indexOf('pub fn node_version', builderStart);
@@ -2019,10 +2020,7 @@ test('Node portable informa su versión sin heredar NODE_OPTIONS del host', asyn
 });
 
 test('Node portable extrae tar.gz sin depender del tar anfitrión', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const extractorStart = runtimes.indexOf('fn extract_node_tar_gz');
   const extractorEnd = runtimes.indexOf('fn emit_progress', extractorStart);
@@ -2065,10 +2063,7 @@ test('Node portable extrae tar.gz sin depender del tar anfitrión', async () => 
 });
 
 test('Python portable restaura explícitamente el runtime anterior si falla la activación', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const activationStart = runtimes.indexOf(
     'fn activate_staged_python_runtime'
@@ -2124,10 +2119,7 @@ test('Python portable restaura explícitamente el runtime anterior si falla la a
 });
 
 test('NotebookLM MCP restaura explícitamente el runtime anterior si falla la activación', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const helperStart = runtimes.indexOf('fn activate_staged_notebooklm_mcp');
   const helperEnd = runtimes.indexOf('\npub fn portable_notebooklm_mcp_installed_for', helperStart);
@@ -2159,10 +2151,7 @@ test('NotebookLM MCP restaura explícitamente el runtime anterior si falla la ac
 });
 
 test('NotebookLM MCP construye su staging npm sólo con Node y PATH administrados', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const builderStart = runtimes.indexOf('fn build_managed_notebooklm_npm_command');
   const builderEnd = runtimes.indexOf('\npub fn portable_notebooklm_mcp_installed_for', builderStart);
@@ -2206,10 +2195,7 @@ test('NotebookLM MCP construye su staging npm sólo con Node y PATH administrado
 });
 
 test('NotebookLM MCP staging npm no hereda NODE_OPTIONS del host', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const builderStart = runtimes.indexOf('fn build_managed_notebooklm_npm_command');
   const activateStart = runtimes.indexOf('\nfn activate_staged_notebooklm_mcp', builderStart);
@@ -2232,10 +2218,7 @@ test('NotebookLM MCP staging npm no hereda NODE_OPTIONS del host', async () => {
 });
 
 test('NotebookLM MCP ejecuta browser install y status sólo con Node y PATH administrados', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const builderStart = runtimes.indexOf('fn build_managed_notebooklm_browser_command');
   const runnerStart = runtimes.indexOf('fn run_notebooklm_browser_command');
@@ -2270,10 +2253,7 @@ test('NotebookLM MCP ejecuta browser install y status sólo con Node y PATH admi
 });
 
 test('NotebookLM MCP browser install y status no heredan NODE_OPTIONS del host', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
   const builderStart = runtimes.indexOf('fn build_managed_notebooklm_browser_command');
   const runnerStart = runtimes.indexOf('fn run_notebooklm_browser_command', builderStart);
   const validatorStart = runtimes.indexOf('fn validate_notebooklm_browser', runnerStart);
@@ -2309,8 +2289,8 @@ test('NotebookLM MCP browser install y status no heredan NODE_OPTIONS del host',
 
 test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administrados', async () => {
   const [mcp, runtimes] = await Promise.all([
-    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readMcpRs(),
+    readRuntimesRs(),
   ]);
 
   const pathStart = runtimes.indexOf('pub(crate) fn managed_node_runtime_path');
@@ -2356,7 +2336,7 @@ test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administra
 });
 
 test('NotebookLM MCP persistente no hereda NODE_OPTIONS del host', async () => {
-  const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
+  const mcp = await readMcpRs();
   const builderStart = mcp.indexOf('fn build_managed_mcp_server_command');
   const builderEnd = mcp.indexOf('\nimpl McpConnection', builderStart);
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
@@ -2381,7 +2361,7 @@ test('NotebookLM MCP persistente no hereda NODE_OPTIONS del host', async () => {
 });
 
 test('Las configuraciones externas de NotebookLM MCP persisten el PATH Node administrado', async () => {
-  const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
+  const mcp = await readMcpRs();
 
   const jsonStart = mcp.indexOf('pub fn configure_mcp');
   const codexStart = mcp.indexOf('pub fn configure_codex_mcp');
@@ -2437,7 +2417,7 @@ test('Las configuraciones externas de NotebookLM MCP persisten el PATH Node admi
 });
 
 test('La configuración JSON de NotebookLM MCP preserva campos y entorno ajenos al actualizar su identidad administrada', async () => {
-  const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
+  const mcp = await readMcpRs();
 
   const helperStart = mcp.indexOf('fn apply_managed_json_mcp_server');
   const helperEnd = mcp.indexOf('\nfn managed_node_runtime_path_text', helperStart);
@@ -2470,7 +2450,7 @@ test('La configuración JSON de NotebookLM MCP preserva campos y entorno ajenos 
 });
 
 test('NotebookLM MCP valida la versión de Node sin heredar NODE_OPTIONS del host', async () => {
-  const mcp = await readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8');
+  const mcp = await readMcpRs();
   const builderStart = mcp.indexOf('fn build_managed_node_version_command');
   const builderEnd = mcp.indexOf('\nfn managed_node_version', builderStart);
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
@@ -2507,13 +2487,7 @@ test('NotebookLM MCP valida la versión de Node sin heredar NODE_OPTIONS del hos
 test('Jintia requiere su Node administrado aunque exista un Node global', async () => {
   const [runtimes, lib, course, onboarding] =
     await Promise.all([
-      readFile(
-        new URL(
-          'src-tauri/src/runtimes.rs',
-          root
-        ),
-        'utf8'
-      ),
+      readRuntimesRs(),
       readFile(
         new URL(
           'src-tauri/src/lib.rs',
@@ -2521,20 +2495,8 @@ test('Jintia requiere su Node administrado aunque exista un Node global', async 
         ),
         'utf8'
       ),
-      readFile(
-        new URL(
-          'src-tauri/src/course.rs',
-          root
-        ),
-        'utf8'
-      ),
-      readFile(
-        new URL(
-          'src/onboarding.js',
-          root
-        ),
-        'utf8'
-      ),
+      readCourseRs(),
+      readOnboardingJs(),
     ]);
 
   const resolverStart =
@@ -2659,13 +2621,7 @@ test('Python administrado usa un runtime oficial portable en Windows y standalon
         ),
         'utf8'
       ),
-      readFile(
-        new URL(
-          'src-tauri/src/runtimes.rs',
-          root
-        ),
-        'utf8'
-      ),
+      readRuntimesRs(),
       readFile(
         new URL(
           'src-tauri/Cargo.toml',
@@ -2762,7 +2718,7 @@ test('Python administrado usa un runtime oficial portable en Windows y standalon
 });
 
 test('el runtime Python de Windows verifica y extrae el ZIP oficial sin debilitar Defender', async () => {
-  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const runtimes = await readRuntimesRs();
   const downloaderStart = runtimes.indexOf('pub fn download_portable_python(');
   const downloaderEnd = runtimes.indexOf('\nfn emit_python_progress(', downloaderStart);
   const downloader = runtimes.slice(downloaderStart, downloaderEnd);
@@ -2778,10 +2734,7 @@ test('el runtime Python de Windows verifica y extrae el ZIP oficial sin debilita
 });
 
 test('Python staged exige exactamente la versión administrada antes de activarse', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const validatorStart = runtimes.indexOf('fn validate_python_runtime');
   const validatorEnd = runtimes.indexOf(
@@ -2838,13 +2791,7 @@ test('Python staged exige exactamente la versión administrada antes de activars
 });
 
 test('el runtime Python pagina los assets de la release fija', async () => {
-  const runtimes = await readFile(
-    new URL(
-      'src-tauri/src/runtimes.rs',
-      root
-    ),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const start = runtimes.indexOf(
     'fn resolve_python_asset'
@@ -2919,13 +2866,7 @@ test('el runtime Python pagina los assets de la release fija', async () => {
 test('Jintia usa solamente runtimes Python aprobados aunque exista otro Python global', async () => {
   const [runtimes, lib, course] =
     await Promise.all([
-      readFile(
-        new URL(
-          'src-tauri/src/runtimes.rs',
-          root
-        ),
-        'utf8'
-      ),
+      readRuntimesRs(),
       readFile(
         new URL(
           'src-tauri/src/lib.rs',
@@ -2933,13 +2874,7 @@ test('Jintia usa solamente runtimes Python aprobados aunque exista otro Python g
         ),
         'utf8'
       ),
-      readFile(
-        new URL(
-          'src-tauri/src/course.rs',
-          root
-        ),
-        'utf8'
-      ),
+      readCourseRs(),
     ]);
 
   const start = runtimes.indexOf(
@@ -3030,10 +2965,7 @@ test('Jintia usa solamente runtimes Python aprobados aunque exista otro Python g
 test('Vivliostyle puede repararse desde su propia dependencia', async () => {
   const [onboarding, api, lib, runtimes] =
     await Promise.all([
-      readFile(
-        new URL('src/onboarding.js', root),
-        'utf8'
-      ),
+      readOnboardingJs(),
       readFile(
         new URL('src/api.js', root),
         'utf8'
@@ -3042,10 +2974,7 @@ test('Vivliostyle puede repararse desde su propia dependencia', async () => {
         new URL('src-tauri/src/lib.rs', root),
         'utf8'
       ),
-      readFile(
-        new URL('src-tauri/src/runtimes.rs', root),
-        'utf8'
-      ),
+      readRuntimesRs(),
     ]);
 
   const start = onboarding.indexOf(
@@ -3134,18 +3063,9 @@ test('Vivliostyle puede repararse desde su propia dependencia', async () => {
 test('Vivliostyle global no satisface el runtime requerido por Jintia', async () => {
   const [runtimes, course, onboarding, engine] =
     await Promise.all([
-      readFile(
-        new URL('src-tauri/src/runtimes.rs', root),
-        'utf8'
-      ),
-      readFile(
-        new URL('src-tauri/src/course.rs', root),
-        'utf8'
-      ),
-      readFile(
-        new URL('src/onboarding.js', root),
-        'utf8'
-      ),
+      readRuntimesRs(),
+      readCourseRs(),
+      readOnboardingJs(),
       readFile(
         new URL('src-tauri/src/engine.rs', root),
         'utf8'
@@ -3225,10 +3145,7 @@ test('Vivliostyle global no satisface el runtime requerido por Jintia', async ()
 });
 
 test('Vivliostyle instala npm con el Node portable de Jintia', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   const start = runtimes.indexOf(
     'pub fn install_vivliostyle()'
@@ -3296,7 +3213,7 @@ test('Vivliostyle instala npm con el Node portable de Jintia', async () => {
 });
 
 test('download_portable_skill instala y prueba Jintia con PATH administrado', async () => {
-  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const runtimes = await readRuntimesRs();
   const helperStart = runtimes.indexOf('fn managed_node_runtime_path()');
   const helperEnd = runtimes.indexOf('pub fn install_vivliostyle', helperStart);
   const installStart = runtimes.indexOf('pub fn download_portable_skill');
@@ -3334,14 +3251,8 @@ test('download_portable_skill instala y prueba Jintia con PATH administrado', as
 test('Node CLI disciplinares usan exclusivamente el runtime administrado', async () => {
   const [runtimes, course] =
     await Promise.all([
-      readFile(
-        new URL('src-tauri/src/runtimes.rs', root),
-        'utf8'
-      ),
-      readFile(
-        new URL('src-tauri/src/course.rs', root),
-        'utf8'
-      ),
+      readRuntimesRs(),
+      readCourseRs(),
     ]);
 
   const resolverStart = runtimes.indexOf(
@@ -3440,10 +3351,7 @@ test('Node CLI disciplinares usan exclusivamente el runtime administrado', async
 });
 
 test('el onboarding no avanza si falla la instalación del perfil disciplinar', async () => {
-  const source = await readFile(
-    new URL('src/onboarding.js', root),
-    'utf8'
-  );
+  const source = await readOnboardingJs();
 
   const fnStart = source.indexOf(
     'async function installDisciplinePackages'
@@ -3513,10 +3421,7 @@ test('el onboarding no avanza si falla la instalación del perfil disciplinar', 
 });
 
 test('un error de paquetes del perfil queda en su operación sin impedir guardar el perfil', async () => {
-  const source = await readFile(
-    new URL('src/onboarding.js', root),
-    'utf8'
-  );
+  const source = await readOnboardingJs();
 
   const actionStart = source.indexOf(
     'if (action === "save-profile-and-template")'
@@ -3541,10 +3446,7 @@ test('un error de paquetes del perfil queda en su operación sin impedir guardar
 });
 
 test('Jintia se instala mediante npm administrado, no mediante descarga manual de tarball', async () => {
-  const runtimes = await readFile(
-    new URL('src-tauri/src/runtimes.rs', root),
-    'utf8'
-  );
+  const runtimes = await readRuntimesRs();
 
   assert.match(runtimes, /pub fn download_portable_skill/);
 
@@ -3584,7 +3486,7 @@ test('Jintia se instala mediante npm administrado, no mediante descarga manual d
 
 test('resolve_skill usa exclusivamente Jintia portable administrado', async () => {
   const [runtimes, paths] = await Promise.all([
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readRuntimesRs(),
     readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'),
   ]);
 
@@ -3609,7 +3511,7 @@ test('resolve_skill usa exclusivamente Jintia portable administrado', async () =
 test('Engine Adapter exige el archivo jintia.js resuelto por el runtime', async () => {
   const [engine, runtimes] = await Promise.all([
     readFile(new URL('src-tauri/src/engine.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readRuntimesRs(),
   ]);
 
   assert.match(engine, /managed_entrypoint/);
@@ -3767,7 +3669,7 @@ test('la UI presenta las fases actuales de instalación npm de Jintia', async ()
 
 test('los perfiles visuales provienen del runtime npm administrado', async () => {
   const [runtimes, lib] = await Promise.all([
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readRuntimesRs(),
     readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
   ]);
 
@@ -3818,7 +3720,7 @@ test('los perfiles visuales provienen del runtime npm administrado', async () =>
 });
 
 test('el estado de la Skill requiere el runtime npm administrado', async () => {
-  const [runtimePaths, runtimeSources, runtimeToolchain] = await Promise.all(['src-tauri/src/paths.rs','src-tauri/src/runtimes.rs','src-tauri/src/toolchain.rs'].map(path => readFile(new URL(path, root), 'utf8')));
+  const [runtimePaths, runtimeSources, runtimeToolchain] = await Promise.all([readFile(new URL('src-tauri/src/paths.rs', root), 'utf8'), readRuntimesRs(), readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8')]);
   const resolveStart = runtimeSources.indexOf('pub fn resolve_skill()');
   const resolveEnd = runtimeSources.indexOf('\npub fn download_portable_skill', resolveStart);
   const installStart = runtimeSources.indexOf('pub fn download_portable_skill');
@@ -3837,7 +3739,7 @@ test('el estado de la Skill requiere el runtime npm administrado', async () => {
 test('Plan 61A conserva el corte legacy y la extracción hermética de Node', async () => {
   const [activate, runtimes, cargo] = await Promise.all([
     readFile(new URL('src/pages/activate.js', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readRuntimesRs(),
     readFile(new URL('src-tauri/Cargo.toml', root), 'utf8'),
   ]);
   assert.doesNotMatch(activate, /Claude\/Cowork usa el ZIP|exportSkillZip|export_skill_zip|lastSkillZip|claude-cowork/);
@@ -3856,9 +3758,9 @@ test('Plan 61A conserva el corte legacy y la extracción hermética de Node', as
 
 test('Todo subprocess Node administrado de Desktop usa la política central de environment', async () => {
   const [runtimes, engine, mcp] = await Promise.all([
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readRuntimesRs(),
     readFile(new URL('src-tauri/src/engine.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/mcp.rs', root), 'utf8'),
+    readMcpRs(),
   ]);
 
   // helper central existe y es la única autoridad productiva
@@ -3958,7 +3860,7 @@ test('engine entrega a Jintia un PATH compuesto sólo por runtimes administrados
 });
 
 test('Git manual en macOS y Linux no recomienda instalar runtimes ajenos', async () => {
-  const course = await readFile(new URL('src-tauri/src/course.rs', root), 'utf8');
+  const course = await readCourseRs();
 
   // install_dependency debe despachar Node.js, Python y Git explícitamente
   const installStart = course.indexOf('pub fn install_dependency');
@@ -4004,7 +3906,7 @@ test('Git manual en macOS y Linux no recomienda instalar runtimes ajenos', async
 });
 
 test('Todo subprocess Python administrado de Desktop usa la política central de modo aislado', async () => {
-  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const runtimes = await readRuntimesRs();
 
   // Separar producción de tests
   const testCfgIdx = runtimes.indexOf('#[cfg(test)]');
@@ -4070,7 +3972,7 @@ test('Todo subprocess Python administrado de Desktop usa la política central de
 });
 
 test('Las descargas de runtimes rechazan HTTP de error antes de escribir artefactos', async () => {
-  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const runtimes = await readRuntimesRs();
 
   // ── Node ────────────────────────────────────────────────────────────────────
   const nodeStart = runtimes.indexOf('pub fn download_portable_node(');
@@ -4129,7 +4031,7 @@ test('Las descargas de runtimes rechazan HTTP de error antes de escribir artefac
 });
 
 test('Node y Python rechazan instalaciones concurrentes antes de tocar staging', async () => {
-  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const runtimes = await readRuntimesRs();
   const testCfgIdx = runtimes.indexOf('#[cfg(test)]');
   const production = testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : runtimes;
 
@@ -4206,8 +4108,8 @@ test('Configuración instala Vivliostyle con su instalador administrado existent
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
     readFile(new URL('src/api.js', root), 'utf8'),
     readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readRuntimesRs(),
+    readCourseRs(),
   ]);
 
   // course.rs declara Vivliostyle como dependencia required e installable
@@ -4265,7 +4167,7 @@ test('Configuración instala Vivliostyle con su instalador administrado existent
 test('Instalar herramientas necesarias incluye el renderer Vivliostyle administrado', async () => {
   const [settings, course] = await Promise.all([
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readCourseRs(),
   ]);
 
   // course.rs declara Vivliostyle como renderer obligatorio
@@ -4338,7 +4240,7 @@ test('Instalar herramientas necesarias incluye el renderer Vivliostyle administr
 test('El bulk respeta Node como prerrequisito sin bloquear Python independiente', async () => {
   const [settings, runtimes] = await Promise.all([
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readRuntimesRs(),
   ]);
 
   // runtimes.rs: download_portable_skill requiere Node portable
@@ -4428,7 +4330,7 @@ test('El bulk respeta Node como prerrequisito sin bloquear Python independiente'
 });
 
 test('Toda mutación de runtimes administrados usa locks por recurso', async () => {
-  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const runtimes = await readRuntimesRs();
   // runtimes.rs tiene código de producción en dos bloques: antes y después del módulo #[cfg(test)].
   // Para statics y helper usamos el bloque inicial; para funciones que aparecen tras el módulo tests
   // usamos el archivo completo pero acotamos cada función con delimitadores estables.
@@ -4616,9 +4518,9 @@ test('Configuración descarga runtimes individuales exclusivamente mediante api.
 
 test('Las dependencias administradas sólo están listas si su probe operativo responde', async () => {
   const [runtimes, course, onboarding, settings] = await Promise.all([
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readRuntimesRs(),
+    readCourseRs(),
+    readOnboardingJs(),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
   ]);
 
@@ -4702,7 +4604,7 @@ test('Las dependencias administradas sólo están listas si su probe operativo r
 });
 
 test('Las descargas eliminan el temporal si falla lectura o escritura del streaming', async () => {
-  const runtimes = await readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8');
+  const runtimes = await readRuntimesRs();
 
   // ── Node ─────────────────────────────────────────────────────────────────────
   const nodeStart = runtimes.indexOf('pub fn download_portable_node(');
@@ -4811,11 +4713,11 @@ test('Las descargas eliminan el temporal si falla lectura o escritura del stream
 
 test('Jintia Skill sólo está lista si contrato instalado y smoke del engine responden', async () => {
   const [course, engine, runtimes, release, onboarding, settings] = await Promise.all([
-    readFile(new URL('src-tauri/src/course.rs', root), 'utf8'),
+    readCourseRs(),
     readFile(new URL('src-tauri/src/engine.rs', root), 'utf8'),
-    readFile(new URL('src-tauri/src/runtimes.rs', root), 'utf8'),
+    readRuntimesRs(),
     readFile(new URL('src-tauri/src/release.rs', root), 'utf8'),
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readOnboardingJs(),
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
   ]);
 
@@ -5044,7 +4946,7 @@ test('el reporter recibe payload normalizado al dispararse el evento', async () 
 });
 
 test('el onboarding presenta el error terminal y permite reintentar', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   // Excepción capturada con el helper central de normalización
   assert.match(source, /catch\s*\(e\)[\s\S]{0,80}?result\s*=\s*operationFailureResult\(e\)/);
   // renderCurrentStep() restaura la acción de reintento tras el error
@@ -5057,7 +4959,7 @@ test('el onboarding presenta el error terminal y permite reintentar', async () =
 
 test('el onboarding usa progreso real del backend: sin simulación de porcentajes', async () => {
   const [onboarding, progress] = await Promise.all([
-    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readOnboardingJs(),
     readFile(new URL('src/onboardingProgress.js', root), 'utf8'),
   ]);
   // Usa el módulo de progreso
@@ -5148,7 +5050,7 @@ test('los atributos determinados pertenecen únicamente a la barra visible', () 
 });
 
 test('Node cambia a progreso indeterminado antes de instalar Vivliostyle', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const fnStart = source.indexOf('async function performDependencyInstall');
   const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
   const fn = source.slice(fnStart, fnEnd);
@@ -5163,7 +5065,7 @@ test('Node cambia a progreso indeterminado antes de instalar Vivliostyle', async
 });
 
 test('instalar Python no instala paquetes del perfil como efecto secundario', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const fnStart = source.indexOf('async function performDependencyInstall');
   const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
   const fn = source.slice(fnStart, fnEnd);
@@ -5233,7 +5135,7 @@ test('normaliza un error de paquetes del perfil', () => {
 });
 
 test('performDependencyInstall usa el resultado compuesto antes del toast terminal', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const fnStart = source.indexOf('async function performDependencyInstall');
   const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
   const fn = source.slice(fnStart, fnEnd);
@@ -5355,7 +5257,7 @@ test('no confunde ActionResult fallido con una excepción', async () => {
 });
 
 test('runOnboardingOperation integra error y restauración', async () => {
-  const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
+  const source = await readOnboardingJs();
   const fnStart = source.indexOf('async function runOnboardingOperation');
   const fnEnd = source.indexOf('\n}', fnStart);
   const fn = source.slice(fnStart, fnEnd);
@@ -5415,7 +5317,7 @@ test('conserva exactamente un anuncio y una recarga', async () => {
 
 test('los dos CTA finales usan el mismo handoff terminal y no existe skip', async () => {
   // Normalizar saltos de línea para evitar diferencias CRLF/LF
-  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await readOnboardingJs()).replace(/\r\n/g, '\n');
 
   assert.doesNotMatch(source, /skip-onboarding|Saltar configuración/);
   const completeMatch = source.match(/action === "complete-create" \|\| action === "complete-dashboard"\)([\s\S]*?)(?=\n  if \(action === "advance"\))/);
@@ -5431,7 +5333,7 @@ test('los dos CTA finales usan el mismo handoff terminal y no existe skip', asyn
 });
 
 test('los resultados fallidos de los CTA finales no entran al handoff', async () => {
-  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await readOnboardingJs()).replace(/\r\n/g, '\n');
 
   const completeMatch = source.match(/action === "complete-create" \|\| action === "complete-dashboard"\)([\s\S]*?)(?=\n  if \(action === "advance"\))/);
   assert.ok(completeMatch, 'bloque complete requerido');
@@ -5482,7 +5384,7 @@ test('conserva exactamente los fallos preliminares de Python', () => {
 });
 
 test('otras dependencias no usan la conciliación de Python', async () => {
-  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await readOnboardingJs()).replace(/\r\n/g, '\n');
   const fnStart = source.indexOf('async function performDependencyInstall');
   const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
   const fn = source.slice(fnStart, fnEnd);
@@ -5502,7 +5404,7 @@ test('otras dependencias no usan la conciliación de Python', async () => {
 });
 
 test('Python verifica antes del toast y usa el mismo snapshot', async () => {
-  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await readOnboardingJs()).replace(/\r\n/g, '\n');
   const fnStart = source.indexOf('async function performDependencyInstall');
   const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
   const fn = source.slice(fnStart, fnEnd);
@@ -5586,7 +5488,7 @@ test('preparación fallida usa el feedback central una sola vez', async () => {
 });
 
 test('showPreparedStep delega la limpieza y no emite feedback local', async () => {
-  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await readOnboardingJs()).replace(/\r\n/g, '\n');
   const fnStart = source.indexOf('async function showPreparedStep(');
   const fnEnd = source.indexOf('\nfunction dependencySequence', fnStart);
   const fn = source.slice(fnStart, fnEnd);
@@ -5656,7 +5558,7 @@ test('runOperationWithFeedback usa el mismo resultado normalizado', async () => 
 });
 
 test('performDependencyInstall normaliza antes del recheck y toast', async () => {
-  const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await readOnboardingJs()).replace(/\r\n/g, '\n');
   const fnStart = source.indexOf('async function performDependencyInstall');
   const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
   const fn = source.slice(fnStart, fnEnd);

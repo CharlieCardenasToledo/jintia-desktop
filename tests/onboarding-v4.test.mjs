@@ -18,6 +18,24 @@ import { createOperationState, elapsedLabel, reduceOperationEvent } from "../src
 
 const root = new URL("../", import.meta.url);
 
+async function readOnboardingJs() {
+  const parts = await Promise.all(
+    ["store.js", "ui.js", "steps.js", "actions.js", "controller.js", "index.js"].map(
+      f => readFile(new URL(`src/onboarding/${f}`, root), "utf8").catch(() => "")
+    )
+  );
+  return parts.join("\n");
+}
+
+async function readMcpRs() {
+  const parts = await Promise.all(
+    ["mod.rs", "auth.rs", "client.rs", "config.rs", "notebooks.rs"].map(
+      f => readFile(new URL(`src-tauri/src/mcp/${f}`, root), "utf8").catch(() => "")
+    )
+  );
+  return parts.join("\n");
+}
+
 function memoryStorage() {
   const data = new Map();
   return {
@@ -46,7 +64,7 @@ test("instalar todo selecciona solo bloqueantes instalables y no duplica listos"
 });
 
 test("cada capacidad opcional ofrece una acción individual honesta", async () => {
-  const source = await readFile(new URL("src/onboarding.js", root), "utf8");
+  const source = await readOnboardingJs();
   assert.match(source, /dep\.blockingScope === "none" \? "Instalar por separado"/);
   assert.match(source, /data-show-capability-details/);
   assert.match(source, /Ver cómo habilitarla/);
@@ -80,10 +98,10 @@ test("la máquina de operaciones conserva estados, porcentaje y tiempo real", ()
 
 test("NotebookLM expone operación identificada, fases y cancelación con limpieza", async () => {
   const [mcp, lib, api, onboarding] = await Promise.all([
-    readFile(new URL("src-tauri/src/mcp.rs", root), "utf8"),
+    readMcpRs(),
     readFile(new URL("src-tauri/src/lib.rs", root), "utf8"),
     readFile(new URL("src/api.js", root), "utf8"),
-    readFile(new URL("src/onboarding.js", root), "utf8"),
+    readOnboardingJs(),
   ]);
   for (const phase of ["opening_browser", "waiting_for_login", "verifying", "done", "cancelled", "error"]) assert.match(mcp, new RegExp(phase));
   assert.match(mcp, /AUTH_CANCEL_REQUESTED/);
@@ -96,7 +114,7 @@ test("NotebookLM expone operación identificada, fases y cancelación con limpie
 });
 
 test("el onboarding elimina el falso skip y usa main, foco, live region y modal atrapado", async () => {
-  const source = await readFile(new URL("src/onboarding.js", root), "utf8");
+  const source = await readOnboardingJs();
   assert.doesNotMatch(source, /skip-onboarding|Saltar configuración/);
   assert.match(source, /<main[\s\S]*aria-labelledby="onboarding-title"/);
   assert.match(source, /aria-current=\"step\"/);
