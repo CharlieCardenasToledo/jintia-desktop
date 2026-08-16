@@ -137,17 +137,25 @@ async function boot() {
     "Cargando Jintia…",
   );
   try {
+    await getCurrentWindow().maximize();
     const onboarding = await getOnboardingStatus();
     stopInitialLoading();
     if (onboarding.completed) {
-      await getCurrentWindow().maximize();
       renderShell();
       getRuntimeAppMeta().then(runtime => {
         const version = document.querySelector("[data-shell-version]");
         if (version) version.textContent = `${APP_META.brandName} · v${runtime.version}`;
       });
       refreshIcons();
-      navigate(state.page || "courses");
+      const openFirstCourse = sessionStorage.getItem("jintia.openCreateCourse") === "true";
+      if (openFirstCourse) sessionStorage.removeItem("jintia.openCreateCourse");
+      navigate(openFirstCourse ? "courses" : (state.page || "courses"));
+      if (openFirstCourse) {
+        requestAnimationFrame(() => {
+          const opener = document.querySelector("[data-create-course]");
+          document.dispatchEvent(new CustomEvent("jintia:new-course", { detail: { opener } }));
+        });
+      }
       document.getElementById("app-win-minimize")?.addEventListener("click", () => getCurrentWindow().minimize());
       document.getElementById("app-win-maximize")?.addEventListener("click", () => getCurrentWindow().toggleMaximize());
       document.getElementById("app-win-close")?.addEventListener("click", () => getCurrentWindow().close());

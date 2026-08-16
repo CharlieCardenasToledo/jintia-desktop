@@ -516,7 +516,7 @@ test('el onboarding bloquea clics repetidos y explica la operación activa', asy
   assert.match(source, /if \(onboardingActionInFlight\) return/);
   assert.match(source, /root\.setAttribute\("aria-busy"/);
   assert.match(source, /id="onboarding-operation-status"/);
-  assert.match(source, /data-disabled-by-operation|disabledByOperation/);
+  assert.match(source, /data-operation-lock/);
   assert.match(source, /Instalando \$\{name\}[\s\S]*performDependencyInstall/);
   assert.match(source, /Ejecutando la prueba final[\s\S]*animateFinalStep/);
 });
@@ -555,33 +555,19 @@ test('el entorno base usa Node, Python, Jintia y Vivliostyle; LaTeX es opcional'
   );
 
   // Dependencias base obligatorias.
-  assert.match(
-    course,
-    /name:\s*"Node\.js"[\s\S]{0,500}?required:\s*true/
-  );
-  assert.match(
-    course,
-    /name:\s*"Python"[\s\S]{0,500}?required:\s*true/
-  );
-  assert.match(
-    course,
-    /name:\s*"Jintia Skill"[\s\S]{0,500}?required:\s*true/
-  );
-  assert.match(
-    course,
-    /name:\s*"Vivliostyle CLI"[\s\S]{0,500}?required:\s*true/
-  );
+  for (const id of ['node', 'python', 'jintia-skill', 'vivliostyle']) {
+    assert.match(course, new RegExp(`id:\\s*"${id}"[\\s\\S]{0,350}?blocking_scope:\\s*"onboarding"`));
+  }
 
   // LaTeX puede detectarse como capacidad opcional, pero nunca bloquear onboarding.
   assert.match(
     course,
-    /name:\s*"Compilador LaTeX"[\s\S]{0,500}?required:\s*false/
+    /id:\s*"latex"[\s\S]{0,350}?blocking_scope:\s*"none"/
   );
 
   // validate_environment debe exigir el runtime editorial actual.
-  assert.match(onboardingRs, /installed\("Node\.js"\)/);
-  assert.match(onboardingRs, /installed\("Python"\)/);
-  assert.match(onboardingRs, /installed\("Vivliostyle CLI"\)/);
+  assert.match(onboardingRs, /dependency\.blocking_scope == "onboarding"/);
+  assert.match(onboardingRs, /dependency\.status != "ready"/);
 
   // LaTeX no debe formar parte de la validación obligatoria del onboarding.
   assert.doesNotMatch(
@@ -783,7 +769,7 @@ test('el onboarding delega la prueba final a jintia self-test --json', async () 
   assert.match(source, /getSetupStatus/);
 });
 
-test('la barra inferior tiene un botón principal con texto visible y puntos con área de clic ampliada', async () => {
+test('la barra inferior tiene CTA visible y stepper textual accesible', async () => {
   const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
   const start = source.indexOf('function renderBottomNav');
   const end = source.indexOf('function syncOnboardingBusyState', start);
@@ -795,22 +781,24 @@ test('la barra inferior tiene un botón principal con texto visible y puntos con
   const dotsStart = source.indexOf('function progressDots');
   const dotsEnd = source.indexOf('function actionButton', dotsStart);
   const dots = source.slice(dotsStart, dotsEnd);
-  assert.match(dots, /onboarding-progress-dot-hit w-8 h-8/);
+  assert.match(dots, /aria-current=\"step\"/);
+  assert.match(dots, /meta\.title/);
+  assert.match(dots, /min-h-11/);
 });
 
 test('el paso de herramientas bloquea el avance nombrando la herramienta faltante', async () => {
   const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
-  const missing = source.indexOf("dep.required && !dep.installed");
-  assert.ok(missing >= 0, 'dependenciesStep debe filtrar herramientas requeridas no instaladas');
-  assert.match(source, /Falta instalar: \$\{missing\.map/);
+  assert.match(source, /runtime\.dependencies\.filter\(isOnboardingBlocking\)/);
+  assert.match(source, /Falta preparar: \$\{missing\.map/);
 });
 
-test('Git no aparece como tarjeta en el onboarding (solo en Configuración > Entorno)', async () => {
+test('el onboarding muestra todas las capacidades, incluido Git opcional', async () => {
   const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
   const start = source.indexOf('function dependencySequence');
   const end = source.indexOf('\n}', start);
   const fn = source.slice(start, end);
-  assert.match(fn, /runtime\.dependencies\.filter\(dep => dep\.required\)/);
+  assert.match(fn, /return runtime\.dependencies/);
+  assert.match(source, /runtime\.dependencies\.map\(capabilityCard\)/);
 });
 
 test('los destinos distinguen Claude del plugin universal de ChatGPT y Codex', async () => {
@@ -1370,7 +1358,7 @@ test('eliminar una asignatura usa un modal propio de Jintia, no un diálogo nati
   assert.doesNotMatch(courses, /await confirm\(`¿Eliminar/);
 });
 
-test('el perfil disciplinar se instala después de guardar la disciplina', async () => {
+test('guardar el perfil no instala paquetes y la preparación queda como acción independiente', async () => {
   const source = await readFile(
     new URL('src/onboarding.js', root),
     'utf8'
@@ -1410,10 +1398,7 @@ test('el perfil disciplinar se instala después de guardar la disciplina', async
     /saveConfig\(\)/
   );
 
-  assert.match(
-    actionBlock,
-    /installDisciplinePackages\(\)/
-  );
+  assert.doesNotMatch(actionBlock, /installDisciplinePackages/);
 
   assert.match(
     actionBlock,
@@ -1423,25 +1408,15 @@ test('el perfil disciplinar se instala después de guardar la disciplina', async
   const saveIndex =
     actionBlock.indexOf('saveConfig()');
 
-  const installIndex =
-    actionBlock.indexOf(
-      'installDisciplinePackages()'
-    );
-
   const advanceIndex =
     actionBlock.indexOf(
       'return advance(current)'
     );
 
-  assert.ok(
-    saveIndex < installIndex,
-    'la disciplina debe guardarse antes de instalar su perfil'
-  );
-
-  assert.ok(
-    installIndex < advanceIndex,
-    'las dependencias disciplinares deben intentarse antes de avanzar'
-  );
+  assert.ok(saveIndex < advanceIndex, 'guardar debe preceder al avance');
+  assert.match(source, /data-onboarding-action="prepare-profile-tools"/);
+  assert.match(source, /async function prepareProfileTools/);
+  assert.match(source, /installDisciplinePackages\(progress/);
 
   const fnStart = source.indexOf(
     'async function installDisciplinePackages'
@@ -2640,7 +2615,7 @@ test('Jintia requiere su Node administrado aunque exista un Node global', async 
 
   assert.match(
     onboarding,
-    /dep\.required\s*&&\s*!dep\.installed/
+    /isOnboardingBlocking/
   );
 
   assert.match(
@@ -3537,7 +3512,7 @@ test('el onboarding no avanza si falla la instalación del perfil disciplinar', 
   );
 });
 
-test('el onboarding bloquea el avance cuando profileInstall tiene error', async () => {
+test('un error de paquetes del perfil queda en su operación sin impedir guardar el perfil', async () => {
   const source = await readFile(
     new URL('src/onboarding.js', root),
     'utf8'
@@ -3556,32 +3531,13 @@ test('el onboarding bloquea el avance cuando profileInstall tiene error', async 
   assert.ok(actionEnd > actionStart, 'debe poder aislarse el bloque');
 
   const saveProfile = source.slice(actionStart, actionEnd);
-
-  const errorIndex = saveProfile.indexOf('profileInstall?.error');
-  const successIndex = saveProfile.indexOf(
-    'Perfil ${profileInstall.profileId} preparado para'
-  );
-  const advanceIndex = saveProfile.indexOf('advance(current)');
-
-  assert.ok(errorIndex >= 0, 'profileInstall?.error debe evaluarse');
-
-  assert.ok(
-    successIndex > errorIndex,
-    'success toast debe ser posterior al check de error'
-  );
-
-  assert.ok(
-    advanceIndex > errorIndex,
-    'advance debe ser posterior al check de error'
-  );
-
-  const errorToAdvance = saveProfile.slice(errorIndex, advanceIndex);
-
-  assert.match(
-    errorToAdvance,
-    /return;/,
-    'el bloque de error debe hacer return sin avanzar'
-  );
+  assert.doesNotMatch(saveProfile, /profileInstall|installDisciplinePackages/);
+  const preparationStart = source.indexOf('async function prepareProfileTools');
+  const preparationEnd = source.indexOf('\nasync function handleAction', preparationStart);
+  const preparation = source.slice(preparationStart, preparationEnd);
+  assert.match(preparation, /normalizeProfileInstallResult/);
+  assert.match(preparation, /state: result\.success \? "success" : "error"/);
+  assert.match(preparation, /technicalDetail/);
 });
 
 test('Jintia se instala mediante npm administrado, no mediante descarga manual de tarball', async () => {
@@ -4737,7 +4693,7 @@ test('Las dependencias administradas sólo están listas si su probe operativo r
   assert.match(depsFn, /portable_notebooklm_mcp_installed_for/, 'check_dependencies: NotebookLM debe seguir usando portable_notebooklm_mcp_installed_for');
 
   // Downstream: onboarding consume installed como autoridad
-  assert.match(onboarding, /dep\.required\s*&&\s*!dep\.installed/, 'onboarding: debe filtrar por required && !installed');
+  assert.match(onboarding, /filter\(isOnboardingBlocking\)/, 'onboarding: debe filtrar por blockingScope explícito');
   assert.match(onboarding, /\.every\([^)]*d\.installed/, 'onboarding: debe exigir d.installed en todos los required');
 
   // Downstream: bulk Settings consume !installed para selección de reparación
@@ -4951,7 +4907,7 @@ test('Jintia Skill sólo está lista si contrato instalado y smoke del engine re
   assert.doesNotMatch(depsFn, /11\.\d+\.\d+/, 'check_dependencies: no debe hardcodear versión de Jintia Skill');
 
   // ── Downstream: una Skill no operativa vuelve al flujo de reparación ──────────
-  assert.match(onboarding, /dep\.required\s*&&\s*!dep\.installed/, 'onboarding: filtra por required && !installed');
+  assert.match(onboarding, /filter\(isOnboardingBlocking\)/, 'onboarding: filtra por blockingScope explícito');
   assert.match(settings, /!d\.installed/, 'settings: bulk selecciona por !installed');
   assert.match(settings, /BULK_INSTALL_TARGETS\.has\(d\.name\)/, 'settings: bulk filtra por BULK_INSTALL_TARGETS');
 });
@@ -5206,18 +5162,17 @@ test('Node cambia a progreso indeterminado antes de instalar Vivliostyle', async
   assert.match(fn, /withDependencyProgress\(\s*"Vivliostyle CLI",\s*listen,[\s\S]{0,100}?installVivliostyleCli\(\)[\s\S]{0,40}?reporter/);
 });
 
-test('Python cambia a progreso indeterminado antes de instalar paquetes del perfil', async () => {
+test('instalar Python no instala paquetes del perfil como efecto secundario', async () => {
   const source = await readFile(new URL('src/onboarding.js', root), 'utf8');
   const fnStart = source.indexOf('async function performDependencyInstall');
   const fnEnd = source.indexOf('\nasync function installDisciplinePackages', fnStart);
   const fn = source.slice(fnStart, fnEnd);
 
-  // La rama Python debe reportar percent: null antes de installDisciplinePackages
-  assert.match(
-    fn,
-    /Python[\s\S]{0,300}?reporter\(\{\s*message:[\s\S]{0,80}?percent:\s*null[\s\S]{0,20}?\}[\s\S]{0,200}?installDisciplinePackages/,
-    'Python debe reportar fase indeterminada antes de instalar paquetes del perfil'
-  );
+  const pythonStart = fn.indexOf('"Python"');
+  const directVivliostyleStart = fn.indexOf('} else if (name === "Vivliostyle CLI")', pythonStart);
+  const pythonBlock = fn.slice(pythonStart, directVivliostyleStart);
+  assert.match(pythonBlock, /downloadPythonRuntime/);
+  assert.doesNotMatch(pythonBlock, /installDisciplinePackages|installProfilePackages|installNpmPackages/);
 });
 
 // ── Tests de propagación de fallos en instalaciones compuestas ────────────────
@@ -5296,11 +5251,12 @@ test('performDependencyInstall usa el resultado compuesto antes del toast termin
   const nodeBlock = fn.slice(fn.indexOf('"Node.js"'), fn.indexOf('"Python"'));
   assert.match(nodeBlock, /result\s*=\s*await\s*runSecondaryStage[\s\S]{0,250}?withDependencyProgress[\s\S]{0,150}?installVivliostyleCli/);
 
-  // Paquetes del perfil siempre asignados, nunca descartados
+  // Los paquetes del perfil pertenecen a una acción independiente.
   const pythonStart = fn.indexOf('"Python"');
   const directVivliostyleStart = fn.indexOf('} else if (name === "Vivliostyle CLI")', pythonStart);
   const pythonBlock = fn.slice(pythonStart, directVivliostyleStart);
-  assert.match(pythonBlock, /result\s*=\s*await\s*runSecondaryStage[\s\S]{0,150}?installDisciplinePackages/);
+  assert.doesNotMatch(pythonBlock, /installDisciplinePackages/);
+  assert.match(source, /async function prepareProfileTools[\s\S]*installDisciplinePackages\(progress/);
 });
 
 // ── Tests del ejecutor con feedback para rechazos inesperados ─────────────────
@@ -5457,20 +5413,12 @@ test('conserva exactamente un anuncio y una recarga', async () => {
   assert.equal(reloads, 1);
 });
 
-test('complete y skip usan el mismo handoff terminal', async () => {
+test('los dos CTA finales usan el mismo handoff terminal y no existe skip', async () => {
   // Normalizar saltos de línea para evitar diferencias CRLF/LF
   const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
 
-  // Extraer el bloque skip-onboarding
-  const skipMatch = source.match(/action === "skip-onboarding"\)([\s\S]*?)(?=\n  if \(action === "complete"\))/);
-  assert.ok(skipMatch, 'debe encontrarse el bloque skip-onboarding');
-  const skipBlock = skipMatch[1];
-  assert.match(skipBlock, /doCompletionHandoff/, 'skip-onboarding debe usar doCompletionHandoff');
-  assert.doesNotMatch(skipBlock, /window\.location\.reload\(\)/, 'skip-onboarding no debe llamar reload directamente');
-  assert.doesNotMatch(skipBlock, /\.remove\(\)/, 'skip-onboarding no debe eliminar el root manualmente');
-
-  // Extraer el bloque complete
-  const completeMatch = source.match(/action === "complete"\)([\s\S]*?)(?=\n  if \(action === "advance"\))/);
+  assert.doesNotMatch(source, /skip-onboarding|Saltar configuración/);
+  const completeMatch = source.match(/action === "complete-create" \|\| action === "complete-dashboard"\)([\s\S]*?)(?=\n  if \(action === "advance"\))/);
   assert.ok(completeMatch, 'debe encontrarse el bloque complete');
   const completeBlock = completeMatch[1];
   assert.match(completeBlock, /doCompletionHandoff/, 'complete debe usar doCompletionHandoff');
@@ -5482,22 +5430,10 @@ test('complete y skip usan el mismo handoff terminal', async () => {
   assert.match(source, /from.*onboardingCompletion/);
 });
 
-test('los resultados fallidos no entran al handoff', async () => {
+test('los resultados fallidos de los CTA finales no entran al handoff', async () => {
   const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
 
-  // skip-onboarding: handoff solo en la rama success
-  const skipMatch = source.match(/action === "skip-onboarding"\)([\s\S]*?)(?=\n  if \(action === "complete"\))/);
-  assert.ok(skipMatch, 'bloque skip-onboarding requerido');
-  const skipBlock = skipMatch[1];
-  const skipSuccessIdx = skipBlock.indexOf('if (result.success)');
-  const skipElseIdx = skipBlock.indexOf('} else {', skipSuccessIdx);
-  const skipSuccessBlock = skipBlock.slice(skipSuccessIdx, skipElseIdx);
-  const skipErrorBlock = skipBlock.slice(skipElseIdx);
-  assert.match(skipSuccessBlock, /doCompletionHandoff/);
-  assert.doesNotMatch(skipErrorBlock, /doCompletionHandoff/, 'la rama de error de skip no debe llamar al handoff');
-
-  // complete: handoff solo en la rama success
-  const completeMatch = source.match(/action === "complete"\)([\s\S]*?)(?=\n  if \(action === "advance"\))/);
+  const completeMatch = source.match(/action === "complete-create" \|\| action === "complete-dashboard"\)([\s\S]*?)(?=\n  if \(action === "advance"\))/);
   assert.ok(completeMatch, 'bloque complete requerido');
   const completeBlock = completeMatch[1];
   const completeSuccessIdx = completeBlock.indexOf('if (result.success)');
@@ -5588,7 +5524,7 @@ test('Python verifica antes del toast y usa el mismo snapshot', async () => {
 
   // El resultado de checkDependencies se asigna al snapshot compartido
   // (let porque puede reasignarse en el reintento de verificación)
-  assert.match(fn, /(?:let|const)\s+freshDeps\s*=\s*await\s*checkDependencies\(\)/);
+  assert.match(fn, /(?:let|const)\s+freshDeps\s*=\s*normalizeCapabilities\(await\s*checkDependencies\(\)\)/);
   assert.match(fn, /runtime\.dependencies\s*=\s*freshDeps/);
   assert.ok(runtimeIdx > toastIdx || fn.indexOf('runtime.dependencies = freshDeps') > verifyIdx,
     'runtime.dependencies debe usar el mismo snapshot que la conciliación');
@@ -5652,7 +5588,7 @@ test('preparación fallida usa el feedback central una sola vez', async () => {
 test('showPreparedStep delega la limpieza y no emite feedback local', async () => {
   const source = (await readFile(new URL('src/onboarding.js', root), 'utf8')).replace(/\r\n/g, '\n');
   const fnStart = source.indexOf('async function showPreparedStep(');
-  const fnEnd = source.indexOf('\n// Git es opcional', fnStart);
+  const fnEnd = source.indexOf('\nfunction dependencySequence', fnStart);
   const fn = source.slice(fnStart, fnEnd);
 
   // Usa el helper para la limpieza
@@ -5743,7 +5679,7 @@ test('performDependencyInstall normaliza antes del recheck y toast', async () =>
   assert.ok(verifyIdx >= 0, 'verifyPythonInstallResult debe seguir presente');
   assert.ok(checkIdx < verifyIdx, 'checkDependencies debe preceder a verifyPythonInstallResult');
   assert.ok(verifyIdx < toastIdx, 'conciliación Python debe preceder al toast');
-  assert.ok(toastIdx < runtimeIdx, 'toast debe preceder a runtime.dependencies');
+  assert.ok(runtimeIdx < toastIdx, 'la tarjeta persistente debe actualizarse antes del toast terminal');
 });
 
 test('un ActionResult fallido normal no activa un segundo canal de error', async () => {

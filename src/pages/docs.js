@@ -38,7 +38,7 @@ const FAQS = [
   },
   {
     question: "¿Qué herramientas son obligatorias?",
-    answer: "El flujo completo requiere Node.js, Python y un compilador LaTeX. Git es opcional. Jintia muestra su estado en Configuración → Entorno.",
+    answer: "El flujo completo usa los runtimes privados de Node.js y Python, Jintia Skill, Vivliostyle y NotebookLM MCP. Git, LaTeX y las herramientas visuales son opcionales. Jintia muestra el motivo y el alcance de cada capacidad en Configuración → Entorno.",
   },
   {
     question: "¿Jintia instala automáticamente los componentes LaTeX que falten?",
@@ -222,6 +222,16 @@ function workflowsSection() {
           "Instalar o exportar",
           "settings",
           "app-prefs"
+        )}
+        ${workflowCard(
+          "Fundamentos pedagógicos que aplica la skill",
+          [
+            "UDL 3.0 ofrece múltiples formas de representación, participación y expresión.",
+            "Backward Design conecta resultados, evidencias de aprendizaje y actividades antes de redactar contenido.",
+            "Quality Matters ayuda a revisar alineación, instrucciones, accesibilidad y consistencia del curso.",
+            "WCAG 2.2 orienta contraste, estructura semántica, navegación y alternativas accesibles.",
+          ],
+          "graduation-cap"
         )}
         ${workflowCard(
           "Usar Jintia con ChatGPT y Codex",

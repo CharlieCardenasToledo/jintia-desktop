@@ -1,17 +1,20 @@
-use crate::models::{ActionResult, NotebookLmAuthStatus, NotebookLmEntry};
+use crate::models::{ActionResult, LongOperationStatus, NotebookLmAuthStatus, NotebookLmEntry};
 use crate::paths::{
     atomic_write, backup_file, claude_code_config_path, claude_desktop_config_path, path_text,
 };
+use semver::{Version, VersionReq};
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{mpsc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Mutex,
+};
 use std::thread;
 use std::time::{Duration, Instant};
-use semver::{Version, VersionReq};
 
 const AUTH_STATE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const AUTH_VALIDATION_TTL: Duration = Duration::from_secs(5 * 60);
@@ -19,6 +22,9 @@ const GOOGLE_API_AUTH_COOKIE: &[u8] = b"SAPISID";
 const GOOGLE_SECURE_AUTH_COOKIES: [&[u8]; 2] = [b"__Secure-1PSID", b"__Secure-3PSID"];
 static AUTH_VALIDATION: Mutex<Option<(Instant, NotebookLmAuthStatus)>> = Mutex::new(None);
 static MCP_CONFIG_OPERATION: Mutex<()> = Mutex::new(());
+static AUTH_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+static AUTH_OPERATION: Mutex<Option<String>> = Mutex::new(None);
+const AUTH_CANCELLED: &str = "AUTH_CANCELLED";
 
 struct ManagedMcp {
     node: PathBuf,
@@ -32,7 +38,9 @@ fn managed_mcp() -> Result<ManagedMcp, String> {
     }
     let contract = crate::release::managed_mcp_contract()?;
     if !crate::runtimes::portable_notebooklm_mcp_installed_for(&contract) {
-        return Err("NotebookLM MCP no está instalado o no coincide con el contrato aprobado.".to_string());
+        return Err(
+            "NotebookLM MCP no está instalado o no coincide con el contrato aprobado.".to_string(),
+        );
     }
     validate_managed_node(&node, &contract.node_requirement)?;
     let package_dir = crate::runtimes::portable_notebooklm_mcp_package_dir_for(&contract.package);
@@ -52,32 +60,38 @@ fn managed_mcp_server_json(node: &Path, bin: &Path, managed_path: &str) -> Value
 
 fn apply_managed_json_mcp_server(server: &mut Value, managed: &Value) -> Result<(), String> {
     let Some(server_object) = server.as_object() else {
-        return Err("mcpServers.notebooklm existente no es un objeto. Corrígelo antes de continuar.".to_string());
+        return Err(
+            "mcpServers.notebooklm existente no es un objeto. Corrígelo antes de continuar."
+                .to_string(),
+        );
     };
     if server_object
         .get("env")
         .is_some_and(|environment| !environment.is_object())
     {
-        return Err("mcpServers.notebooklm.env existente no es un objeto. Corrígelo antes de continuar.".to_string());
+        return Err(
+            "mcpServers.notebooklm.env existente no es un objeto. Corrígelo antes de continuar."
+                .to_string(),
+        );
     }
 
-    let managed_object = managed
-        .as_object()
-        .ok_or_else(|| "La identidad administrada de NotebookLM MCP no es un objeto.".to_string())?;
-    let command = managed_object
-        .get("command")
-        .cloned()
-        .ok_or_else(|| "La identidad administrada de NotebookLM MCP no contiene command.".to_string())?;
-    let args = managed_object
-        .get("args")
-        .cloned()
-        .ok_or_else(|| "La identidad administrada de NotebookLM MCP no contiene args.".to_string())?;
+    let managed_object = managed.as_object().ok_or_else(|| {
+        "La identidad administrada de NotebookLM MCP no es un objeto.".to_string()
+    })?;
+    let command = managed_object.get("command").cloned().ok_or_else(|| {
+        "La identidad administrada de NotebookLM MCP no contiene command.".to_string()
+    })?;
+    let args = managed_object.get("args").cloned().ok_or_else(|| {
+        "La identidad administrada de NotebookLM MCP no contiene args.".to_string()
+    })?;
     let managed_path = managed_object
         .get("env")
         .and_then(Value::as_object)
         .and_then(|environment| environment.get("PATH"))
         .cloned()
-        .ok_or_else(|| "La identidad administrada de NotebookLM MCP no contiene env.PATH.".to_string())?;
+        .ok_or_else(|| {
+            "La identidad administrada de NotebookLM MCP no contiene env.PATH.".to_string()
+        })?;
 
     let server_object = server
         .as_object_mut()
@@ -95,15 +109,15 @@ fn apply_managed_json_mcp_server(server: &mut Value, managed: &Value) -> Result<
 }
 
 fn managed_node_runtime_path_text() -> Result<String, String> {
-    crate::runtimes::managed_node_runtime_path()
-        .map(|path| path.to_string_lossy().into_owned())
+    crate::runtimes::managed_node_runtime_path().map(|path| path.to_string_lossy().into_owned())
 }
 
 fn server_matches_paths(server: &Value, node: &Path, bin: &Path, managed_path: &str) -> bool {
     server.get("command").and_then(Value::as_str) == node.to_str()
-        && server.get("args").and_then(Value::as_array).is_some_and(|args| {
-            args.len() == 1 && args[0].as_str() == bin.to_str()
-        })
+        && server
+            .get("args")
+            .and_then(Value::as_array)
+            .is_some_and(|args| args.len() == 1 && args[0].as_str() == bin.to_str())
         && server
             .get("env")
             .and_then(Value::as_object)
@@ -113,8 +127,12 @@ fn server_matches_paths(server: &Value, node: &Path, bin: &Path, managed_path: &
 }
 
 pub(crate) fn server_matches_managed_mcp(server: &Value) -> bool {
-    let Ok(managed) = managed_mcp() else { return false; };
-    let Ok(managed_path) = managed_node_runtime_path_text() else { return false; };
+    let Ok(managed) = managed_mcp() else {
+        return false;
+    };
+    let Ok(managed_path) = managed_node_runtime_path_text() else {
+        return false;
+    };
     server_matches_paths(server, &managed.node, &managed.bin, &managed_path)
 }
 
@@ -136,7 +154,8 @@ fn managed_node_version(node: &std::path::Path) -> Result<Version, String> {
 
 fn parse_node_version(text: &str) -> Result<Version, String> {
     let version = text.trim().trim_start_matches('v');
-    Version::parse(version).map_err(|error| format!("Versión inválida del Node administrado: {error}"))
+    Version::parse(version)
+        .map_err(|error| format!("Versión inválida del Node administrado: {error}"))
 }
 
 fn validate_managed_node(node: &std::path::Path, node_requirement: &str) -> Result<(), String> {
@@ -216,11 +235,7 @@ pub fn configure_mcp(target: String) -> ActionResult {
         root["mcpServers"] = json!({});
     }
     let previous = root.clone();
-    let managed_server = managed_mcp_server_json(
-        &managed.node,
-        &managed.bin,
-        &managed_path,
-    );
+    let managed_server = managed_mcp_server_json(&managed.node, &managed.bin, &managed_path);
     let server = root["mcpServers"]
         .as_object_mut()
         .expect("mcpServers fue validado como objeto")
@@ -274,7 +289,10 @@ fn apply_managed_codex_mcp_server(
     managed_path: &str,
 ) -> Result<(), String> {
     if doc.get("mcp_servers").is_some_and(|item| !item.is_table()) {
-        return Err("La clave mcp_servers existente no es una tabla. Corrígela antes de continuar.".to_string());
+        return Err(
+            "La clave mcp_servers existente no es una tabla. Corrígela antes de continuar."
+                .to_string(),
+        );
     }
     if doc.get("mcp_servers").is_none() {
         doc["mcp_servers"] = toml_edit::table();
@@ -283,7 +301,10 @@ fn apply_managed_codex_mcp_server(
         .get("notebooklm")
         .is_some_and(|item| !item.is_table())
     {
-        return Err("mcp_servers.notebooklm existente no es una tabla. Corrígela antes de continuar.".to_string());
+        return Err(
+            "mcp_servers.notebooklm existente no es una tabla. Corrígela antes de continuar."
+                .to_string(),
+        );
     }
     if doc["mcp_servers"].get("notebooklm").is_none() {
         doc["mcp_servers"]["notebooklm"] = toml_edit::table();
@@ -364,15 +385,11 @@ pub fn configure_codex_mcp() -> ActionResult {
         .flat_map(|table| table.iter())
         .filter(|(name, _)| *name != "notebooklm")
         .filter_map(|(name, item)| {
-            let has_notebook_package = item
-                .get("args")?
-                .as_array()?
-                .iter()
-                .any(|value| {
-                    value
-                        .as_str()
-                        .is_some_and(|text| text.contains("notebooklm-mcp") || text.contains("gemini-notebook-mcp"))
-                });
+            let has_notebook_package = item.get("args")?.as_array()?.iter().any(|value| {
+                value.as_str().is_some_and(|text| {
+                    text.contains("notebooklm-mcp") || text.contains("gemini-notebook-mcp")
+                })
+            });
             has_notebook_package.then(|| name.to_string())
         })
         .collect();
@@ -386,12 +403,9 @@ pub fn configure_codex_mcp() -> ActionResult {
             "mcp_servers.notebooklm existente no es una tabla. Corrígela antes de continuar.",
         );
     }
-    if let Err(error) = apply_managed_codex_mcp_server(
-        &mut doc,
-        &managed.node,
-        &managed.bin,
-        &managed_path,
-    ) {
+    if let Err(error) =
+        apply_managed_codex_mcp_server(&mut doc, &managed.node, &managed.bin, &managed_path)
+    {
         return ActionResult::error(error);
     }
 
@@ -468,6 +482,40 @@ fn receive_json(
     }
 }
 
+fn receive_json_cancellable(
+    receiver: &mpsc::Receiver<String>,
+    id: i64,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if AUTH_CANCEL_REQUESTED.load(Ordering::SeqCst) {
+            return Err(AUTH_CANCELLED.to_string());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(format!(
+                "NotebookLM MCP no respondió a la solicitud {id} dentro del tiempo esperado."
+            ));
+        }
+        match receiver.recv_timeout(remaining.min(Duration::from_millis(250))) {
+            Ok(line) => {
+                if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                    if value.get("id").and_then(Value::as_i64) == Some(id) {
+                        return Ok(value);
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(format!(
+                    "NotebookLM MCP cerró la conexión durante la solicitud {id}."
+                ));
+            }
+        }
+    }
+}
+
 // gemini-notebook-mcp v2.0 mantiene su navegador y perfil de Chrome persistentes
 // en un `SharedContextManager` que vive en memoria mientras el proceso del
 // servidor está vivo. Antes lanzábamos (y matábamos) un proceso nuevo por
@@ -488,9 +536,7 @@ fn build_managed_mcp_server_command(
     managed_path: &std::ffi::OsStr,
 ) -> Command {
     let mut command = crate::runtimes::managed_node_command(node);
-    command
-        .arg(bin)
-        .env("PATH", managed_path);
+    command.arg(bin).env("PATH", managed_path);
     command
 }
 
@@ -498,18 +544,17 @@ impl McpConnection {
     fn spawn() -> Result<Self, String> {
         let managed = managed_mcp()?;
         let managed_path = crate::runtimes::managed_node_runtime_path()?;
-        let mut child = build_managed_mcp_server_command(
-            &managed.node,
-            &managed.bin,
-            &managed_path,
-        )
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| {
-                format!("No se pudo iniciar gemini-notebook-mcp. Verifica Node.js y npx: {error}")
-            })?;
+        let mut child =
+            build_managed_mcp_server_command(&managed.node, &managed.bin, &managed_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|error| {
+                    format!(
+                        "No se pudo iniciar gemini-notebook-mcp. Verifica Node.js y npx: {error}"
+                    )
+                })?;
 
         let stdout = child
             .stdout
@@ -625,6 +670,15 @@ fn spawn_connection() -> Result<McpConnection, String> {
 }
 
 fn call_tool(tool: &'static str, arguments: Value, timeout: Duration) -> Result<Value, String> {
+    call_tool_internal(tool, arguments, timeout, false)
+}
+
+fn call_tool_internal(
+    tool: &'static str,
+    arguments: Value,
+    timeout: Duration,
+    cancellable: bool,
+) -> Result<Value, String> {
     let mut guard = CONNECTION
         .lock()
         .map_err(|_| "Estado interno de NotebookLM MCP corrupto.".to_string())?;
@@ -649,7 +703,13 @@ fn call_tool(tool: &'static str, arguments: Value, timeout: Duration) -> Result<
             "params": { "name": tool, "arguments": arguments }
         }))
         .map_err(|error| format!("No se pudo llamar {tool}: {error}"))
-        .and_then(|_| receive_json(&connection.receiver, id, timeout));
+        .and_then(|_| {
+            if cancellable {
+                receive_json_cancellable(&connection.receiver, id, timeout)
+            } else {
+                receive_json(&connection.receiver, id, timeout)
+            }
+        });
 
     if result.is_err() {
         // La conexión pudo haber quedado en un estado inconsistente (p. ej.
@@ -708,9 +768,12 @@ fn find_array_field(value: &Value, field: &str) -> Option<Vec<Value>> {
             if let Some(Value::Array(items)) = map.get(field) {
                 return Some(items.clone());
             }
-            map.values().find_map(|value| find_array_field(value, field))
+            map.values()
+                .find_map(|value| find_array_field(value, field))
         }
-        Value::Array(items) => items.iter().find_map(|value| find_array_field(value, field)),
+        Value::Array(items) => items
+            .iter()
+            .find_map(|value| find_array_field(value, field)),
         Value::String(text) => serde_json::from_str::<Value>(text)
             .ok()
             .and_then(|value| find_array_field(&value, field)),
@@ -864,18 +927,91 @@ pub fn check_auth_fresh() -> NotebookLmAuthStatus {
     status
 }
 
-pub fn start_auth() -> ActionResult {
+fn auth_operation_status(
+    operation_id: &str,
+    state: &str,
+    phase: &str,
+    message: impl Into<String>,
+    browser_open: bool,
+) -> LongOperationStatus {
+    LongOperationStatus {
+        operation_id: operation_id.to_string(),
+        state: state.to_string(),
+        phase: phase.to_string(),
+        message: message.into(),
+        percent: None,
+        cancellable: matches!(state, "working" | "checking"),
+        browser_open,
+    }
+}
+
+pub fn cancel_auth(operation_id: &str) -> ActionResult {
+    let active = AUTH_OPERATION
+        .lock()
+        .ok()
+        .and_then(|operation| operation.clone());
+    match active {
+        Some(active_id) if active_id == operation_id => {
+            AUTH_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+            ActionResult::ok("Cancelando la autenticación y cerrando el navegador…")
+        }
+        Some(_) => ActionResult::error("Hay otra autenticación activa; no se modificó."),
+        None => ActionResult::ok("La autenticación ya había terminado."),
+    }
+}
+
+pub fn start_auth_operation<F>(operation_id: String, emit: F) -> ActionResult
+where
+    F: Fn(LongOperationStatus),
+{
+    {
+        let Ok(mut active) = AUTH_OPERATION.lock() else {
+            return ActionResult::error("No se pudo reservar la operación de NotebookLM.");
+        };
+        if let Some(active_id) = active.as_ref() {
+            return ActionResult::error(format!(
+                "Ya hay una autenticación de NotebookLM activa ({active_id})."
+            ));
+        }
+        *active = Some(operation_id.clone());
+    }
+    AUTH_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    emit(auth_operation_status(
+        &operation_id,
+        "working",
+        "opening_browser",
+        "Se abrirá una ventana de Google. Inicia sesión y vuelve a Jintia.",
+        true,
+    ));
+
     // setup_auth es síncrono en gemini-notebook-mcp: bloquea sondeando la URL de la
     // ventana hasta ver notebooklm.google.com (hasta 10 min) y solo entonces
     // guarda las cookies, cierra el navegador y responde. Un timeout más corto
     // aquí (antes, 90 s) provocaba que matáramos el proceso a medio login,
     // dejando el navegador abierto y la sesión sin guardar.
-    let response = call_tool(
+    emit(auth_operation_status(
+        &operation_id,
+        "working",
+        "waiting_for_login",
+        "Esperando que completes el inicio de sesión en Google…",
+        true,
+    ));
+    let response = call_tool_internal(
         "setup_auth",
         json!({ "show_browser": true }),
         Duration::from_secs(630),
+        true,
     );
-    match response {
+    if response.is_ok() {
+        emit(auth_operation_status(
+            &operation_id,
+            "checking",
+            "verifying",
+            "Verificando la sesión guardada…",
+            false,
+        ));
+    }
+    let result = match response {
         Ok(value)
             if !is_tool_error(&value) && find_bool_field(&value, "authenticated") == Some(true) =>
         {
@@ -884,7 +1020,15 @@ pub fn start_auth() -> ActionResult {
                 message: "Sesión iniciada y verificada con NotebookLM.".to_string(),
             };
             remember_auth_validation(&status);
-            ActionResult::ok(status.message)
+            let result = ActionResult::ok(status.message);
+            emit(auth_operation_status(
+                &operation_id,
+                "success",
+                "done",
+                &result.message,
+                false,
+            ));
+            result
         }
         Ok(_value) if persistent_profile_has_recent_google_auth() => {
             // El MCP 2.0.0 puede perder la referencia de la pestaña durante el
@@ -898,21 +1042,72 @@ pub fn start_auth() -> ActionResult {
                         .to_string(),
             };
             remember_auth_validation(&status);
-            ActionResult::ok(status.message)
+            let result = ActionResult::ok(status.message);
+            emit(auth_operation_status(
+                &operation_id,
+                "success",
+                "done",
+                &result.message,
+                false,
+            ));
+            result
         }
         Ok(value) => {
             clear_auth_validation();
             discard_connection();
-            ActionResult::error(format!(
+            let result = ActionResult::error(format!(
                 "NotebookLM MCP no pudo iniciar la autenticación: {}",
                 tool_error_message(&value)
-            ))
+            ));
+            emit(auth_operation_status(
+                &operation_id,
+                "error",
+                "error",
+                &result.message,
+                false,
+            ));
+            result
+        }
+        Err(error) if error == AUTH_CANCELLED => {
+            clear_auth_validation();
+            discard_connection();
+            let result = ActionResult::error(
+                "Autenticación cancelada. Puedes intentarlo de nuevo cuando quieras.",
+            );
+            emit(auth_operation_status(
+                &operation_id,
+                "cancelled",
+                "cancelled",
+                &result.message,
+                false,
+            ));
+            result
         }
         Err(error) => {
             clear_auth_validation();
-            ActionResult::error(error)
+            discard_connection();
+            let result = ActionResult::error(error);
+            emit(auth_operation_status(
+                &operation_id,
+                "error",
+                "error",
+                &result.message,
+                false,
+            ));
+            result
+        }
+    };
+    AUTH_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    if let Ok(mut active) = AUTH_OPERATION.lock() {
+        if active.as_deref() == Some(operation_id.as_str()) {
+            *active = None;
         }
     }
+    result
+}
+
+pub fn start_auth() -> ActionResult {
+    start_auth_operation("legacy-auth".to_string(), |_| {})
 }
 
 fn parse_notebook_entries(value: &Value) -> Vec<NotebookLmEntry> {
@@ -953,7 +1148,11 @@ pub fn list_notebooks() -> Result<Vec<NotebookLmEntry>, String> {
 /// el grid real de notebooks.google.com abriendo cada tarjeta para leer su id
 /// desde la URL — por eso el timeout es mucho más generoso.
 pub fn list_account_notebooks() -> Result<Vec<NotebookLmEntry>, String> {
-    let value = call_tool("list_account_notebooks", json!({}), Duration::from_secs(300))?;
+    let value = call_tool(
+        "list_account_notebooks",
+        json!({}),
+        Duration::from_secs(300),
+    )?;
     if is_tool_error(&value) {
         return Err(tool_error_message(&value));
     }
@@ -1172,7 +1371,12 @@ mod tests {
             "args": ["/managed/node_modules/@scope/pkg/bin.js"],
             "env": {"PATH": managed_path, "OTHER": "preserved"},
         });
-        assert!(server_matches_paths(&with_extra_env, node, bin, managed_path));
+        assert!(server_matches_paths(
+            &with_extra_env,
+            node,
+            bin,
+            managed_path
+        ));
         for server in [
             serde_json::json!({"command": "/other/node", "args": ["/managed/node_modules/@scope/pkg/bin.js"], "env": {"PATH": managed_path}}),
             serde_json::json!({"command": "/managed/node", "args": ["/other/bin"], "env": {"PATH": managed_path}}),
@@ -1200,7 +1404,10 @@ mod tests {
             "managed-only-bin",
         )
         .unwrap();
-        assert_eq!(doc["mcp_servers"]["notebooklm"]["command"].as_str(), Some("managed-node"));
+        assert_eq!(
+            doc["mcp_servers"]["notebooklm"]["command"].as_str(),
+            Some("managed-node")
+        );
         assert_eq!(
             doc["mcp_servers"]["notebooklm"]["args"]
                 .as_array()
@@ -1210,12 +1417,17 @@ mod tests {
                 .and_then(toml_edit::Value::as_str),
             Some("managed-bin.js")
         );
-        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(), Some("managed-only-bin"));
+        assert_eq!(
+            doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(),
+            Some("managed-only-bin")
+        );
     }
 
     #[test]
     fn codex_managed_mcp_server_preserves_other_environment() {
-        let mut doc = "[mcp_servers.notebooklm.env]\nEXISTING = \"keep\"\n".parse::<toml_edit::DocumentMut>().unwrap();
+        let mut doc = "[mcp_servers.notebooklm.env]\nEXISTING = \"keep\"\n"
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
         apply_managed_codex_mcp_server(
             &mut doc,
             Path::new("managed-node"),
@@ -1223,13 +1435,21 @@ mod tests {
             "managed-only-bin",
         )
         .unwrap();
-        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"]["EXISTING"].as_str(), Some("keep"));
-        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(), Some("managed-only-bin"));
+        assert_eq!(
+            doc["mcp_servers"]["notebooklm"]["env"]["EXISTING"].as_str(),
+            Some("keep")
+        );
+        assert_eq!(
+            doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(),
+            Some("managed-only-bin")
+        );
     }
 
     #[test]
     fn codex_managed_mcp_server_rejects_non_table_environment() {
-        let mut doc = "[mcp_servers.notebooklm]\nenv = \"invalid\"\n".parse::<toml_edit::DocumentMut>().unwrap();
+        let mut doc = "[mcp_servers.notebooklm]\nenv = \"invalid\"\n"
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
         let error = apply_managed_codex_mcp_server(
             &mut doc,
             Path::new("managed-node"),
@@ -1238,12 +1458,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("env"));
-        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"].as_str(), Some("invalid"));
+        assert_eq!(
+            doc["mcp_servers"]["notebooklm"]["env"].as_str(),
+            Some("invalid")
+        );
     }
 
     #[test]
     fn codex_managed_mcp_server_replaces_host_path() {
-        let mut doc = "[mcp_servers.notebooklm.env]\nPATH = \"host-only-bin\"\n".parse::<toml_edit::DocumentMut>().unwrap();
+        let mut doc = "[mcp_servers.notebooklm.env]\nPATH = \"host-only-bin\"\n"
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
         apply_managed_codex_mcp_server(
             &mut doc,
             Path::new("managed-node"),
@@ -1251,7 +1476,10 @@ mod tests {
             "managed-only-bin",
         )
         .unwrap();
-        assert_eq!(doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(), Some("managed-only-bin"));
+        assert_eq!(
+            doc["mcp_servers"]["notebooklm"]["env"]["PATH"].as_str(),
+            Some("managed-only-bin")
+        );
         assert!(!doc.to_string().contains("host-only-bin"));
     }
 
@@ -1345,9 +1573,12 @@ mod tests {
         )
         .unwrap();
 
-        let managed_mcp_installed = crate::release::managed_mcp_contract()
-            .ok()
-            .is_some_and(|contract| crate::runtimes::portable_notebooklm_mcp_installed_for(&contract));
+        let managed_mcp_installed =
+            crate::release::managed_mcp_contract()
+                .ok()
+                .is_some_and(|contract| {
+                    crate::runtimes::portable_notebooklm_mcp_installed_for(&contract)
+                });
         if !crate::paths::portable_node_exe().is_file() || !managed_mcp_installed {
             let result = configure_codex_mcp();
             assert!(!result.success);
@@ -1370,17 +1601,35 @@ mod tests {
         );
 
         let text = fs::read_to_string(dir.join("config.toml")).unwrap();
-        assert!(text.contains("model = \"gpt-5.6-luna\""), "preserva claves ajenas");
-        assert!(text.contains("[projects.'D:\\Curso']"), "preserva otras tablas");
+        assert!(
+            text.contains("model = \"gpt-5.6-luna\""),
+            "preserva claves ajenas"
+        );
+        assert!(
+            text.contains("[projects.'D:\\Curso']"),
+            "preserva otras tablas"
+        );
         assert!(text.contains("[mcp_servers.notebooklm]"));
         assert!(!text.contains(&format!("dist/{}", "index.js")));
-        assert!(text.contains("managed_mcp_contract"));
-        assert!(!text.contains("notebooklm-mcp@latest"), "reemplaza el paquete viejo en notebooklm");
-        assert!(text.contains("[mcp_servers.gemini-notebook]"), "no toca el servidor duplicado, solo avisa");
+        assert!(
+            text.contains("PATH"),
+            "persiste el PATH del runtime administrado"
+        );
+        assert!(
+            !text.contains("notebooklm-mcp@latest"),
+            "reemplaza el paquete viejo en notebooklm"
+        );
+        assert!(
+            text.contains("[mcp_servers.gemini-notebook]"),
+            "no toca el servidor duplicado, solo avisa"
+        );
 
         let second = configure_codex_mcp();
         assert!(second.success);
-        assert!(second.message.contains("ya estaba configurado"), "es idempotente");
+        assert!(
+            second.message.contains("ya estaba configurado"),
+            "es idempotente"
+        );
 
         fs::remove_dir_all(&dir).ok();
         match previous_codex_home {

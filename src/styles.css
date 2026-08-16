@@ -661,6 +661,24 @@ code {
   will-change: transform;
 }
 
+.onboarding-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 127, 134, 0.45) transparent;
+}
+.onboarding-scrollbar::-webkit-scrollbar { width: 8px; }
+.onboarding-scrollbar::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(15, 127, 134, 0.45);
+  background-clip: padding-box;
+}
+
+@keyframes onboarding-indeterminate {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(320%); }
+}
+.onboarding-indeterminate { animation: onboarding-indeterminate 1.2s ease-in-out infinite; }
+
 /* Marcador vertical turquesa del ítem activo del sidebar (manual de marca,
    sección 4). ui.nav.item ya es position:relative, así que el pseudo-elemento
    se posiciona contra el propio botón sin envoltorio extra. */
@@ -779,6 +797,15 @@ code {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .onboarding-ambient { display: none; }
+  [class*="backdrop-blur"] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background-color: #ffffff !important;
   }
 }
 
