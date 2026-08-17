@@ -10,6 +10,7 @@ import { navigate, registerPage } from "./router.js";
 refreshIcons();
 
 import { renderCourses }      from "./pages/courses.js";
+import { renderJintiaChat }   from "./pages/jintia-chat.js";
 import { renderPdfs }         from "./pages/pdfs.js";
 import { renderSyllabus }     from "./pages/syllabus.js";
 import { renderTemplates }    from "./pages/templates.js";
@@ -25,7 +26,8 @@ import { APP_META } from "./appMeta.js";
 import { BrandLockup } from "./components/BrandLockup.js";
 import { BrandMark } from "./components/BrandMark.js";
 
-registerPage("courses",   renderCourses);
+registerPage("courses",     renderCourses);
+registerPage("jintia-chat", renderJintiaChat);
 registerPage("pdfs",      renderPdfs);
 registerPage("syllabus",  renderSyllabus);
 registerPage("templates", renderTemplates);
@@ -55,6 +57,9 @@ function renderShell() {
         </button>
         <button class="${ui.nav.item}" data-nav-item data-page="pdfs" aria-label="PDFs generados">
           ${ic("file-text", 18)} PDFs
+        </button>
+        <button class="${ui.nav.item}" data-nav-item data-page="jintia-chat" aria-label="Ask Jintia">
+          ${ic("bot", 18)} Ask Jintia
         </button>
         <button class="${ui.nav.item}" data-nav-item data-page="templates" aria-label="Plantillas">
           ${ic("layout-template", 18)} Plantillas
@@ -103,6 +108,7 @@ function renderShell() {
         <section class="h-full min-h-0 min-w-0" id="p-settings" hidden aria-label="Configuración"></section>
         <section class="h-full min-h-0 min-w-0" id="p-docs" hidden aria-label="Documentación"></section>
         <section class="h-full min-h-0 min-w-0" id="p-about" hidden aria-label="Acerca de Jintia"></section>
+        <section class="h-full min-h-0 min-w-0" id="p-jintia-chat" hidden aria-label="Ask Jintia"></section>
       </div>
     </main>
   `;

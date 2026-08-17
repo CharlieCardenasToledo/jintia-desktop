@@ -261,6 +261,29 @@ const handlers = {
     exitCode: 0,
     report: { tool: "jintia doctor", ok: true, checks: [] }
   }),
+
+  // ── OpenCode / Chat nativo ──────────────────────────────────────────────
+  opencode_start_course: ({ coursePath }) => ({
+    course_path: coursePath,
+    port: 14200,
+    status: "ready",
+  }),
+  opencode_stop_course: () => undefined,
+  opencode_health: ({ coursePath }) => ({
+    course_path: coursePath,
+    port: 14200,
+    status: "ready",
+  }),
+  agent_create_session: ({ coursePath, week }) => ({
+    id: `ses_mock_${Date.now()}`,
+    title: week ? `Jintia — Semana ${week}` : "Jintia — Chat",
+    course_path: coursePath,
+  }),
+  agent_send_message: () => undefined,
+  agent_get_messages: () => [
+    { role: "assistant", parts: [{ type: "text", text: "¡Hola! Soy Jintia. ¿En qué semana trabajamos hoy?" }] },
+  ],
+  agent_abort: () => undefined,
 };
 
 export async function invoke(cmd, args = {}) {

@@ -7,6 +7,7 @@ mod harnesses;
 mod mcp;
 mod models;
 mod onboarding;
+mod opencode;
 mod palette;
 mod paths;
 mod pdfs;
@@ -651,11 +652,97 @@ async fn get_capabilities_profiles() -> serde_json::Value {
     .unwrap_or(serde_json::Value::Null)
 }
 
+// ── OpenCode runtime commands ─────────────────────────────────────────────
+
+#[tauri::command]
+fn opencode_start_course(
+    course_path: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<opencode::models::RuntimeInfo, String> {
+    manager.start(&course_path)
+}
+
+#[tauri::command]
+fn opencode_stop_course(
+    course_path: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) {
+    manager.stop(&course_path);
+}
+
+#[tauri::command]
+fn opencode_health(
+    course_path: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> opencode::models::RuntimeInfo {
+    manager.health(&course_path)
+}
+
+#[tauri::command]
+fn agent_create_session(
+    course_path: String,
+    week: Option<String>,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<opencode::models::SessionInfo, String> {
+    let port = manager
+        .get_port(&course_path)
+        .ok_or_else(|| "OpenCode no está iniciado para este curso.".to_string())?;
+    let client = opencode::client::OpenCodeClient::new(port);
+    let title = match &week {
+        Some(w) => format!("Jintia — Semana {w}"),
+        None => "Jintia — Chat".to_string(),
+    };
+    let session = client.create_session(&title)?;
+    Ok(opencode::models::SessionInfo {
+        id: session.id,
+        title: session.title.unwrap_or(title),
+        course_path,
+    })
+}
+
+#[tauri::command]
+fn agent_send_message(
+    course_path: String,
+    session_id: String,
+    message: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<(), String> {
+    let port = manager
+        .get_port(&course_path)
+        .ok_or_else(|| "OpenCode no está iniciado.".to_string())?;
+    opencode::client::OpenCodeClient::new(port).send_prompt(&session_id, &message)
+}
+
+#[tauri::command]
+fn agent_get_messages(
+    course_path: String,
+    session_id: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<Vec<opencode::models::OcMessage>, String> {
+    let port = manager
+        .get_port(&course_path)
+        .ok_or_else(|| "OpenCode no está iniciado.".to_string())?;
+    opencode::client::OpenCodeClient::new(port).get_messages(&session_id)
+}
+
+#[tauri::command]
+fn agent_abort(
+    course_path: String,
+    session_id: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<(), String> {
+    let port = manager
+        .get_port(&course_path)
+        .ok_or_else(|| "OpenCode no está iniciado.".to_string())?;
+    opencode::client::OpenCodeClient::new(port).abort_session(&session_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(opencode::OpenCodeManager::new())
         .invoke_handler(tauri::generate_handler![
             check_dependencies,
             download_node_runtime,
@@ -711,11 +798,25 @@ pub fn run() {
             save_self_test_result,
             check_migration_needed,
             run_migration,
+            opencode_start_course,
+            opencode_stop_course,
+            opencode_health,
+            agent_create_session,
+            agent_send_message,
+            agent_get_messages,
+            agent_abort,
         ])
         .setup(|_app| {
             paths::migrate_app_dir_if_needed();
             paths::migrate_runtimes_dir_if_needed();
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                if let Some(mgr) = window.try_state::<opencode::OpenCodeManager>() {
+                    mgr.stop_all();
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error running tauri app");

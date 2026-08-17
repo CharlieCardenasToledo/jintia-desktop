@@ -413,6 +413,9 @@ function renderAiButtons(index, course) {
     </button>
     <button type="button" class="${cx(ui.button.base, ui.button.ghost, 'h-11 w-11 p-0')}" data-course-action="ai" data-ai-provider="claude" data-index="${index}" aria-label="Abrir ${escapeHtml(course.name)} con Claude Code" title="${prepared ? "Abrir con Claude Code" : "Primero prepara la carpeta del proyecto"}" ${prepared ? "" : "disabled"}>
       ${brandIcon("claude", 18)}
+    </button>
+    <button type="button" class="${cx(ui.button.base, ui.button.ghost, 'h-11 w-11 p-0')}" data-course-action="ai" data-ai-provider="jintia" data-index="${index}" aria-label="Abrir ${escapeHtml(course.name)} con Jintia (chat nativo)" title="${prepared ? "Chat nativo con Jintia + OpenCode" : "Primero prepara la carpeta del proyecto"}" ${prepared ? "" : "disabled"}>
+      ${brandIcon("jintia", 18)}
     </button>`;
 }
 
@@ -583,6 +586,17 @@ function weekTaskPrompt(course, week, operationId, guideExists) {
 }
 
 async function launchAiDeepLink(course, provider, prompt) {
+  if (provider === "jintia") {
+    // Chat nativo: navegar a la página de chat y pasar el contexto del curso
+    const { navigate } = await import("../router.js");
+    navigate("jintia-chat");
+    // Pasar curso activo al chat después de que se renderice
+    const { setActiveCourse } = await import("./jintia-chat.js");
+    const weekMatch = prompt.match(/semana\s+(\d+)/i);
+    const week = weekMatch ? weekMatch[1] : null;
+    requestAnimationFrame(() => setActiveCourse(course, week));
+    return;
+  }
   const folder = String(course.project_path || "").trim();
   const deepLink = provider === "claude"
     ? `claude://code/new?q=${encodeURIComponent(prompt)}&folder=${encodeURIComponent(folder)}`
@@ -775,6 +789,11 @@ async function validateAiReadiness(course, provider) {
   if (requiredMissing.length) {
     missing.push(`Faltan herramientas requeridas: ${requiredMissing.join(", ")}.`);
     return { ready: false, title: "El entorno todavía no está listo.", missing, settingsSection: "environment" };
+  }
+
+  if (provider === "jintia") {
+    // Chat nativo: solo requiere que la carpeta esté preparada (ya validado arriba)
+    return { ready: true, title: "", missing: [], settingsSection: null };
   }
 
   if (provider === "claude") {

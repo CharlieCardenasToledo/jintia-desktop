@@ -19,6 +19,7 @@ const PAGE_REGISTRY = {
   settings:    { title: "Configuración",                 sub: "Institución, conexiones, entorno y preferencias" },
   docs:        { title: "Ayuda",                          sub: "Requisitos, conexión y solución de problemas" },
   about:       { title: "Acerca de Jintia",               sub: "Proyecto, autoría, versiones, licencia y tecnologías" },
+  "jintia-chat": { title: "Ask Jintia",                   sub: "Chat nativo con tu asignatura — OpenCode + Jintia Skill" },
 };
 
 /** Callbacks de renderizado registrados por cada módulo de página. */
