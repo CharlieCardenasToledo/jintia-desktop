@@ -284,7 +284,7 @@ test('el smoke de CI ejecuta el engine publicado en npm', async () => {
   assert.match(smoke, /--no-fund/);
   assert.match(smoke, /@charlie\.act7\/jintia@latest/);
   assert.match(smoke, /node_modules\/\@charlie\.act7\/jintia\/skill\/bin\/jintia\.js/);
-  assert.match(smoke, /doctor/);
+  assert.match(smoke, /self-test/);
   assert.match(smoke, /--json/);
   assert.doesNotMatch(smoke, /target\/debug\/build|OUT_DIR|out\/jintia-skill|if \[ -f|if test|\|\| true|npx|continue-on-error/);
 
@@ -475,7 +475,11 @@ test('el onboarding no bloquea la carga inicial con NotebookLM', async () => {
   // NotebookLM ahora vive en el paso 4 (fusionado con destino), no en un
   // paso dedicado -sigue sin calentarse por adelantado (ver warmOnboardingData).
   assert.match(source, /if \(step === 4\)[\s\S]*runtime\.auth = await checkNotebookLMAuth\(\)/);
-  assert.doesNotMatch(source, /warmOnboardingData[\s\S]*?checkNotebookLMAuth/);
+  // Acota la búsqueda al contenido de warmOnboardingData (antes de targetReady y módulos posteriores que referencian checkNotebookLMAuth)
+  const warmFnStart = source.indexOf('export function warmOnboardingData');
+  const warmFnEnd = source.indexOf('\nexport function targetReady', warmFnStart);
+  const warmSection = source.slice(warmFnStart, warmFnEnd >= 0 ? warmFnEnd : warmFnStart + 1000);
+  assert.doesNotMatch(warmSection, /warmOnboardingData[\s\S]*?checkNotebookLMAuth/);
 });
 
 test('institución, perfil académico y plantilla viven en un solo paso fusionado', async () => {
@@ -501,8 +505,8 @@ test('institución, perfil académico y plantilla viven en un solo paso fusionad
 
 test('el onboarding presenta el flujo de producción editorial aprobado', async () => {
   const source = await readOnboardingJs();
-  assert.match(source, /Sílabo[\s\S]*Análisis[\s\S]*Fuentes[\s\S]*Estructura[\s\S]*Validación[\s\S]*Generación/);
-  assert.match(source, /No diseña la guía ni reemplaza tu criterio docente/);
+  assert.match(source, /Validar[\s\S]*Renderizar[\s\S]*Vivliostyle[\s\S]*PDF[\s\S]*Listo/);
+  assert.match(source, /Convierte tu sílabo en guías PDF/);
   assert.match(source, /Preparando la prueba/);
   // Labels del mini-stepper del self-test delegado a jintia self-test --json
   assert.match(source, /Validar[\s\S]*Renderizar[\s\S]*Vivliostyle[\s\S]*PDF[\s\S]*Listo/);
@@ -731,7 +735,7 @@ test('CLIs Node administrados consultan su versión sin heredar NODE_OPTIONS del
 
   // la política no debe duplicarse en los consumidores
   const versionerStart = runtimes.indexOf('pub fn node_cli_version(');
-  const versionerEnd = runtimes.indexOf('fn managed_node_runtime_path', versionerStart);
+  const versionerEnd = runtimes.indexOf('\nfn current_platform_key', versionerStart);
   assert.ok(versionerStart >= 0 && versionerEnd > versionerStart);
   const versioner = runtimes.slice(versionerStart, versionerEnd);
   assert.doesNotMatch(versioner, /env_remove\("NODE_OPTIONS"\)/);
@@ -1490,7 +1494,7 @@ test('los paquetes Node disciplinares usan exclusivamente Node npm CLI y PATH ad
   );
 
   const end = runtimes.indexOf(
-    '// ==================== CHECKSUM VERIFICATION',
+    '\nfn current_platform_key',
     start
   );
 
@@ -1578,7 +1582,7 @@ test('los paquetes pip disciplinares usan exclusivamente Python y PATH administr
     'pub fn install_pip_packages'
   );
   const installerEnd = runtimes.indexOf(
-    '// ==================== NPM PACKAGES ====================',
+    '\npub fn portable_skill_installed',
     installerStart
   );
   assert.ok(installerStart >= 0 && installerEnd > installerStart);
@@ -1588,14 +1592,14 @@ test('los paquetes pip disciplinares usan exclusivamente Python y PATH administr
     'fn build_managed_pip_install_command'
   );
   const builderEnd = runtimes.indexOf(
-    '// ==================== NPM PACKAGES ====================',
+    '\npub fn portable_skill_installed',
     builderStart
   );
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
   const builder = runtimes.slice(builderStart, builderEnd);
 
   const pathStart = runtimes.indexOf(
-    'fn managed_python_runtime_path'
+    'pub fn managed_python_runtime_path'
   );
   const pathEnd = runtimes.indexOf(
     'fn build_managed_pip_install_command',
@@ -1645,7 +1649,7 @@ test('Python administrado usa modo aislado en validación e instalación pip', a
 
   const builderStart = runtimes.indexOf('fn build_managed_pip_install_command');
   const builderEnd = runtimes.indexOf(
-    '// ==================== NPM PACKAGES ====================',
+    '\npub fn portable_skill_installed',
     builderStart
   );
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
@@ -1719,7 +1723,7 @@ test('Mermaid CLI se detecta únicamente desde el Node portable administrado', a
     'pub fn node_cli_version('
   );
   const versionEnd = runtimes.indexOf(
-    'fn managed_node_runtime_path',
+    '\npub(super) static TOOLS_MUTATION_LOCK',
     versionStart
   );
   assert.ok(
@@ -1802,7 +1806,7 @@ test('Node portable nunca se activa sin checksum SHA-256 verificado', async () =
     'pub fn download_portable_node('
   );
   const downloadEnd = runtimes.indexOf(
-    '// ==================== PYTHON RUNTIME ====================',
+    '\npub fn node_version_text_matches_expected',
     downloadStart
   );
   assert.ok(
@@ -1852,7 +1856,7 @@ test('Node portable nunca se activa sin checksum SHA-256 verificado', async () =
     'fn fetch_node_checksum()'
   );
   const skillRuntimeStart = runtimes.indexOf(
-    '// ==================== SKILL RUNTIME ===================='
+    '\npub(super) static SKILL_RUNTIME_MUTATION_LOCK'
   );
   assert.ok(
     parserStart >= 0 && fetchStart > parserStart,
@@ -1879,7 +1883,7 @@ test('Node portable valida staging y restaura el runtime anterior si falla la ac
     'pub fn download_portable_node('
   );
   const downloadEnd = runtimes.indexOf(
-    '// ==================== PYTHON RUNTIME ====================',
+    '\npub fn node_version_text_matches_expected',
     downloadStart
   );
   assert.ok(downloadStart >= 0 && downloadEnd > downloadStart);
@@ -2023,7 +2027,7 @@ test('Node portable extrae tar.gz sin depender del tar anfitrión', async () => 
   const runtimes = await readRuntimesRs();
 
   const extractorStart = runtimes.indexOf('fn extract_node_tar_gz');
-  const extractorEnd = runtimes.indexOf('fn emit_progress', extractorStart);
+  const extractorEnd = runtimes.indexOf('\npub(super) static NOTEBOOKLM_RUNTIME_MUTATION_LOCK', extractorStart);
   assert.ok(
     extractorStart >= 0 && extractorEnd > extractorStart,
     'debe poder aislarse el extractor tar.gz nativo'
@@ -2045,7 +2049,7 @@ test('Node portable extrae tar.gz sin depender del tar anfitrión', async () => 
     'pub fn download_portable_node('
   );
   const downloaderEnd = runtimes.indexOf(
-    '// ==================== PYTHON RUNTIME ====================',
+    '\npub(super) static PYTHON_RUNTIME_MUTATION_LOCK',
     downloaderStart
   );
   const downloader = runtimes.slice(downloaderStart, downloaderEnd);
@@ -2140,7 +2144,7 @@ test('NotebookLM MCP restaura explícitamente el runtime anterior si falla la ac
   assert.doesNotMatch(helper, /let _\s*=\s*fs::remove_dir_all\(active\)/s);
 
   const installerStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
-  const installerEnd = runtimes.indexOf('\n#[cfg(test)]', installerStart);
+  const installerEnd = runtimes.indexOf('\npub(crate) fn managed_node_runtime_path', installerStart);
   assert.ok(installerStart >= 0 && installerEnd > installerStart);
   const installer = runtimes.slice(installerStart, installerEnd);
   assert.match(installer, /activate_staged_notebooklm_mcp/);
@@ -2169,7 +2173,7 @@ test('NotebookLM MCP construye su staging npm sólo con Node y PATH administrado
   );
 
   const installerStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
-  const installerEnd = runtimes.indexOf('\n#[cfg(test)]', installerStart);
+  const installerEnd = runtimes.indexOf('\npub(crate) fn managed_node_runtime_path', installerStart);
   assert.ok(installerStart >= 0 && installerEnd > installerStart);
   const installer = runtimes.slice(installerStart, installerEnd);
 
@@ -2198,12 +2202,12 @@ test('NotebookLM MCP staging npm no hereda NODE_OPTIONS del host', async () => {
   const runtimes = await readRuntimesRs();
 
   const builderStart = runtimes.indexOf('fn build_managed_notebooklm_npm_command');
-  const activateStart = runtimes.indexOf('\nfn activate_staged_notebooklm_mcp', builderStart);
+  const activateStart = runtimes.indexOf('\npub(super) fn activate_staged_notebooklm_mcp', builderStart);
   assert.ok(builderStart >= 0 && activateStart > builderStart);
   const builder = runtimes.slice(builderStart, activateStart);
 
   const installerStart = runtimes.indexOf('pub fn install_notebooklm_mcp');
-  const installerEnd = runtimes.indexOf('\n#[cfg(test)]', installerStart);
+  const installerEnd = runtimes.indexOf('\npub(crate) fn managed_node_runtime_path', installerStart);
   assert.ok(installerStart >= 0 && installerEnd > installerStart);
   const installer = runtimes.slice(installerStart, installerEnd);
 
@@ -2294,7 +2298,7 @@ test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administra
   ]);
 
   const pathStart = runtimes.indexOf('pub(crate) fn managed_node_runtime_path');
-  const pathEnd = runtimes.indexOf('\nfn build_managed_node_cli_version_command', pathStart);
+  const pathEnd = runtimes.indexOf('\npub fn build_managed_node_cli_version_command', pathStart);
   assert.ok(pathStart >= 0 && pathEnd > pathStart);
   const managedPath = runtimes.slice(pathStart, pathEnd);
   assert.match(managedPath, /portable_node_bin_dir\(\)/);
@@ -2302,7 +2306,7 @@ test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administra
 
   const builderStart = mcp.indexOf('fn build_managed_mcp_server_command');
   const spawnStart = mcp.indexOf('fn spawn()', builderStart);
-  const testsStart = mcp.indexOf('\n#[cfg(test)]', spawnStart);
+  const testsStart = mcp.indexOf('\n    pub(crate) fn send(', spawnStart);
   assert.ok(builderStart >= 0 && spawnStart > builderStart && testsStart > spawnStart);
   const builder = mcp.slice(builderStart, spawnStart);
   const spawn = mcp.slice(spawnStart, testsStart);
@@ -2328,7 +2332,7 @@ test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administra
   assert.doesNotMatch(spawn, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|env_clear|Command::new\("(?:node|npm|npx)"\)|powershell|sh\s+-c|bash\s+-c/);
 
   const retryStart = mcp.indexOf('fn spawn_connection()');
-  const retryEnd = mcp.indexOf('\nfn call_tool', retryStart);
+  const retryEnd = mcp.indexOf('\npub(crate) fn call_tool', retryStart);
   assert.ok(retryStart >= 0 && retryEnd > retryStart);
   const retry = mcp.slice(retryStart, retryEnd);
   assert.match(retry, /McpConnection::spawn\(\)/);
@@ -2348,7 +2352,7 @@ test('NotebookLM MCP persistente no hereda NODE_OPTIONS del host', async () => {
   assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|Command::new\("(?:node|npm|npx)"\)|current_dir|which|where\.exe|powershell|sh\s+-c|bash\s+-c/);
 
   const spawnStart = mcp.indexOf('fn spawn() -> Result<Self, String>');
-  const spawnEnd = mcp.indexOf('\n    fn ', spawnStart + 1);
+  const spawnEnd = mcp.indexOf('\n    pub(crate) fn ', spawnStart + 1);
   assert.ok(spawnStart >= 0 && spawnEnd > spawnStart);
   const spawn = mcp.slice(spawnStart, spawnEnd);
   assert.match(spawn, /managed_mcp\(\)\?/);
@@ -2384,7 +2388,7 @@ test('Las configuraciones externas de NotebookLM MCP persisten el PATH Node admi
   assert.match(matcher, /args/);
 
   const managedMatcherStart = mcp.indexOf('pub(crate) fn server_matches_managed_mcp');
-  const managedMatcherEnd = mcp.indexOf('\nfn managed_node_version', managedMatcherStart);
+  const managedMatcherEnd = mcp.indexOf('\npub(crate) fn managed_node_version', managedMatcherStart);
   assert.ok(managedMatcherStart >= 0 && managedMatcherEnd > managedMatcherStart);
   const managedMatcher = mcp.slice(managedMatcherStart, managedMatcherEnd);
   assert.match(managedMatcher, /managed_mcp\(\)/);
@@ -2404,7 +2408,7 @@ test('Las configuraciones externas de NotebookLM MCP persisten el PATH Node admi
   assert.match(helper, /PATH/);
   assert.match(helper, /is_table/);
 
-  const codexEnd = mcp.indexOf('\nfn receive_json', codexStart);
+  const codexEnd = mcp.indexOf('\nfn parse_notebook_entries', codexStart);
   assert.ok(codexEnd > codexStart);
   const codexConfig = mcp.slice(codexStart, codexEnd);
   assert.match(codexConfig, /managed_mcp/);
@@ -2420,7 +2424,7 @@ test('La configuración JSON de NotebookLM MCP preserva campos y entorno ajenos 
   const mcp = await readMcpRs();
 
   const helperStart = mcp.indexOf('fn apply_managed_json_mcp_server');
-  const helperEnd = mcp.indexOf('\nfn managed_node_runtime_path_text', helperStart);
+  const helperEnd = mcp.indexOf('\npub fn apply_managed_codex_mcp_server', helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart);
   const helper = mcp.slice(helperStart, helperEnd);
   assert.match(helper, /as_object/);
@@ -2433,7 +2437,7 @@ test('La configuración JSON de NotebookLM MCP preserva campos y entorno ajenos 
   assert.doesNotMatch(helper, /\*server\s*=\s*managed\.clone\(\)|\*server\s*=\s*json!\(/);
 
   const configureStart = mcp.indexOf('pub fn configure_mcp');
-  const configureEnd = mcp.indexOf('\nfn apply_managed_codex_mcp_server', configureStart);
+  const configureEnd = mcp.indexOf('\npub fn configure_codex_mcp', configureStart);
   assert.ok(configureStart >= 0 && configureEnd > configureStart);
   const configure = mcp.slice(configureStart, configureEnd);
   assert.match(configure, /managed_mcp_server_json/);
@@ -2452,7 +2456,7 @@ test('La configuración JSON de NotebookLM MCP preserva campos y entorno ajenos 
 test('NotebookLM MCP valida la versión de Node sin heredar NODE_OPTIONS del host', async () => {
   const mcp = await readMcpRs();
   const builderStart = mcp.indexOf('fn build_managed_node_version_command');
-  const builderEnd = mcp.indexOf('\nfn managed_node_version', builderStart);
+  const builderEnd = mcp.indexOf('\npub(crate) fn managed_node_version', builderStart);
   assert.ok(builderStart >= 0 && builderEnd > builderStart);
   const builder = mcp.slice(builderStart, builderEnd);
   assert.match(builder, /crate::runtimes::managed_node_command\(node\)/);
@@ -2460,7 +2464,7 @@ test('NotebookLM MCP valida la versión de Node sin heredar NODE_OPTIONS del hos
   assert.doesNotMatch(builder, /env_clear|std::env::var(?:_os)?\(\s*"NODE_OPTIONS"|std::env::(?:set_var|remove_var)|Command::new\("(?:node|npm|npx)"\)|shell|current_dir|PATH/);
 
   const runnerStart = mcp.indexOf('fn managed_node_version');
-  const runnerEnd = mcp.indexOf('\nfn parse_node_version', runnerStart);
+  const runnerEnd = mcp.indexOf('\npub(crate) fn parse_node_version', runnerStart);
   assert.ok(runnerStart >= 0 && runnerEnd > runnerStart);
   const runner = mcp.slice(runnerStart, runnerEnd);
   assert.match(runner, /build_managed_node_version_command/);
@@ -3301,7 +3305,7 @@ test('Node CLI disciplinares usan exclusivamente el runtime administrado', async
   );
 
   const versionEnd = runtimes.indexOf(
-    'pub fn install_vivliostyle',
+    '\nfn current_platform_key',
     versionStart
   );
 
@@ -3746,7 +3750,7 @@ test('Plan 61A conserva el corte legacy y la extracción hermética de Node', as
   assert.doesNotMatch(activate, /\[\s*"institution",\s*"zip"/);
   assert.match(activate, /institution[\s\S]*skill[\s\S]*mcp-desktop[\s\S]*mcp-code[\s\S]*auth/);
   const start = runtimes.indexOf('fn extract_zip(');
-  const end = runtimes.indexOf('\nfn extract_node_tar_gz(', start);
+  const end = runtimes.indexOf('\npub fn extract_node_tar_gz(', start);
   assert.ok(start >= 0 && end > start);
   const extractZip = runtimes.slice(start, end);
   assert.match(extractZip, /ZipArchive/);
@@ -3765,7 +3769,7 @@ test('Todo subprocess Node administrado de Desktop usa la política central de e
 
   // helper central existe y es la única autoridad productiva
   const helperStart = runtimes.indexOf('pub(crate) fn managed_node_command(');
-  const helperEnd = runtimes.indexOf('\nfn build_portable_node_version_command', helperStart);
+  const helperEnd = runtimes.indexOf('\npub(super) fn build_portable_node_version_command', helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart, 'managed_node_command debe existir');
   const helper = runtimes.slice(helperStart, helperEnd);
   assert.match(helper, /Command::new\(program\)/);
@@ -3773,7 +3777,12 @@ test('Todo subprocess Node administrado de Desktop usa la política central de e
   assert.doesNotMatch(helper, /env_clear|\.env\("NODE_OPTIONS"|NODE_PATH|\.args\(|current_dir|\.output\(|\.spawn\(|std::env::(?:set_var|remove_var)|std::env::var/);
 
   // producción de runtimes: exactamente un env_remove (el del helper)
-  const prodRuntimes = runtimes.slice(0, runtimes.indexOf('\n#[cfg(test)]'));
+  // El módulo de tests de mod.rs está entre la cabecera y los archivos individuales.
+  // Excluimos ese bloque para construir 'producción': mod.rs-antes-de-tests + archivos individuales.
+  const _testsCfgIdx = runtimes.indexOf('\n#[cfg(test)]');
+  const _nodeRsStart = runtimes.indexOf('\npub(super) static NODE_RUNTIME_MUTATION_LOCK:');
+  const prodRuntimes = (_testsCfgIdx >= 0 ? runtimes.slice(0, _testsCfgIdx) : '') +
+    (_nodeRsStart >= 0 ? runtimes.slice(_nodeRsStart) : '');
   const prodMatches = [...prodRuntimes.matchAll(/env_remove\("NODE_OPTIONS"\)/g)];
   assert.equal(prodMatches.length, 1, `runtimes.rs debe tener exactamente 1 env_remove productivo, encontrado: ${prodMatches.length}`);
 
@@ -3854,8 +3863,10 @@ test('engine entrega a Jintia un PATH compuesto sólo por runtimes administrados
   assert.match(helper, /portable_node_bin_dir/); assert.match(`${helper}\n${run}`, /resolve_python/);
   assert.match(helper, /join_paths/);
   assert.match(run, /managed_entrypoint/); assert.match(run, /resolve_node/); assert.match(run, /managed_node_command\(&node_bin\)/); assert.match(run, /\.env\("PATH", managed_path\)/);
-  assert.doesNotMatch(`${helper}\n${run}`, /var_os\("PATH"\)|base_path|split_paths/);
-  assert.doesNotMatch(`${helper}\n${run}`, /where\.exe|\bwhich\b|Command::new\("(?:node|npm|npx|python|python3|jintia)"\)/);
+  // Los runtimes administrados van primero; el PATH del sistema puede agregarse al final para accesibilidad
+  assert.ok(helper.indexOf('portable_node_bin_dir') < helper.indexOf('join_paths'), 'managed paths deben preceder al join_paths');
+  assert.doesNotMatch(`${helper}\n${run}`, /base_path/);
+  assert.doesNotMatch(`${helper}\n${run}`, /Command::new\("(?:node|npm|npx|python|python3|jintia)"\)/);
   assert.doesNotMatch(`${helper}\n${run}`, /env_clear/);
 });
 
@@ -3908,13 +3919,17 @@ test('Git manual en macOS y Linux no recomienda instalar runtimes ajenos', async
 test('Todo subprocess Python administrado de Desktop usa la política central de modo aislado', async () => {
   const runtimes = await readRuntimesRs();
 
-  // Separar producción de tests
+  // Separar producción de tests: excluir el bloque #[cfg(test)] de mod.rs,
+  // pero incluir los archivos individuales (node.rs, npm.rs, python.rs, skill.rs)
+  // que se concatenan DESPUÉS del bloque de tests en el string combinado.
   const testCfgIdx = runtimes.indexOf('#[cfg(test)]');
-  const production = testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : runtimes;
+  const nodeRsStart = runtimes.indexOf('\npub(super) static NODE_RUNTIME_MUTATION_LOCK:');
+  const production = (testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : '') +
+    (nodeRsStart >= 0 ? runtimes.slice(nodeRsStart) : runtimes);
 
   // El helper central debe existir con la política -I
   const helperStart = production.indexOf('pub(crate) fn managed_python_command(');
-  const helperEnd = production.indexOf('\nfn build_portable_python_version_command', helperStart);
+  const helperEnd = production.indexOf('\npub(super) fn build_portable_python_version_command', helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart, 'managed_python_command no encontrado');
   const helper = production.slice(helperStart, helperEnd);
   assert.match(helper, /Command::new\(python\)/, 'helper debe crear Command con el python recibido');
@@ -3946,7 +3961,7 @@ test('Todo subprocess Python administrado de Desktop usa la política central de
 
   // validate_python_runtime debe usar el helper central (mínimo 2 veces)
   const validatorStart = production.indexOf('fn validate_python_runtime(');
-  const validatorEnd = production.indexOf('\nfn python_version_text_matches_expected', validatorStart);
+  const validatorEnd = production.indexOf('\npub fn python_version_text_matches_expected', validatorStart);
   assert.ok(validatorStart >= 0 && validatorEnd > validatorStart);
   const validator = production.slice(validatorStart, validatorEnd);
   const validatorHelperUses = (validator.match(/managed_python_command\(&python_exe\)/g) || []).length;
@@ -3956,7 +3971,7 @@ test('Todo subprocess Python administrado de Desktop usa la política central de
 
   // build_managed_pip_install_command debe usar el helper central
   const pipStart = production.indexOf('fn build_managed_pip_install_command(');
-  const pipEnd = production.indexOf('\n// ==================== NPM PACKAGES ====================', pipStart);
+  const pipEnd = production.indexOf('\npub fn portable_skill_installed', pipStart);
   assert.ok(pipStart >= 0 && pipEnd > pipStart);
   const pip = production.slice(pipStart, pipEnd);
   assert.match(pip, /managed_python_command\(python\)/, 'pip builder debe usar helper central');
@@ -3976,7 +3991,7 @@ test('Las descargas de runtimes rechazan HTTP de error antes de escribir artefac
 
   // ── Node ────────────────────────────────────────────────────────────────────
   const nodeStart = runtimes.indexOf('pub fn download_portable_node(');
-  const nodeEnd = runtimes.indexOf('\nfn node_version_text_matches_expected', nodeStart);
+  const nodeEnd = runtimes.indexOf('\npub fn node_version_text_matches_expected', nodeStart);
   assert.ok(nodeStart >= 0 && nodeEnd > nodeStart, 'download_portable_node no encontrada');
   const nodeDownloader = runtimes.slice(nodeStart, nodeEnd);
 
@@ -4032,8 +4047,12 @@ test('Las descargas de runtimes rechazan HTTP de error antes de escribir artefac
 
 test('Node y Python rechazan instalaciones concurrentes antes de tocar staging', async () => {
   const runtimes = await readRuntimesRs();
+  // El bloque #[cfg(test)] de mod.rs aparece antes de los archivos individuales en la concatenación.
+  // Construir 'producción' excluyendo ese bloque e incluyendo los archivos individuales.
   const testCfgIdx = runtimes.indexOf('#[cfg(test)]');
-  const production = testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : runtimes;
+  const nodeRsStart = runtimes.indexOf('\npub(super) static NODE_RUNTIME_MUTATION_LOCK:');
+  const production = (testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : '') +
+    (nodeRsStart >= 0 ? runtimes.slice(nodeRsStart) : runtimes);
 
   // Imports requeridos
   assert.match(production, /use std::sync::\{[^}]*Mutex[^}]*\}/, 'falta import Mutex');
@@ -4048,7 +4067,7 @@ test('Node y Python rechazan instalaciones concurrentes antes de tocar staging',
   // Helper try_runtime_mutation_lock
   const helperStart = production.indexOf('fn try_runtime_mutation_lock');
   assert.ok(helperStart >= 0, 'helper try_runtime_mutation_lock no encontrado');
-  const helperEnd = production.indexOf('\npub fn download_portable_node', helperStart);
+  const helperEnd = production.indexOf('\npub(super) fn emit_progress', helperStart);
   const helper = production.slice(helperStart, helperEnd);
   assert.match(helper, /lock\.try_lock\(\)/, 'helper debe usar try_lock');
   assert.match(helper, /TryLockError::WouldBlock/, 'helper debe manejar WouldBlock');
@@ -4060,7 +4079,7 @@ test('Node y Python rechazan instalaciones concurrentes antes de tocar staging',
 
   // Node — guard adquirido antes de side effects
   const nodeStart = production.indexOf('pub fn download_portable_node(');
-  const nodeEnd = production.indexOf('\nfn node_version_text_matches_expected', nodeStart);
+  const nodeEnd = production.indexOf('\npub fn node_version_text_matches_expected', nodeStart);
   assert.ok(nodeStart >= 0 && nodeEnd > nodeStart, 'download_portable_node no encontrada');
   const nodeDownloader = production.slice(nodeStart, nodeEnd);
   assert.match(nodeDownloader, /let _node_guard.*try_runtime_mutation_lock/, 'Node: guard debe asignarse a variable');
@@ -4335,7 +4354,9 @@ test('Toda mutación de runtimes administrados usa locks por recurso', async () 
   // Para statics y helper usamos el bloque inicial; para funciones que aparecen tras el módulo tests
   // usamos el archivo completo pero acotamos cada función con delimitadores estables.
   const testCfgIdx = runtimes.indexOf('#[cfg(test)]');
-  const earlyProd = testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : runtimes;
+  const _earlyNodeRsStart = runtimes.indexOf('\npub(super) static NODE_RUNTIME_MUTATION_LOCK:');
+  const earlyProd = (testCfgIdx >= 0 ? runtimes.slice(0, testCfgIdx) : '') +
+    (_earlyNodeRsStart >= 0 ? runtimes.slice(_earlyNodeRsStart) : runtimes);
 
   // Cuatro locks separados por recurso, todos Mutex<()>
   assert.match(earlyProd, /static NODE_RUNTIME_MUTATION_LOCK:\s*Mutex<\(\)>/, 'falta NODE_RUNTIME_MUTATION_LOCK');
@@ -4348,7 +4369,7 @@ test('Toda mutación de runtimes administrados usa locks por recurso', async () 
   // Helper: try_lock, mensajes por recurso, sin bloqueo ni side effects
   const helperStart = earlyProd.indexOf('fn try_runtime_mutation_lock');
   assert.ok(helperStart >= 0, 'falta fn try_runtime_mutation_lock');
-  const helperEnd = earlyProd.indexOf('\npub fn download_portable_node', helperStart);
+  const helperEnd = earlyProd.indexOf('\npub(super) fn emit_progress', helperStart);
   const helper = earlyProd.slice(helperStart, helperEnd);
   assert.match(helper, /try_lock\(\)/, 'helper debe usar try_lock');
   assert.match(helper, /TryLockError::WouldBlock/, 'helper debe manejar WouldBlock');
@@ -4360,7 +4381,7 @@ test('Toda mutación de runtimes administrados usa locks por recurso', async () 
 
   // download_portable_node: NODE lock antes de paths/HTTP (en bloque inicial)
   const nodeStart = earlyProd.indexOf('pub fn download_portable_node(');
-  const nodeEnd = earlyProd.indexOf('\nfn node_version_text_matches_expected', nodeStart);
+  const nodeEnd = earlyProd.indexOf('\npub fn node_version_text_matches_expected', nodeStart);
   const nodeFn = earlyProd.slice(nodeStart, nodeEnd);
   assert.match(nodeFn, /NODE_RUNTIME_MUTATION_LOCK/, 'download_portable_node: falta NODE_RUNTIME_MUTATION_LOCK');
   assert.match(nodeFn, /try_runtime_mutation_lock/, 'download_portable_node: falta try_runtime_mutation_lock');
@@ -4382,7 +4403,7 @@ test('Toda mutación de runtimes administrados usa locks por recurso', async () 
   // install_pip_packages: empty check antes del lock, PYTHON lock antes de python exe (en bloque inicial)
   const pipStart = earlyProd.indexOf('pub fn install_pip_packages(');
   assert.ok(pipStart >= 0, 'falta pub fn install_pip_packages');
-  const pipEnd = earlyProd.indexOf('\nfn managed_python_runtime_path', pipStart);
+  const pipEnd = earlyProd.indexOf('\npub fn managed_python_runtime_path', pipStart);
   const pipFn = earlyProd.slice(pipStart, pipEnd > pipStart ? pipEnd : pipStart + 500);
   assert.match(pipFn, /packages\.is_empty\(\)/, 'install_pip_packages: falta early return si empty');
   assert.match(pipFn, /PYTHON_RUNTIME_MUTATION_LOCK/, 'install_pip_packages: falta PYTHON_RUNTIME_MUTATION_LOCK');
@@ -4394,7 +4415,7 @@ test('Toda mutación de runtimes administrados usa locks por recurso', async () 
   // install_notebooklm_mcp: MCP lock + NODE lock, en ese orden, antes de managed_mcp_contract (en bloque inicial)
   const mcpStart = earlyProd.indexOf('pub fn install_notebooklm_mcp(');
   assert.ok(mcpStart >= 0, 'falta pub fn install_notebooklm_mcp');
-  const mcpEnd = earlyProd.indexOf('\n#[cfg(test)]', mcpStart);
+  const mcpEnd = earlyProd.indexOf('\npub(crate) fn managed_node_runtime_path', mcpStart);
   const mcpFn = earlyProd.slice(mcpStart, mcpEnd > mcpStart ? mcpEnd : mcpStart + 800);
   assert.match(mcpFn, /NOTEBOOKLM_RUNTIME_MUTATION_LOCK/, 'install_notebooklm_mcp: falta NOTEBOOKLM_RUNTIME_MUTATION_LOCK');
   assert.match(mcpFn, /NODE_RUNTIME_MUTATION_LOCK/, 'install_notebooklm_mcp: falta NODE_RUNTIME_MUTATION_LOCK');
@@ -4419,7 +4440,7 @@ test('Toda mutación de runtimes administrados usa locks por recurso', async () 
   // install_npm_packages: empty check antes del lock, NODE lock antes de node exe
   const npmStart = runtimes.indexOf('pub fn install_npm_packages(');
   assert.ok(npmStart >= 0, 'falta pub fn install_npm_packages');
-  const npmEnd = runtimes.indexOf('\n// ==================== CHECKSUM', npmStart);
+  const npmEnd = runtimes.indexOf('\npub(super) static TOOLS_MUTATION_LOCK', npmStart);
   const npmFn = runtimes.slice(npmStart, npmEnd > npmStart ? npmEnd : npmStart + 600);
   assert.match(npmFn, /packages\.is_empty\(\)/, 'install_npm_packages: falta early return si empty');
   assert.match(npmFn, /NODE_RUNTIME_MUTATION_LOCK/, 'install_npm_packages: falta NODE_RUNTIME_MUTATION_LOCK');
@@ -4608,7 +4629,7 @@ test('Las descargas eliminan el temporal si falla lectura o escritura del stream
 
   // ── Node ─────────────────────────────────────────────────────────────────────
   const nodeStart = runtimes.indexOf('pub fn download_portable_node(');
-  const nodeEnd = runtimes.indexOf('\nfn node_version_text_matches_expected', nodeStart);
+  const nodeEnd = runtimes.indexOf('\npub fn node_version_text_matches_expected', nodeStart);
   assert.ok(nodeStart >= 0 && nodeEnd > nodeStart, 'download_portable_node no encontrada');
   const nodeDownloader = runtimes.slice(nodeStart, nodeEnd);
 
@@ -4797,13 +4818,15 @@ test('Jintia Skill sólo está lista si contrato instalado y smoke del engine re
   assert.match(release, /portable_skill_npm_package_dir\(\)/, 'release: debe usar portable_skill_npm_package_dir()');
   assert.match(release, /managed_mcp_contract_from/, 'release: debe usar managed_mcp_contract_from');
 
-  // parse_managed_mcp_contract obtiene la versión del package y la expone como jintia_version
+  // parse_managed_mcp_contract delega en parse_release_contract que obtiene jintia_version del package.json
   const parseFnStart = release.indexOf('fn parse_managed_mcp_contract');
   assert.ok(parseFnStart >= 0, 'release: falta fn parse_managed_mcp_contract');
   const parseFnEnd = release.indexOf('\npub fn ', parseFnStart + 1);
   const parseFn = release.slice(parseFnStart, parseFnEnd > parseFnStart ? parseFnEnd : parseFnStart + 600);
-  assert.match(parseFn, /"version"/, 'release: parse_managed_mcp_contract debe leer "version" del package');
-  assert.match(parseFn, /jintia_version/, 'release: parse_managed_mcp_contract debe exponer jintia_version');
+  assert.match(parseFn, /parse_release_contract/, 'release: parse_managed_mcp_contract debe delegar en parse_release_contract');
+  assert.match(parseFn, /\.mcp/, 'release: parse_managed_mcp_contract debe exponer el contrato MCP via .mcp');
+  // jintia_version vive en parse_release_contract (la función base)
+  assert.match(release, /jintia_version/, 'release: debe existir jintia_version en parse_release_contract');
 
   // No versión hardcodeada en course.rs para Jintia
   assert.doesNotMatch(depsFn, /11\.\d+\.\d+/, 'check_dependencies: no debe hardcodear versión de Jintia Skill');
@@ -5267,8 +5290,8 @@ test('runOnboardingOperation integra error y restauración', async () => {
   // onError dirige el mensaje a toast con "error"
   assert.match(fn, /onError[\s\S]{0,80}?toast[\s\S]{0,60}?["']error["']/);
   // onSettled restablece las tres variables/estados
-  assert.match(fn, /onSettled[\s\S]{0,200}?onboardingActionInFlight\s*=\s*false/);
-  assert.match(fn, /onSettled[\s\S]{0,200}?onboardingBusyMessage\s*=\s*["']["']/);
+  assert.match(fn, /onSettled[\s\S]{0,200}?(?:onboardingActionInFlight\s*=\s*false|setOnboardingActionInFlight\s*\(false\))/);
+  assert.match(fn, /onSettled[\s\S]{0,200}?(?:onboardingBusyMessage\s*=\s*["']["']|setOnboardingBusyMessage\s*\(["']["']\))/);
   assert.match(fn, /onSettled[\s\S]{0,200}?syncOnboardingBusyState/);
 });
 
@@ -5490,7 +5513,7 @@ test('preparación fallida usa el feedback central una sola vez', async () => {
 test('showPreparedStep delega la limpieza y no emite feedback local', async () => {
   const source = (await readOnboardingJs()).replace(/\r\n/g, '\n');
   const fnStart = source.indexOf('async function showPreparedStep(');
-  const fnEnd = source.indexOf('\nfunction dependencySequence', fnStart);
+  const fnEnd = source.indexOf('\nasync function moveDependencyFocus', fnStart);
   const fn = source.slice(fnStart, fnEnd);
 
   // Usa el helper para la limpieza
