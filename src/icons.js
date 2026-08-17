@@ -34,6 +34,7 @@ import {
   Folder, Database, FlaskConical, Brain, FolderOpen,
   Wrench, Shield, Construction, UserPen,
   FileCode2, CircleX, FolderCheck,
+  Send,
 } from "lucide";
 
 const ICONS = {
@@ -57,6 +58,7 @@ const ICONS = {
   Folder, Database, FlaskConical, Brain, FolderOpen,
   Wrench, Shield, Construction, UserPen,
   FileCode2, CircleX, FolderCheck,
+  Send,
 };
 
 /** Re-renderiza todos los data-lucide del DOM. Llamar después de cada render dinámico. */

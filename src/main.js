@@ -129,8 +129,9 @@ document.addEventListener("click", event => {
 document.addEventListener("keydown", event => {
   if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const index = Number(event.key) - 1;
+  if (!Number.isInteger(index) || index < 0) return;
   const items = document.querySelectorAll("[data-nav-item][data-page]");
-  if (index < 0 || index >= items.length) return;
+  if (index >= items.length) return;
   event.preventDefault();
   navigate(items[index].dataset.page);
 });
