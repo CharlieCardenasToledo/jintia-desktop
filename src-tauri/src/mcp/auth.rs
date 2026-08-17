@@ -124,23 +124,21 @@ pub fn check_auth() -> NotebookLmAuthStatus {
 pub fn check_auth_fresh() -> NotebookLmAuthStatus {
     use crate::mcp::client::find_bool_field;
     let status = match call_tool("get_health", json!({}), Duration::from_secs(60)) {
-        Ok(value) if !is_tool_error(&value) => match find_bool_field(&value, "authenticated") {
-            Some(true) => NotebookLmAuthStatus {
-                authenticated: true,
-                message: "Sesión activa. NotebookLM puede consultar tus notebooks.".to_string(),
-            },
-            Some(false) if persistent_profile_has_recent_google_auth() => NotebookLmAuthStatus {
-                authenticated: true,
-                message: "Sesión activa detectada en el perfil persistente de NotebookLM.".to_string(),
-            },
-            Some(false) => NotebookLmAuthStatus {
-                authenticated: false,
-                message: "Servidor disponible, pero falta iniciar sesión en Google.".to_string(),
-            },
-            None => NotebookLmAuthStatus {
-                authenticated: false,
-                message: "El servidor respondió, pero no devolvió un estado de autenticación reconocible.".to_string(),
-            },
+        Ok(value) if !is_tool_error(&value) => {
+            // get_health devuelve "authenticated": null siempre (diseño deliberado del MCP).
+            // El campo real que indica sesión guardada es "auth_state_present".
+            let has_state = find_bool_field(&value, "auth_state_present") == Some(true);
+            if has_state || persistent_profile_has_recent_google_auth() {
+                NotebookLmAuthStatus {
+                    authenticated: true,
+                    message: "Sesión activa. Estado de autenticación de NotebookLM detectado.".to_string(),
+                }
+            } else {
+                NotebookLmAuthStatus {
+                    authenticated: false,
+                    message: "Servidor disponible, pero falta iniciar sesión en Google.".to_string(),
+                }
+            }
         },
         Ok(value) => NotebookLmAuthStatus {
             authenticated: false,
@@ -253,8 +251,13 @@ where
     }
     use crate::mcp::client::find_bool_field;
     let result = match response {
+        // setup_auth también retorna "authenticated": null (diseño del MCP).
+        // Aceptar éxito si auth_state_present está en true, lo que confirma que
+        // el archivo browser_state/state.json con cookies fue creado correctamente.
         Ok(value)
-            if !is_tool_error(&value) && find_bool_field(&value, "authenticated") == Some(true) =>
+            if !is_tool_error(&value)
+                && (find_bool_field(&value, "auth_state_present") == Some(true)
+                    || find_bool_field(&value, "authenticated") == Some(true)) =>
         {
             let status = NotebookLmAuthStatus {
                 authenticated: true,
