@@ -251,7 +251,7 @@ async fn get_setup_status() -> SetupStatus {
 
 #[tauri::command]
 async fn check_notebooklm_auth() -> NotebookLmAuthStatus {
-    tauri::async_runtime::spawn_blocking(mcp::check_auth_fresh)
+    tauri::async_runtime::spawn_blocking(mcp::check_auth)
         .await
         .unwrap_or_else(|error| NotebookLmAuthStatus {
             authenticated: false,

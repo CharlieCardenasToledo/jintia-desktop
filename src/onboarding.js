@@ -1452,9 +1452,24 @@ async function animateFinalStep() {
   }
 
   // ── self-test unificado via jintia self-test --json ───────────────────
+  // El CLI corre todos los checks en un proceso único y retorna el JSON al final.
+  // Mostramos una animación activa mientras esperamos, y luego recorremos los
+  // resultados uno a uno con una pausa para que el usuario vea el paso a paso.
   setRow(0, "active");
   setMsg("Ejecutando prueba de entorno Jintia…");
   setProgress(10);
+
+  // Ciclar la fila activa mientras el CLI trabaja (da feedback visual sin streaming real)
+  const checkNames  = ["validate", "render", "vivliostyle", "pdf"];
+  const rowMap      = { validate: 0, render: 1, vivliostyle: 2, pdf: 3 };
+  const checkLabels = { validate: "Validando entorno…", render: "Renderizando guía de prueba…", vivliostyle: "Generando PDF con Vivliostyle…", pdf: "Comprobando el PDF resultante…" };
+  let fakeIdx = 0;
+  const cycleInterval = setInterval(() => {
+    setRow(rowMap[checkNames[fakeIdx]] ?? 0, "active");
+    setMsg(checkLabels[checkNames[fakeIdx]] ?? "Ejecutando prueba…");
+    setProgress(10 + (fakeIdx / checkNames.length) * 35);
+    fakeIdx = (fakeIdx + 1) % checkNames.length;
+  }, 900);
 
   let selfTest;
   try {
@@ -1462,22 +1477,27 @@ async function animateFinalStep() {
   } catch (err) {
     selfTest = { ok: false, error: String(err) };
   }
+  clearInterval(cycleInterval);
 
   compileDiagnostics.push(`self-test: ${JSON.stringify(selfTest)}`);
 
   const checks = selfTest?.checks ?? {};
-  const checkNames = ["validate", "render", "vivliostyle", "pdf"];
-  const rowMap = { validate: 0, render: 1, vivliostyle: 2, pdf: 3 };
 
-  // Animar filas según resultado de cada check
-  for (const key of checkNames) {
+  // Animar resultados uno a uno (active → done/error) con pausa entre cada fila
+  for (let i = 0; i < checkNames.length; i++) {
+    const key    = checkNames[i];
     const rowIdx = rowMap[key];
     if (rowIdx === undefined) continue;
+    setRow(rowIdx, "active");
+    setMsg(checkLabels[key] ?? "Verificando…");
+    setProgress(50 + (i / checkNames.length) * 40);
+    await new Promise(r => setTimeout(r, reduceMotion ? 80 : 450));
     if (checks[key] === "passed") {
       setRow(rowIdx, "done");
     } else if (checks[key] !== undefined) {
       setRow(rowIdx, "error");
     }
+    if (i < checkNames.length - 1) await new Promise(r => setTimeout(r, reduceMotion ? 40 : 200));
   }
   setProgress(90);
 

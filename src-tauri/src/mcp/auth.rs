@@ -146,7 +146,22 @@ pub fn check_auth_fresh() -> NotebookLmAuthStatus {
             authenticated: false,
             message: format!("NotebookLM MCP devolvió un error: {}", tool_error_message(&value)),
         },
-        Err(error) => NotebookLmAuthStatus { authenticated: false, message: error },
+        // MCP no está corriendo o no responde: revisar cookies del perfil persistente
+        // antes de declarar que no hay sesión. El usuario puede haber autenticado
+        // antes y el servidor simplemente no está iniciado en este momento.
+        Err(_) => {
+            if persistent_profile_has_recent_google_auth() {
+                NotebookLmAuthStatus {
+                    authenticated: true,
+                    message: "Sesión detectada en el perfil de Chrome de NotebookLM.".to_string(),
+                }
+            } else {
+                NotebookLmAuthStatus {
+                    authenticated: false,
+                    message: "No se pudo contactar al servidor NotebookLM MCP. Inicia sesión para establecer la conexión.".to_string(),
+                }
+            }
+        }
     };
     remember_auth_validation(&status);
     status
