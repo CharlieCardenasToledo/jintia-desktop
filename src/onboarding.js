@@ -1040,7 +1040,7 @@ function connectStep() {
   if (selected === "claude-code") {
     allReady = !!(skillReady && setup.mcp_claude_code_configured);
     actions  = actionButton(setup.skill_installed ? "Actualizar skill" : "Instalar skill", "install-local", skillReady, true) +
-               actionButton("Conectar con Claude Code", "configure-code", !skillReady || setup.mcp_claude_code_configured, true);
+               actionButton(setup.mcp_claude_code_configured ? "Verificar conexión MCP" : "Conectar con Claude Code", "configure-code", !skillReady, true);
 
   } else if (selected === "openai") {
     allReady = !!setup.openai_plugin_current;
@@ -1054,7 +1054,7 @@ function connectStep() {
     allReady = !!(skillReady && setup.mcp_claude_code_configured && setup.openai_plugin_current);
     actions  = actionButton(setup.skill_installed ? "Actualizar (proyecto local)" : "Instalar (proyecto local)", "install-local", skillReady, true) +
                actionButton(openaiPluginLabel(setup), "install-openai", setup.openai_plugin_current, true) +
-               actionButton("Conectar con Claude Code", "configure-code", !setup.skill_installed || setup.mcp_claude_code_configured, true);
+               actionButton(setup.mcp_claude_code_configured ? "Verificar conexión MCP" : "Conectar con Claude Code", "configure-code", !setup.skill_installed, true);
   }
 
   setFooter("Continuar al paso final", "advance-target", !authenticated || !allReady);
