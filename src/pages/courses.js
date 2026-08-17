@@ -587,12 +587,10 @@ function weekTaskPrompt(course, week, operationId, guideExists) {
 
 async function launchAiDeepLink(course, provider, prompt) {
   if (provider === "jintia") {
-    // Chat nativo: navegar a la página de chat y pasar el contexto del curso
     const { navigate } = await import("../router.js");
     navigate("jintia-chat");
-    // Pasar curso activo al chat después de que se renderice
     const { setActiveCourse } = await import("./jintia-chat.js");
-    const weekMatch = prompt.match(/semana\s+(\d+)/i);
+    const weekMatch = prompt ? prompt.match(/semana\s+(\d+)/i) : null;
     const week = weekMatch ? weekMatch[1] : null;
     requestAnimationFrame(() => setActiveCourse(course, week));
     return;
@@ -615,6 +613,17 @@ async function openCourseWithAi(index, provider, opener) {
   if (_aiCheckBusy.has(index)) return;
   const course = state.courses[index];
   if (!course) return;
+
+  // Jintia: ir directo al chat sin modal ni verificaciones de skill/MCP
+  if (provider === "jintia") {
+    if (!course.project_path) {
+      toast("Prepara primero la carpeta del proyecto desde el menú de la asignatura.", "error", 6000);
+      return;
+    }
+    await launchAiDeepLink(course, "jintia", null);
+    return;
+  }
+
   _aiCheckBusy.add(index);
   toast("Verificando skill, conexión y entorno…", "loading", 30000);
   try {
@@ -627,6 +636,7 @@ async function openCourseWithAi(index, provider, opener) {
       }
       return;
     }
+    toast("", "info", 1);
     openAiTaskModal(index, provider, opener);
   } catch (error) {
     toast(`No se pudo verificar el entorno. (${error})`, "error", 7000);
@@ -782,6 +792,11 @@ async function validateAiReadiness(course, provider) {
     return { ready: false, title: "No se puede abrir la IA.", missing, settingsSection: null };
   }
 
+  // Jintia no necesita skill ni MCP — OpenCode gestiona todo eso internamente
+  if (provider === "jintia") {
+    return { ready: true, title: "", missing: [], settingsSection: null };
+  }
+
   const [setup, dependencies] = await Promise.all([getSetupStatus(), checkDependencies()]);
   const requiredMissing = (dependencies || [])
     .filter(dependency => dependency.required && !dependency.installed)
@@ -789,11 +804,6 @@ async function validateAiReadiness(course, provider) {
   if (requiredMissing.length) {
     missing.push(`Faltan herramientas requeridas: ${requiredMissing.join(", ")}.`);
     return { ready: false, title: "El entorno todavía no está listo.", missing, settingsSection: "environment" };
-  }
-
-  if (provider === "jintia") {
-    // Chat nativo: solo requiere que la carpeta esté preparada (ya validado arriba)
-    return { ready: true, title: "", missing: [], settingsSection: null };
   }
 
   if (provider === "claude") {

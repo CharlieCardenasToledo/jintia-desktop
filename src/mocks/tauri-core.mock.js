@@ -281,7 +281,7 @@ const handlers = {
   }),
   agent_send_message: () => undefined,
   agent_get_messages: () => [
-    { role: "assistant", parts: [{ type: "text", text: "¡Hola! Soy Jintia. ¿En qué semana trabajamos hoy?" }] },
+    { info: { role: "assistant" }, parts: [{ type: "text", text: "¡Hola! Soy Jintia. ¿En qué semana trabajamos hoy?" }] },
   ],
   agent_abort: () => undefined,
 };

@@ -43,9 +43,17 @@ pub struct OcMessagePart {
     pub text: Option<String>,
 }
 
+// Metadatos del mensaje (campo "info" en la respuesta de OpenCode)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OcMessage {
+pub struct OcMessageInfo {
     pub id: Option<String>,
     pub role: Option<String>,
+}
+
+// Estructura real de GET /session/:id/message en OpenCode ≥1.18
+// { "info": { "role": "user"|"assistant", ... }, "parts": [...] }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcMessage {
+    pub info: Option<OcMessageInfo>,
     pub parts: Option<Vec<OcMessagePart>>,
 }

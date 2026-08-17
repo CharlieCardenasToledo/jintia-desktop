@@ -39,10 +39,10 @@ impl OpenCodeClient {
     }
 
     pub fn send_prompt(&self, session_id: &str, text: &str) -> Result<(), String> {
+        // OpenCode ≥1.18 espera { "parts": [{ "type": "text", "text": "..." }] }
+        // (no "text" ni "sessionID" en el body — el id va en la URL)
         let body = serde_json::json!({
-            "sessionID": session_id,
-            "text": text,
-            "attachments": []
+            "parts": [{ "type": "text", "text": text }]
         });
         self.client
             .post(format!("{}/session/{}/prompt_async", self.base, session_id))

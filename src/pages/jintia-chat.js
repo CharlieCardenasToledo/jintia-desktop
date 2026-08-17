@@ -49,7 +49,8 @@ function appendMessage(html) {
 }
 
 function messageHtml(msg) {
-  const role = msg.role || "assistant";
+  // OpenCode ≥1.18: role está en msg.info.role, no en el nivel raíz
+  const role = msg.info?.role || msg.role || "assistant";
   const text = (msg.parts || [])
     .filter(p => p.type === "text")
     .map(p => p.text || "")
