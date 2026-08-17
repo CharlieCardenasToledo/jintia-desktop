@@ -1038,7 +1038,12 @@ export async function animateFinalStep() {
   setRow(4, "done");
   setProgress(100);
   setMsg("¡Listo!");
-  showReadySuccess(null);
+  const pdfPath = selfTest?.pdfPath;
+  if (pdfPath) {
+    showSuccess(null, "Jintia generó tu guía de verificación correctamente.", pdfPath);
+  } else {
+    showReadySuccess(null);
+  }
 }
 
 export function bindStepEvents(current) {
