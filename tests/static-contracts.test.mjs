@@ -1132,8 +1132,9 @@ test('Plantillas comparten una guía semanal de demostración realista', async (
 
   // onboarding ya no usa muestra sintética: delega a `jintia init` para la prueba final real
   assert.match(templates, /buildSampleGuideData\(state\.config/);
-  assert.match(sample, /Pensamiento crítico y decisiones profesionales/);
-  assert.match(sample, /Facione, P\. A\./);
+  // La guía de demostración describe el flujo real de Jintia con bibliografía verídica
+  assert.match(sample, /Gemini Notebook/);
+  assert.match(sample, /Anderson, L\. W\./);
   assert.doesNotMatch(sample, /Apellido, [A-Z]\./);
   // El contenido de demostración ya no se genera desde Rust LaTeX;
   // Desktop ahora delega a `jintia init` que crea una estructura JSON pura

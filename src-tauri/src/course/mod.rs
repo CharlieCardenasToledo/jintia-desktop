@@ -1,6 +1,7 @@
 pub mod migration;
 pub mod structure;
 pub mod syllabus;
+pub mod welcome;
 
 use crate::paths::safe_segment;
 use std::path::{Path, PathBuf};
@@ -99,6 +100,7 @@ pub(crate) fn course_directory(
 pub use migration::{check_migration_needed, run_migration};
 pub use structure::{create_course_structure, run_self_test, save_course_settings};
 pub use syllabus::{append_demo_week, build_syllabus_md, generate_syllabus};
+pub use welcome::generate_welcome_guide_pdf;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 #[cfg(test)]

@@ -46,6 +46,41 @@ fn managed_runtime_path(python: Option<&Path>) -> Result<OsString, String> {
         .map_err(|error| format!("No se pudo construir el PATH administrado: {error}"))
 }
 
+/// Ejecuta un script Node.js arbitrario con el runtime administrado por Jintia.
+/// Idéntico a `run_jintia` pero sin anteponer el entrypoint de la skill —
+/// útil para llamar a `guide-renderer.js`, `content-linter.js`, etc. directamente.
+pub fn run_node_script(script: &Path, args: &[&str], cwd: Option<&Path>) -> Result<EngineResult, String> {
+    let node_bin = crate::runtimes::resolve_node().ok_or_else(|| {
+        "Node.js no disponible. Descárgalo desde Configuración > Entorno.".to_string()
+    })?;
+
+    let python = crate::runtimes::resolve_python().map(PathBuf::from);
+    let managed_path = managed_runtime_path(python.as_deref())?;
+
+    let mut cmd_args = vec![script.to_string_lossy().into_owned()];
+    cmd_args.extend(args.iter().map(|s| s.to_string()));
+
+    let mut cmd = crate::runtimes::managed_node_command(&node_bin);
+    cmd.args(&cmd_args).env("PATH", managed_path);
+
+    if let Some(vivliostyle_bin) = crate::runtimes::resolve_vivliostyle() {
+        cmd.env("JINTIA_VIVLIOSTYLE_BIN", vivliostyle_bin);
+    }
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
+
+    match cmd.output() {
+        Ok(output) => Ok(EngineResult {
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }),
+        Err(error) => Err(format!("No se pudo iniciar Node.js: {error}")),
+    }
+}
+
 pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, String> {
     let entrypoint = managed_entrypoint(skill_path)?;
 

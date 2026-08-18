@@ -29,6 +29,7 @@ import {
   getCapabilitiesProfiles,
   getDefaultCourseRoot,
   runSkillSelfTest,
+  runWelcomeGuideGeneration,
   installVivliostyleCli,
   installNpmPackages,
   installProfilePackages,
@@ -1456,24 +1457,24 @@ async function animateFinalStep() {
   // Mostramos una animación activa mientras esperamos, y luego recorremos los
   // resultados uno a uno con una pausa para que el usuario vea el paso a paso.
   setRow(0, "active");
-  setMsg("Ejecutando prueba de entorno Jintia…");
+  setMsg("Generando tu guía de bienvenida…");
   setProgress(10);
 
   // Ciclar la fila activa mientras el CLI trabaja (da feedback visual sin streaming real)
   const checkNames  = ["validate", "render", "vivliostyle", "pdf"];
   const rowMap      = { validate: 0, render: 1, vivliostyle: 2, pdf: 3 };
-  const checkLabels = { validate: "Validando entorno…", render: "Renderizando guía de prueba…", vivliostyle: "Generando PDF con Vivliostyle…", pdf: "Comprobando el PDF resultante…" };
+  const checkLabels = { validate: "Validando contenido…", render: "Renderizando guía de Jintia…", vivliostyle: "Generando PDF con Vivliostyle…", pdf: "Comprobando el PDF resultante…" };
   let fakeIdx = 0;
   const cycleInterval = setInterval(() => {
     setRow(rowMap[checkNames[fakeIdx]] ?? 0, "active");
-    setMsg(checkLabels[checkNames[fakeIdx]] ?? "Ejecutando prueba…");
+    setMsg(checkLabels[checkNames[fakeIdx]] ?? "Generando guía…");
     setProgress(10 + (fakeIdx / checkNames.length) * 35);
     fakeIdx = (fakeIdx + 1) % checkNames.length;
   }, 900);
 
   let selfTest;
   try {
-    selfTest = await runSkillSelfTest();
+    selfTest = await runWelcomeGuideGeneration();
   } catch (err) {
     selfTest = { ok: false, error: String(err) };
   }
@@ -1538,7 +1539,7 @@ async function animateFinalStep() {
   setMsg("¡Listo!");
   const pdfPath = selfTest?.pdfPath;
   if (pdfPath) {
-    showSuccess(null, "Jintia generó tu guía de verificación correctamente.", pdfPath);
+    showSuccess(null, "Esta es tu guía de bienvenida a Jintia — generada con el mismo pipeline que usarás cada semana.", pdfPath);
   } else {
     showReadySuccess(null);
   }

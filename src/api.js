@@ -226,6 +226,10 @@ export async function runSkillSelfTest() {
   return invoke("run_skill_self_test");
 }
 
+export async function runWelcomeGuideGeneration() {
+  return invoke("run_welcome_guide_generation");
+}
+
 export async function saveSelfTestResult(record) {
   return invoke("save_self_test_result", { record });
 }

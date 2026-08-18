@@ -261,6 +261,17 @@ const handlers = {
     exitCode: 0,
     report: { tool: "jintia doctor", ok: true, checks: [] }
   }),
+  run_skill_self_test: () => ({
+    ok: true,
+    checks: { validate: "passed", render: "passed", vivliostyle: "passed", pdf: "passed" },
+    pdfPath: null,
+  }),
+  run_welcome_guide_generation: () => ({
+    ok: true,
+    checks: { validate: "passed", render: "passed", vivliostyle: "passed", pdf: "passed" },
+    pdfPath: null,
+  }),
+  save_self_test_result: () => actionResult(true, "Resultado guardado (mock)."),
 
   // ── Preferencias de IA ─────────────────────────────────────────────────
   get_ai_preference: () => ({ provider_id: null, model_id: null, model_name: null }),

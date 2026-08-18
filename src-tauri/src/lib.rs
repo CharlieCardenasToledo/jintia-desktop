@@ -518,6 +518,13 @@ async fn run_skill_self_test() -> serde_json::Value {
 }
 
 #[tauri::command]
+async fn run_welcome_guide_generation() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(course::generate_welcome_guide_pdf)
+        .await
+        .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": format!("{e}") }))
+}
+
+#[tauri::command]
 async fn install_profile_binaries(app: tauri::AppHandle, binary_ids: Vec<String>) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
         runtimes::install_profile_binaries(&app, &binary_ids)
@@ -931,6 +938,7 @@ pub fn run() {
             install_vivliostyle_cli,
             install_npm_packages,
             run_skill_self_test,
+            run_welcome_guide_generation,
             install_profile_binaries,
             save_self_test_result,
             check_migration_needed,

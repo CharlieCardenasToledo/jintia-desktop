@@ -4,7 +4,7 @@
 import "./styles.css";
 
 import { state }              from "./state.js";
-import { refreshIcons, ic }       from "./icons.js";
+import { refreshIcons, ic, brandIcon } from "./icons.js";
 import { navigate, registerPage } from "./router.js";
 
 refreshIcons();
@@ -59,7 +59,7 @@ function renderShell() {
           ${ic("file-text", 18)} PDFs
         </button>
         <button class="${ui.nav.item}" data-nav-item data-page="jintia-chat" aria-label="Ask Jintia">
-          ${ic("bot", 18)} Ask Jintia
+          ${brandIcon("jintia", 18)} Ask Jintia
         </button>
         <button class="${ui.nav.item}" data-nav-item data-page="templates" aria-label="Plantillas">
           ${ic("layout-template", 18)} Plantillas

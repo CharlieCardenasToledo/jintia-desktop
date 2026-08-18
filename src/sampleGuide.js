@@ -1,45 +1,49 @@
 /**
- * Caso transversal usado para verificar la compilación y comparar plantillas.
- * Debe sentirse como una semana académica real sin depender de una profesión.
+ * Datos de muestra usados en el preview de plantillas y para generar sílabos de demostración.
+ * El contenido describe el propio flujo de trabajo de Jintia para que el docente
+ * vea de inmediato para qué sirve la herramienta.
  */
 export function buildSampleGuideData(config = {}) {
   const institution = safeSampleText(config.institution, "la institución");
   const career = safeSampleText(config.career, "el programa académico");
 
   return {
-    courseCode: "DEMO-DEC-101",
-    courseName: "Pensamiento crítico y decisiones profesionales",
+    courseCode: "JINTIA-101",
+    courseName: "Diseño instruccional asistido por IA",
     credits: 3,
     academicPeriod: safeSampleText(config.academicPeriod, "Período académico vigente"),
     semester: "Formación transversal",
     description:
       `Guía didáctica de muestra para ${career} en ${institution}. ` +
-      "Presenta una semana completa de aprendizaje sobre cómo tomar decisiones justificadas con evidencia, " +
-      "un proceso aplicable en salud, educación, ingeniería, administración, derecho y otras profesiones.",
+      "Ilustra el flujo completo de Jintia: desde la creación de la asignatura y la vinculación " +
+      "de la biblioteca de conocimiento (Gemini Notebook), hasta la generación de guías didácticas " +
+      "en PDF con diseño tipográfico institucional.",
     weeksData: [
       {
         number: 1,
-        title: "De la intuición a una decisión justificable",
-        unit: "Unidad I: Pensamiento crítico aplicado",
+        title: "Tu flujo de trabajo semanal con Jintia",
+        unit: "Unidad I: Asistencia pedagógica con IA",
         topics:
-          "Diferencia entre dato, evidencia e interpretación\n" +
-          "Criterios para comparar alternativas\n" +
-          "Sesgos frecuentes y manejo de la incertidumbre\n" +
-          "Comunicación de una recomendación profesional",
+          "Estructura de una asignatura en Jintia: carpetas, guías y sílabo\n" +
+          "Gemini Notebook como biblioteca de conocimiento personal del docente\n" +
+          "El chat Ask Jintia: preguntas sobre la materia con citas verificables\n" +
+          "Generación de guías didácticas PDF con plantillas institucionales",
         outcomes:
-          "Analizar una situación profesional distinguiendo hechos, supuestos y vacíos de información\n" +
-          "Comparar alternativas mediante criterios explícitos y evidencia pertinente\n" +
-          "Justificar una recomendación reconociendo límites, riesgos y próximos pasos",
+          "Crear una asignatura completa en Jintia y vincular su Gemini Notebook\n" +
+          "Formular preguntas al chat Ask Jintia y validar las fuentes citadas\n" +
+          "Generar la guía didáctica de la primera semana en formato PDF",
         bibliography:
-          "Facione, P. A. (1990). Critical Thinking: A Statement of Expert Consensus. American Philosophical Association.\n" +
-          "Hammond, J. S., Keeney, R. L., y Raiffa, H. (1999). Smart Choices. Harvard Business School Press.\n" +
-          "Kahneman, D. (2011). Thinking, Fast and Slow. Farrar, Straus and Giroux.",
+          "Anderson, L. W., y Krathwohl, D. R. (2001). A Taxonomy for Learning, Teaching, and Assessing. Longman.\n" +
+          "Mayer, R. E. (2009). Multimedia Learning (2.ª ed.). Cambridge University Press.\n" +
+          "Selwyn, N. (2022). The Future of AI and Education. European Journal of Education, 57(4), 664–676.",
         teachingHours: 2,
         practiceHours: 2,
         autonomousHours: 4,
         gradedActivity:
-          "Elabora una recomendación de una página para el caso de la semana. Incluye la decisión, " +
-          "tres criterios comparables, dos evidencias verificables, un riesgo y una acción de seguimiento.",
+          "Crea tu primera asignatura en Jintia, vincula un Gemini Notebook con al menos " +
+          "dos fuentes bibliográficas y genera la guía de la semana 1 en PDF. " +
+          "Entrega: captura de pantalla de la guía generada y un párrafo explicando cómo " +
+          "usarías Jintia en tu contexto docente real.",
       },
     ],
   };
