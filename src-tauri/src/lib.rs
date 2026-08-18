@@ -705,12 +705,29 @@ fn agent_send_message(
     course_path: String,
     session_id: String,
     message: String,
+    model_provider: Option<String>,
+    model_id: Option<String>,
     manager: tauri::State<opencode::OpenCodeManager>,
 ) -> Result<(), String> {
     let port = manager
         .get_port(&course_path)
         .ok_or_else(|| "OpenCode no está iniciado.".to_string())?;
-    opencode::client::OpenCodeClient::new(port).send_prompt(&session_id, &message)
+    let model = match (&model_provider, &model_id) {
+        (Some(p), Some(m)) => Some((p.as_str(), m.as_str())),
+        _ => None,
+    };
+    opencode::client::OpenCodeClient::new(port).send_prompt(&session_id, &message, model)
+}
+
+#[tauri::command]
+fn opencode_list_models(
+    course_path: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<Vec<opencode::models::OcModelEntry>, String> {
+    let port = manager
+        .get_port(&course_path)
+        .ok_or_else(|| "OpenCode no está iniciado para este curso.".to_string())?;
+    opencode::client::OpenCodeClient::new(port).list_models()
 }
 
 #[tauri::command]
@@ -805,6 +822,7 @@ pub fn run() {
             agent_send_message,
             agent_get_messages,
             agent_abort,
+            opencode_list_models,
         ])
         .setup(|_app| {
             paths::migrate_app_dir_if_needed();

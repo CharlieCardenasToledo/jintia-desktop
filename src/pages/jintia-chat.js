@@ -28,6 +28,8 @@ let _reasoningEl     = null;   // <div> del <details> de cadena de pensamiento
 let _currentPartType = null;   // "reasoning" | "text" | null — part activo según SSE
 let _runtimeReady    = false;
 let _busy            = false;
+// Modelo seleccionado: { id, providerID, name } — se carga automáticamente al conectar
+let _selectedModel   = null;
 
 // ── Helpers DOM ────────────────────────────────────────────────────────────
 const el = id => document.getElementById(id);
@@ -212,6 +214,33 @@ function disconnectSSE() {
   _currentPartType = null;
 }
 
+// Carga modelos disponibles desde OpenCode y puebla el selector.
+// Se llama automáticamente después de conectar — el docente no hace nada.
+async function loadModels(coursePath) {
+  try {
+    const models = await invoke("opencode_list_models", { coursePath });
+    const sel = el("jc-model-select");
+    if (!sel || !models.length) return;
+    sel.innerHTML = models
+      .map(m => `<option value="${escapeHtml(m.provider_id)}|${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`)
+      .join("");
+    // Auto-seleccionar el primero (OpenCode los devuelve por fecha, más reciente primero)
+    const first = models[0];
+    _selectedModel = { id: first.id, providerID: first.provider_id, name: first.name };
+    sel.value = `${first.provider_id}|${first.id}`;
+    sel.disabled = false;
+
+    // Listener para cuando el docente cambia manualmente
+    sel.onchange = () => {
+      const [prov, id] = sel.value.split("|");
+      const found = models.find(m => m.id === id && m.provider_id === prov);
+      _selectedModel = found ? { id: found.id, providerID: found.provider_id, name: found.name } : null;
+    };
+  } catch {
+    // Si falla, queda sin modelo forzado → OpenCode usa su default
+  }
+}
+
 function handleSSE(event) {
   const props = event.properties || {};
 
@@ -314,7 +343,10 @@ async function startRuntime(coursePath) {
     const info = await invoke("opencode_start_course", { coursePath });
     _runtimeReady = info.status === "ready";
     _port = info.port;
-    if (_runtimeReady) connectSSE(_port);
+    if (_runtimeReady) {
+      connectSSE(_port);
+      loadModels(coursePath); // sin await — se carga en paralelo, no bloquea
+    }
     setStatus(_runtimeReady ? "OpenCode listo" : "Offline", _runtimeReady ? "ready" : "error");
     if (!_runtimeReady) {
       console.error("[jintia-chat] opencode_start_course no retornó ready:", info);
@@ -372,6 +404,8 @@ async function sendMessage() {
       coursePath: _course.project_path,
       sessionId: _sessionId,
       message: text,
+      modelProvider: _selectedModel?.providerID ?? null,
+      modelId: _selectedModel?.id ?? null,
     });
     showThinkingBubble();
     setStatus("Jintia está pensando…", "working");
@@ -447,6 +481,10 @@ export function renderJintiaChat() {
           </select>
         </div>
         <div class="ml-auto flex items-center gap-2">
+          <select id="jc-model-select" disabled title="Modelo de IA"
+            class="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-40 max-w-[180px] truncate">
+            <option value="">Cargando modelo…</option>
+          </select>
           <span id="jc-status-badge" class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-500">
             Desconectado
           </span>

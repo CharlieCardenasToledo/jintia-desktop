@@ -274,6 +274,10 @@ const handlers = {
     port: 14200,
     status: "ready",
   }),
+  opencode_list_models: () => [
+    { id: "deepseek-v4-flash-free", provider_id: "opencode", name: "DeepSeek V4 Flash Free" },
+    { id: "nemotron-3.5-lightning-free", provider_id: "opencode", name: "Nemotron 3.5 Lightning Free" },
+  ],
   agent_create_session: ({ coursePath, week }) => ({
     id: `ses_mock_${Date.now()}`,
     title: week ? `Jintia — Semana ${week}` : "Jintia — Chat",

@@ -57,3 +57,25 @@ pub struct OcMessage {
     pub info: Option<OcMessageInfo>,
     pub parts: Option<Vec<OcMessagePart>>,
 }
+
+// GET /api/model — modelo disponible en el servidor OpenCode
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcModelCapabilities {
+    pub tools: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcModelEntry {
+    pub id: String,
+    #[serde(rename = "providerID")]
+    pub provider_id: String,
+    pub name: String,
+    pub status: Option<String>,
+    pub enabled: Option<bool>,
+    pub capabilities: Option<OcModelCapabilities>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcModelList {
+    pub data: Vec<OcModelEntry>,
+}

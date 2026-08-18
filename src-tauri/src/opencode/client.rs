@@ -38,18 +38,50 @@ impl OpenCodeClient {
             .map_err(|e| e.to_string())
     }
 
-    pub fn send_prompt(&self, session_id: &str, text: &str) -> Result<(), String> {
-        // OpenCode ≥1.18 espera { "parts": [{ "type": "text", "text": "..." }] }
-        // (no "text" ni "sessionID" en el body — el id va en la URL)
-        let body = serde_json::json!({
+    /// `model`: (providerID, modelID) opcional para sobreescribir el modelo por defecto.
+    pub fn send_prompt(
+        &self,
+        session_id: &str,
+        text: &str,
+        model: Option<(&str, &str)>,
+    ) -> Result<(), String> {
+        let mut body = serde_json::json!({
             "parts": [{ "type": "text", "text": text }]
         });
+        if let Some((provider_id, model_id)) = model {
+            body["model"] = serde_json::json!({
+                "providerID": provider_id,
+                "modelID": model_id
+            });
+        }
         self.client
             .post(format!("{}/session/{}/prompt_async", self.base, session_id))
             .json(&body)
             .send()
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Devuelve la lista de modelos activos con soporte de herramientas.
+    pub fn list_models(&self) -> Result<Vec<super::models::OcModelEntry>, String> {
+        let resp = self
+            .client
+            .get(format!("{}/api/model", self.base))
+            .send()
+            .map_err(|e| e.to_string())?
+            .json::<super::models::OcModelList>()
+            .map_err(|e| e.to_string())?;
+
+        let active: Vec<_> = resp
+            .data
+            .into_iter()
+            .filter(|m| {
+                m.enabled.unwrap_or(true)
+                    && m.status.as_deref() == Some("active")
+                    && m.capabilities.as_ref().and_then(|c| c.tools).unwrap_or(false)
+            })
+            .collect();
+        Ok(active)
     }
 
     pub fn get_messages(&self, session_id: &str) -> Result<Vec<OcMessage>, String> {
