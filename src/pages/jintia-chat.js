@@ -7,20 +7,26 @@
  * llegan evento a evento (message.part.delta) y se concatenan en tiempo real.
  */
 import { invoke }     from "@tauri-apps/api/core";
+import { marked }     from "marked";
 import { ic }         from "../icons.js";
 import { ui, cx }     from "../uiClasses.js";
 import { state }      from "../state.js";
 import { escapeHtml } from "../dom.js";
 import { toast }      from "../toast.js";
 
+// Configurar marked: sin modo pedantic, con saltos de línea = <br>
+marked.use({ breaks: true, gfm: true });
+
 // ── Estado de la página ────────────────────────────────────────────────────
-let _course      = null;
-let _sessionId   = null;
-let _port        = 0;
-let _sse         = null;   // EventSource activo
-let _assistantEl = null;   // <div> de texto en la burbuja que recibe deltas SSE
+let _course       = null;
+let _sessionId    = null;
+let _port         = 0;
+let _sse          = null;   // EventSource activo
+let _assistantEl  = null;   // <div> de texto en la burbuja que recibe deltas SSE
+let _assistantRaw = "";     // texto acumulado en bruto (para convertir a MD al final)
+let _reasoningEl  = null;   // <div> dentro del <details> de cadena de pensamiento
 let _runtimeReady = false;
-let _busy        = false;
+let _busy         = false;
 
 // ── Helpers DOM ────────────────────────────────────────────────────────────
 const el = id => document.getElementById(id);
@@ -55,6 +61,32 @@ function ensureChatStyles() {
     .jc-dot:nth-child(3) { animation-delay: 0.36s; }
     @keyframes jc-msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .jc-msg-in { animation: jc-msg-in 0.2s ease-out forwards; }
+
+    /* Markdown rendered dentro de la burbuja del asistente */
+    .jc-md p          { margin: 0 0 0.55em; }
+    .jc-md p:last-child { margin-bottom: 0; }
+    .jc-md ul, .jc-md ol { padding-left: 1.4em; margin: 0 0 0.55em; }
+    .jc-md li          { margin-bottom: 0.2em; }
+    .jc-md h1,.jc-md h2,.jc-md h3 { font-weight: 600; margin: 0.6em 0 0.3em; line-height: 1.3; }
+    .jc-md h1 { font-size: 1.1em; }
+    .jc-md h2 { font-size: 1.0em; }
+    .jc-md h3 { font-size: 0.95em; }
+    .jc-md code { font-family: ui-monospace,monospace; font-size: 0.85em; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; padding: 0.1em 0.35em; }
+    .jc-md pre  { background: #1e1e2e; border-radius: 8px; padding: 0.9em 1em; overflow-x: auto; margin: 0.5em 0; }
+    .jc-md pre code { background: none; border: none; padding: 0; color: #cdd6f4; font-size: 0.82em; }
+    .jc-md blockquote { border-left: 3px solid #e5e7eb; margin: 0.5em 0; padding-left: 0.8em; color: #6b7280; }
+    .jc-md hr   { border: none; border-top: 1px solid #e5e7eb; margin: 0.7em 0; }
+    .jc-md strong { font-weight: 600; }
+    .jc-md a { color: #4f46e5; text-decoration: underline; }
+    .jc-md table { border-collapse: collapse; width: 100%; margin: 0.5em 0; font-size: 0.85em; }
+    .jc-md th,.jc-md td { border: 1px solid #e5e7eb; padding: 0.3em 0.6em; text-align: left; }
+    .jc-md th { background: #f9fafb; font-weight: 600; }
+
+    /* Sección de cadena de pensamiento colapsable */
+    .jc-reasoning summary { cursor: pointer; user-select: none; list-style: none; }
+    .jc-reasoning summary::-webkit-details-marker { display: none; }
+    .jc-reasoning summary::before { content: "▶"; font-size: 9px; margin-right: 4px; transition: transform 0.15s; display: inline-block; }
+    .jc-reasoning[open] summary::before { transform: rotate(90deg); }
   `;
   document.head.appendChild(style);
 }
@@ -101,6 +133,23 @@ function hideThinkingBubble() {
   el("jc-thinking")?.remove();
 }
 
+// Crea la sección colapsable de cadena de pensamiento (razonamiento del modelo).
+// Retorna el <div> interno donde se acumulan los deltas de reasoning.
+function createReasoningSection() {
+  const feed = el("jc-activity-feed");
+  if (!feed) return null;
+  const details = document.createElement("details");
+  details.className = "jc-reasoning mb-1.5 ml-8 jc-msg-in";
+  details.innerHTML = `
+    <summary class="text-[11px] text-gray-400 hover:text-gray-500 select-none">
+      Cadena de pensamiento
+    </summary>
+    <div class="mt-1 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-[11px] text-gray-400 font-mono leading-relaxed whitespace-pre-wrap max-h-52 overflow-y-auto"></div>`;
+  feed.appendChild(details);
+  scrollFeed();
+  return details.querySelector("div");
+}
+
 // Crea una burbuja de asistente vacía y retorna el elemento de texto
 // que irá recibiendo los deltas SSE.
 function createAssistantBubble() {
@@ -110,7 +159,7 @@ function createAssistantBubble() {
   wrap.className = "flex gap-2.5 mb-3 jc-msg-in";
   wrap.innerHTML = `
     <div class="mt-0.5 h-6 w-6 rounded-full bg-brand-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold select-none">J</div>
-    <div class="max-w-[80%] rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 leading-relaxed whitespace-pre-wrap"></div>`;
+    <div class="jc-md max-w-[80%] rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 leading-relaxed"></div>`;
   feed.appendChild(wrap);
   scrollFeed();
   return wrap.querySelector("div:last-child");
@@ -156,22 +205,40 @@ function connectSSE(port) {
 
 function disconnectSSE() {
   if (_sse) { _sse.close(); _sse = null; }
-  _assistantEl = null;
+  _assistantEl  = null;
+  _assistantRaw = "";
+  _reasoningEl  = null;
 }
 
 function handleSSE(event) {
   const props = event.properties || {};
 
   if (event.type === "message.part.delta") {
-    if (props.sessionID !== _sessionId || props.field !== "text") return;
-    // Primera delta: ocultar burbuja de "pensando" y crear burbuja real
-    if (!_assistantEl) {
-      hideThinkingBubble();
-      _assistantEl = createAssistantBubble();
-    }
-    if (_assistantEl) {
-      _assistantEl.textContent += props.delta;
-      scrollFeed();
+    if (props.sessionID !== _sessionId) return;
+
+    if (props.field === "reasoning") {
+      // Cadena de pensamiento: sección colapsable separada de la respuesta
+      if (!_reasoningEl) {
+        hideThinkingBubble();
+        _reasoningEl = createReasoningSection();
+      }
+      if (_reasoningEl) {
+        _reasoningEl.textContent += props.delta;
+        scrollFeed();
+      }
+
+    } else if (props.field === "text") {
+      // Respuesta real: burbuja principal con texto en bruto mientras llega
+      if (!_assistantEl) {
+        hideThinkingBubble();
+        _assistantEl  = createAssistantBubble();
+        _assistantRaw = "";
+      }
+      if (_assistantEl) {
+        _assistantRaw += props.delta;
+        _assistantEl.textContent = _assistantRaw; // texto plano durante el stream
+        scrollFeed();
+      }
     }
 
   } else if (event.type === "session.status") {
@@ -179,7 +246,13 @@ function handleSSE(event) {
     const st = props.status?.type;
     // "busy" → generando; cualquier otro estado (idle, error…) → terminó
     if (st && st !== "busy") {
-      _assistantEl = null;
+      // Convertir el texto acumulado a HTML Markdown al finalizar
+      if (_assistantEl && _assistantRaw) {
+        _assistantEl.innerHTML = marked.parse(_assistantRaw);
+      }
+      _assistantEl  = null;
+      _assistantRaw = "";
+      _reasoningEl  = null;
       _busy = false;
       hideThinkingBubble();
       setSendEnabled(true);
@@ -272,10 +345,10 @@ async function sendMessage() {
 export function setActiveCourse(course, week) {
   _course = course;
   disconnectSSE();
-  _sessionId = null;
+  _sessionId    = null;
   _runtimeReady = false;
-  _port = 0;
-  _busy = false;
+  _port         = 0;
+  _busy         = false;
 
   requestAnimationFrame(() => {
     const sel = el("jc-course-select");
@@ -294,10 +367,10 @@ export function setActiveCourse(course, week) {
 export function renderJintiaChat() {
   ensureChatStyles();
   disconnectSSE();
-  _sessionId   = null;
+  _sessionId    = null;
   _runtimeReady = false;
-  _port        = 0;
-  _busy        = false;
+  _port         = 0;
+  _busy         = false;
 
   if (!_course) {
     _course = (state.courses || []).find(c => c.project_path) || null;
@@ -462,8 +535,14 @@ function bindChatEvents() {
         coursePath: _course.project_path,
         sessionId: _sessionId,
       });
+      // Renderizar lo que haya llegado hasta el momento
+      if (_assistantEl && _assistantRaw) {
+        _assistantEl.innerHTML = marked.parse(_assistantRaw);
+      }
       hideThinkingBubble();
-      _assistantEl = null;
+      _assistantEl  = null;
+      _assistantRaw = "";
+      _reasoningEl  = null;
       _busy = false;
       setStatus("Cancelado", "neutral");
       setSendEnabled(true);

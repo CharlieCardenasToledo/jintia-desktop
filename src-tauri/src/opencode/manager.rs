@@ -83,6 +83,22 @@ impl OpenCodeManager {
         let port = Self::free_port();
         let work_dir = Path::new(course_path);
 
+        // Crear AGENTS.md con contexto de Jintia si aún no existe.
+        // OpenCode lo lee al iniciar para usarlo como contexto del sistema.
+        let agents_file = work_dir.join("AGENTS.md");
+        if !agents_file.exists() {
+            let _ = std::fs::write(
+                &agents_file,
+                "# Jintia — Asistente Pedagógico\n\
+                 \n\
+                 Eres Jintia, un asistente pedagógico especializado en diseño instruccional\n\
+                 universitario para docentes hispanohablantes.\n\
+                 \n\
+                 Responde **siempre en español**, sin excepción, independientemente del idioma\n\
+                 en que te escriban. Usa un tono profesional pero cercano.\n",
+            );
+        }
+
         #[cfg(target_os = "windows")]
         let child = Command::new("cmd")
             .args([
