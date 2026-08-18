@@ -89,16 +89,19 @@ async function startRuntime(coursePath) {
     _runtimeReady = info.status === "ready";
     setStatus(_runtimeReady ? "OpenCode listo" : "Offline", _runtimeReady ? "ready" : "error");
     if (!_runtimeReady && connectBtn) connectBtn.disabled = false;
+    if (!_runtimeReady) {
+      console.error("[jintia-chat] opencode_start_course no retornó ready:", info);
+    }
     return _runtimeReady;
   } catch (err) {
     setStatus("Error al iniciar", "error");
+    console.error("[jintia-chat] opencode_start_course error:", err);
     toast(String(err), "error", 9000);
     if (connectBtn) connectBtn.disabled = false;
     return false;
   }
 }
 
-// ── Crear sesión ────────────────────────────────────────────────────────────
 async function createSession() {
   if (!_course?.project_path) return false;
   const weekEl = el("jc-week-select");
@@ -112,6 +115,7 @@ async function createSession() {
     _lastMsgCount = 0;
     return true;
   } catch (err) {
+    console.error("[jintia-chat] agent_create_session error:", err);
     toast("No se pudo crear la sesión: " + String(err), "error", 6000);
     return false;
   }
@@ -138,7 +142,7 @@ function startPolling() {
         setSendEnabled(true);
         setAbortVisible(false);
       }
-    } catch { /* silencio en polling */ }
+    } catch (err) { console.warn("[jintia-chat] poll error:", err); }
   }, 1500);
 }
 
@@ -162,6 +166,9 @@ async function sendMessage() {
   input.style.height = "auto";
 
   appendMessage(messageHtml({ role: "user", parts: [{ type: "text", text }] }));
+  // Incrementar el contador para que el polling no duplique este mensaje
+  // cuando la API lo refleje (OpenCode devuelve el mensaje del usuario en GET /message)
+  _lastMsgCount += 1;
   setStatus("Jintia está pensando…", "working");
   setSendEnabled(false);
   setAbortVisible(true);
@@ -176,6 +183,7 @@ async function sendMessage() {
     setStatus("Error al enviar", "error");
     setSendEnabled(true);
     setAbortVisible(false);
+    _lastMsgCount -= 1;
     toast("Error al enviar: " + String(err), "error", 5000);
   }
 }
