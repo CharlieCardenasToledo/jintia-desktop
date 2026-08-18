@@ -18,15 +18,16 @@ import { toast }      from "../toast.js";
 marked.use({ breaks: true, gfm: true });
 
 // ── Estado de la página ────────────────────────────────────────────────────
-let _course       = null;
-let _sessionId    = null;
-let _port         = 0;
-let _sse          = null;   // EventSource activo
-let _assistantEl  = null;   // <div> de texto en la burbuja que recibe deltas SSE
-let _assistantRaw = "";     // texto acumulado en bruto (para convertir a MD al final)
-let _reasoningEl  = null;   // <div> dentro del <details> de cadena de pensamiento
-let _runtimeReady = false;
-let _busy         = false;
+let _course          = null;
+let _sessionId       = null;
+let _port            = 0;
+let _sse             = null;   // EventSource activo
+let _assistantEl     = null;   // <div> que recibe deltas de respuesta
+let _assistantRaw    = "";     // texto acumulado en bruto para convertir a MD al final
+let _reasoningEl     = null;   // <div> del <details> de cadena de pensamiento
+let _currentPartType = null;   // "reasoning" | "text" | null — part activo según SSE
+let _runtimeReady    = false;
+let _busy            = false;
 
 // ── Helpers DOM ────────────────────────────────────────────────────────────
 const el = id => document.getElementById(id);
@@ -205,19 +206,37 @@ function connectSSE(port) {
 
 function disconnectSSE() {
   if (_sse) { _sse.close(); _sse = null; }
-  _assistantEl  = null;
-  _assistantRaw = "";
-  _reasoningEl  = null;
+  _assistantEl     = null;
+  _assistantRaw    = "";
+  _reasoningEl     = null;
+  _currentPartType = null;
 }
 
 function handleSSE(event) {
   const props = event.properties || {};
 
+  // ── Rastrear qué part está activo (abierto/cerrado) ──────────────────
+  if (event.type === "message.part.updated") {
+    const part = props.part || {};
+    if (part.sessionID !== _sessionId) return;
+    if (!part.time?.end) {
+      // Part abierto: marcar tipo activo
+      _currentPartType = part.type; // "reasoning", "text", "step-start", etc.
+    } else {
+      // Part cerrado
+      _currentPartType = null;
+    }
+    return;
+  }
+
+  // ── Deltas de texto: todos llegan con field="text" ────────────────────
+  // La distinción reasoning vs respuesta es por _currentPartType.
   if (event.type === "message.part.delta") {
     if (props.sessionID !== _sessionId) return;
+    if (props.field !== "text") return;
 
-    if (props.field === "reasoning") {
-      // Cadena de pensamiento: sección colapsable separada de la respuesta
+    if (_currentPartType === "reasoning") {
+      // Cadena de pensamiento → sección colapsable
       if (!_reasoningEl) {
         hideThinkingBubble();
         _reasoningEl = createReasoningSection();
@@ -227,8 +246,8 @@ function handleSSE(event) {
         scrollFeed();
       }
 
-    } else if (props.field === "text") {
-      // Respuesta real: burbuja principal con texto en bruto mientras llega
+    } else if (_currentPartType === "text") {
+      // Respuesta real → burbuja principal (texto plano durante el stream)
       if (!_assistantEl) {
         hideThinkingBubble();
         _assistantEl  = createAssistantBubble();
@@ -236,29 +255,53 @@ function handleSSE(event) {
       }
       if (_assistantEl) {
         _assistantRaw += props.delta;
-        _assistantEl.textContent = _assistantRaw; // texto plano durante el stream
+        _assistantEl.textContent = _assistantRaw;
         scrollFeed();
       }
     }
+    // Ignorar deltas sin part activo (step-start, step-finish, etc.)
+    return;
+  }
 
-  } else if (event.type === "session.status") {
+  // ── Fin de sesión (idle) ──────────────────────────────────────────────
+  if (event.type === "session.status") {
     if (props.sessionID !== _sessionId) return;
     const st = props.status?.type;
-    // "busy" → generando; cualquier otro estado (idle, error…) → terminó
-    if (st && st !== "busy") {
-      // Convertir el texto acumulado a HTML Markdown al finalizar
+    if (st === "idle") {
       if (_assistantEl && _assistantRaw) {
         _assistantEl.innerHTML = marked.parse(_assistantRaw);
       }
-      _assistantEl  = null;
-      _assistantRaw = "";
-      _reasoningEl  = null;
+      _assistantEl     = null;
+      _assistantRaw    = "";
+      _reasoningEl     = null;
+      _currentPartType = null;
       _busy = false;
       hideThinkingBubble();
       setSendEnabled(true);
       setAbortVisible(false);
-      setStatus(st === "error" ? "Error" : "OpenCode listo", st === "error" ? "error" : "ready");
+      setStatus("OpenCode listo", "ready");
     }
+    // "retry" → el servidor está reintentando; mantener burbuja de pensando
+    return;
+  }
+
+  // ── Error fatal de sesión ─────────────────────────────────────────────
+  if (event.type === "session.error") {
+    if (props.sessionID !== _sessionId) return;
+    if (_assistantEl && _assistantRaw) {
+      _assistantEl.innerHTML = marked.parse(_assistantRaw);
+    }
+    _assistantEl     = null;
+    _assistantRaw    = "";
+    _reasoningEl     = null;
+    _currentPartType = null;
+    _busy = false;
+    hideThinkingBubble();
+    setSendEnabled(true);
+    setAbortVisible(false);
+    setStatus("Error", "error");
+    const msg = props.error?.message || props.message || "Error desconocido de OpenCode";
+    toast("Error: " + msg, "error", 8000);
   }
 }
 
@@ -540,9 +583,10 @@ function bindChatEvents() {
         _assistantEl.innerHTML = marked.parse(_assistantRaw);
       }
       hideThinkingBubble();
-      _assistantEl  = null;
-      _assistantRaw = "";
-      _reasoningEl  = null;
+      _assistantEl     = null;
+      _assistantRaw    = "";
+      _reasoningEl     = null;
+      _currentPartType = null;
       _busy = false;
       setStatus("Cancelado", "neutral");
       setSendEnabled(true);
