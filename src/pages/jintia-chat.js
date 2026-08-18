@@ -33,9 +33,35 @@ function setStatus(text, kind = "neutral") {
   badge.textContent = text;
 }
 
+// CSS de animaciones para la burbuja de pensando (inyectado una sola vez)
+let _stylesInjected = false;
+function ensureChatStyles() {
+  if (_stylesInjected) return;
+  _stylesInjected = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    @keyframes jc-dot-bounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-6px); opacity: 1; }
+    }
+    .jc-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #9ca3af; animation: jc-dot-bounce 1.3s ease-in-out infinite; }
+    .jc-dot:nth-child(1) { animation-delay: 0s; }
+    .jc-dot:nth-child(2) { animation-delay: 0.18s; }
+    .jc-dot:nth-child(3) { animation-delay: 0.36s; }
+    @keyframes jc-msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .jc-msg-in { animation: jc-msg-in 0.2s ease-out forwards; }
+  `;
+  document.head.appendChild(style);
+}
+
 function clearFeed() {
   const feed = el("jc-activity-feed");
   if (feed) feed.innerHTML = "";
+}
+
+function scrollFeed() {
+  const feed = el("jc-activity-feed");
+  if (feed) feed.scrollTop = feed.scrollHeight;
 }
 
 function appendMessage(html) {
@@ -44,8 +70,62 @@ function appendMessage(html) {
   const div = document.createElement("div");
   div.innerHTML = html;
   const node = div.firstElementChild || div;
+  node.classList.add("jc-msg-in");
   feed.appendChild(node);
-  feed.scrollTop = feed.scrollHeight;
+  scrollFeed();
+}
+
+// Burbuja de "pensando" con tres puntos animados
+function showThinkingBubble() {
+  hideThinkingBubble();
+  const feed = el("jc-activity-feed");
+  if (!feed) return;
+  const wrap = document.createElement("div");
+  wrap.id = "jc-thinking";
+  wrap.className = "flex gap-2.5 mb-3 jc-msg-in";
+  wrap.innerHTML = `
+    <div class="mt-0.5 h-6 w-6 rounded-full bg-brand-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold select-none">J</div>
+    <div class="rounded-xl border border-gray-200 bg-white px-4 py-3 flex items-center gap-1.5">
+      <span class="jc-dot"></span><span class="jc-dot"></span><span class="jc-dot"></span>
+    </div>`;
+  feed.appendChild(wrap);
+  scrollFeed();
+}
+
+function hideThinkingBubble() {
+  el("jc-thinking")?.remove();
+}
+
+// Typewriter: revela el texto en el elemento dado de a chunks, scrolleando a medida
+function typewriterReveal(textEl, text, onDone) {
+  let i = 0;
+  const CHUNK = 3;
+  const MS    = 18;
+  const tick  = setInterval(() => {
+    i = Math.min(i + CHUNK, text.length);
+    textEl.textContent = text.slice(0, i);
+    scrollFeed();
+    if (i >= text.length) { clearInterval(tick); onDone?.(); }
+  }, MS);
+  return tick;
+}
+
+// Añade mensaje del asistente con efecto typewriter; antes mueve la burbuja "pensando"
+function appendAssistantMessage(text) {
+  hideThinkingBubble();
+  const feed = el("jc-activity-feed");
+  if (!feed) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "flex gap-2.5 mb-3 jc-msg-in";
+  wrap.innerHTML = `
+    <div class="mt-0.5 h-6 w-6 rounded-full bg-brand-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold select-none">J</div>
+    <div class="max-w-[80%] rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 leading-relaxed whitespace-pre-wrap"></div>`;
+  feed.appendChild(wrap);
+  scrollFeed();
+
+  const textEl = wrap.querySelector("div:last-child");
+  typewriterReveal(textEl, text, null);
 }
 
 function messageHtml(msg) {
@@ -62,10 +142,7 @@ function messageHtml(msg) {
       <div class="max-w-[80%] rounded-xl bg-gray-900 px-4 py-2.5 text-sm text-white leading-relaxed">${escapeHtml(text)}</div>
     </div>`;
   }
-  return `<div class="flex gap-2.5 mb-3">
-    <div class="mt-0.5 h-6 w-6 rounded-full bg-brand-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold select-none">J</div>
-    <div class="max-w-[80%] rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">${escapeHtml(text)}</div>
-  </div>`;
+  return null; // las del asistente se renderizan via appendAssistantMessage con typewriter
 }
 
 // ── Control de botones ─────────────────────────────────────────────────────
@@ -135,8 +212,20 @@ function startPolling() {
         const newMsgs = msgs.slice(_lastMsgCount);
         _lastMsgCount = msgs.length;
         for (const msg of newMsgs) {
-          const html = messageHtml(msg);
-          if (html) appendMessage(html);
+          const role = msg.info?.role || msg.role || "assistant";
+          const text = (msg.parts || [])
+            .filter(p => p.type === "text")
+            .map(p => p.text || "")
+            .join("\n")
+            .trim();
+          if (!text) continue;
+          if (role === "assistant") {
+            appendAssistantMessage(text);
+          } else {
+            // Mensajes de usuario adicionales (poco común pero posible)
+            const html = messageHtml(msg);
+            if (html) appendMessage(html);
+          }
         }
         setStatus("OpenCode listo", "ready");
         setSendEnabled(true);
@@ -165,11 +254,10 @@ async function sendMessage() {
   input.value = "";
   input.style.height = "auto";
 
+  // Mostrar mensaje del usuario inmediatamente en el feed
   appendMessage(messageHtml({ role: "user", parts: [{ type: "text", text }] }));
-  // Incrementar el contador para que el polling no duplique este mensaje
-  // cuando la API lo refleje (OpenCode devuelve el mensaje del usuario en GET /message)
+  // Incrementar el contador para que el polling salte este mensaje del API
   _lastMsgCount += 1;
-  setStatus("Jintia está pensando…", "working");
   setSendEnabled(false);
   setAbortVisible(true);
 
@@ -179,6 +267,9 @@ async function sendMessage() {
       sessionId: _sessionId,
       message: text,
     });
+    // Prompt enviado — mostrar burbuja "pensando" y estado
+    showThinkingBubble();
+    setStatus("Jintia está pensando…", "working");
   } catch (err) {
     setStatus("Error al enviar", "error");
     setSendEnabled(true);
@@ -213,6 +304,7 @@ export function setActiveCourse(course, week) {
 
 // ── Renderizado principal ──────────────────────────────────────────────────
 export function renderJintiaChat() {
+  ensureChatStyles();
   stopPolling();
   _sessionId = null;
   _lastMsgCount = 0;
@@ -356,6 +448,7 @@ function bindChatEvents() {
   // Nueva sesión
   el("jc-btn-new-session")?.addEventListener("click", () => {
     stopPolling();
+    hideThinkingBubble();
     _sessionId = null;
     _lastMsgCount = 0;
     clearFeed();
@@ -389,6 +482,7 @@ function bindChatEvents() {
         coursePath: _course.project_path,
         sessionId: _sessionId,
       });
+      hideThinkingBubble();
       setStatus("Cancelado", "neutral");
       stopPolling();
       setSendEnabled(true);
