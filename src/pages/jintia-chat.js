@@ -7,6 +7,7 @@
  * llegan evento a evento (message.part.delta) y se concatenan en tiempo real.
  */
 import { invoke }     from "@tauri-apps/api/core";
+import { listen }     from "@tauri-apps/api/event";
 import { marked }     from "marked";
 import { ic }         from "../icons.js";
 import { ui, cx }     from "../uiClasses.js";
@@ -30,6 +31,14 @@ let _runtimeReady    = false;
 let _busy            = false;
 // Modelo seleccionado: { id, providerID, name } — se carga automáticamente al conectar
 let _selectedModel   = null;
+// Historial de sesiones del curso activo
+let _sessionsLoaded  = false;
+// Proveedor de IA: "opencode" | "codex"
+let _provider        = "opencode";
+// Thread activo de Codex (por curso)
+let _codexThreadId   = null;
+// Función de cancelación del listener Tauri para eventos Codex
+let _codexUnlisten   = null;
 
 // ── Helpers DOM ────────────────────────────────────────────────────────────
 const el = id => document.getElementById(id);
@@ -215,30 +224,171 @@ function disconnectSSE() {
 }
 
 // Carga modelos disponibles desde OpenCode y puebla el selector.
-// Se llama automáticamente después de conectar — el docente no hace nada.
+// Pre-selecciona la preferencia guardada en settings; si no hay, el primero de la lista.
+// Al cambiar, guarda la nueva preferencia automáticamente.
 async function loadModels(coursePath) {
   try {
-    const models = await invoke("opencode_list_models", { coursePath });
+    const [models, savedPref] = await Promise.all([
+      invoke("opencode_list_models", { coursePath }),
+      invoke("get_ai_preference").catch(() => null),
+    ]);
     const sel = el("jc-model-select");
     if (!sel || !models.length) return;
     sel.innerHTML = models
       .map(m => `<option value="${escapeHtml(m.provider_id)}|${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`)
       .join("");
-    // Auto-seleccionar el primero (OpenCode los devuelve por fecha, más reciente primero)
-    const first = models[0];
-    _selectedModel = { id: first.id, providerID: first.provider_id, name: first.name };
-    sel.value = `${first.provider_id}|${first.id}`;
+
+    // Intentar pre-seleccionar preferencia guardada; fallback al primero
+    const savedKey = savedPref?.provider_id && savedPref?.model_id
+      ? `${savedPref.provider_id}|${savedPref.model_id}`
+      : null;
+    const preferred = savedKey && models.find(m => `${m.provider_id}|${m.id}` === savedKey);
+    const target = preferred || models[0];
+    _selectedModel = { id: target.id, providerID: target.provider_id, name: target.name };
+    sel.value = `${target.provider_id}|${target.id}`;
     sel.disabled = false;
 
-    // Listener para cuando el docente cambia manualmente
+    // Guardar si no había preferencia o si el modelo guardado ya no está disponible
+    if (!preferred) {
+      invoke("save_ai_preference", {
+        providerId: target.provider_id,
+        modelId: target.id,
+        modelName: target.name,
+      }).catch(() => {});
+    }
+
     sel.onchange = () => {
       const [prov, id] = sel.value.split("|");
       const found = models.find(m => m.id === id && m.provider_id === prov);
-      _selectedModel = found ? { id: found.id, providerID: found.provider_id, name: found.name } : null;
+      if (found) {
+        _selectedModel = { id: found.id, providerID: found.provider_id, name: found.name };
+        invoke("save_ai_preference", {
+          providerId: found.provider_id,
+          modelId: found.id,
+          modelName: found.name,
+        }).catch(() => {});
+      } else {
+        _selectedModel = null;
+      }
     };
   } catch {
     // Si falla, queda sin modelo forzado → OpenCode usa su default
   }
+}
+
+// ── Historial de sesiones ──────────────────────────────────────────────────
+function showSessionsPanel() {
+  const panel = el("jc-sessions-panel");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  panel.classList.add("flex");
+}
+
+function hideSessionsPanel() {
+  const panel = el("jc-sessions-panel");
+  if (!panel) return;
+  panel.classList.add("hidden");
+  panel.classList.remove("flex");
+}
+
+async function loadSessions(coursePath) {
+  const list = el("jc-sessions-list");
+  if (!list || !coursePath) return;
+  list.innerHTML = `<div class="px-3 py-2 text-[11px] text-gray-400">Cargando…</div>`;
+  try {
+    const sessions = await invoke("opencode_list_sessions", { coursePath });
+    _sessionsLoaded = true;
+    if (!sessions.length) {
+      list.innerHTML = `<div class="px-3 py-2 text-[11px] text-gray-400 italic">Sin sesiones previas</div>`;
+      return;
+    }
+    renderSessionsList(list, sessions, coursePath);
+  } catch {
+    list.innerHTML = `<div class="px-3 py-2 text-[11px] text-gray-400">No disponible</div>`;
+  }
+}
+
+function renderSessionsList(list, sessions, coursePath) {
+  list.innerHTML = sessions.map(s => {
+    const active = s.id === _sessionId;
+    return `<button
+      class="w-full text-left rounded-md px-2.5 py-2 text-xs transition-colors ${active
+        ? "bg-brand-100 text-brand-700 font-semibold"
+        : "text-gray-700 hover:bg-gray-100"}"
+      data-session-id="${escapeHtml(s.id)}"
+      title="${escapeHtml(s.title || s.id)}">
+      <div class="truncate font-medium leading-snug">${escapeHtml(s.title || "Sin título")}</div>
+      <div class="mt-0.5 font-mono text-[10px] text-gray-400 truncate">${escapeHtml(s.id.slice(0, 10))}…</div>
+    </button>`;
+  }).join("");
+
+  list.querySelectorAll("[data-session-id]").forEach(btn => {
+    btn.addEventListener("click", () => switchToSession(btn.dataset.sessionId, coursePath));
+  });
+}
+
+async function switchToSession(sessionId, coursePath) {
+  if (sessionId === _sessionId) return;
+  if (_busy) { toast("Espera a que Jintia termine de responder", "warning", 3000); return; }
+
+  _sessionId       = sessionId;
+  _assistantEl     = null;
+  _assistantRaw    = "";
+  _reasoningEl     = null;
+  _currentPartType = null;
+  _busy            = false;
+  hideThinkingBubble();
+  clearFeed();
+  setSendEnabled(false);
+  setStatus("Cargando historial…", "working");
+
+  // Actualizar resaltado inmediatamente
+  const list = el("jc-sessions-list");
+  if (list) {
+    list.querySelectorAll("[data-session-id]").forEach(btn => {
+      const active = btn.dataset.sessionId === sessionId;
+      btn.className = `w-full text-left rounded-md px-2.5 py-2 text-xs transition-colors ${active
+        ? "bg-brand-100 text-brand-700 font-semibold"
+        : "text-gray-700 hover:bg-gray-100"}`;
+    });
+  }
+
+  try {
+    const messages = await invoke("agent_get_messages", { coursePath, sessionId });
+    messages.forEach(msg => {
+      const role = msg.info?.role || msg.role;
+      if (role === "user") {
+        const html = messageHtml(msg);
+        if (html) appendMessage(html);
+      } else if (role === "assistant") {
+        const text = (msg.parts || [])
+          .filter(p => p.type === "text")
+          .map(p => p.text || "")
+          .join("\n")
+          .trim();
+        if (text) appendAssistantMessage(text);
+      }
+    });
+  } catch (err) {
+    toast("No se pudo cargar el historial: " + String(err), "error", 5000);
+  }
+
+  setSendEnabled(true);
+  setStatus("OpenCode listo", "ready");
+}
+
+// Burbuja de respuesta completa (para historial cargado, no streaming)
+function appendAssistantMessage(text) {
+  const feed = el("jc-activity-feed");
+  if (!feed) return;
+  const wrap = document.createElement("div");
+  wrap.className = "flex gap-2.5 mb-3 jc-msg-in";
+  wrap.innerHTML = `
+    <div class="mt-0.5 h-6 w-6 rounded-full bg-brand-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold select-none">J</div>
+    <div class="jc-md max-w-[80%] rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 leading-relaxed"></div>`;
+  wrap.querySelector(".jc-md").innerHTML = marked.parse(text);
+  feed.appendChild(wrap);
+  scrollFeed();
 }
 
 function handleSSE(event) {
@@ -345,7 +495,9 @@ async function startRuntime(coursePath) {
     _port = info.port;
     if (_runtimeReady) {
       connectSSE(_port);
-      loadModels(coursePath); // sin await — se carga en paralelo, no bloquea
+      loadModels(coursePath);   // sin await — paralelo
+      showSessionsPanel();
+      loadSessions(coursePath); // sin await — paralelo
     }
     setStatus(_runtimeReady ? "OpenCode listo" : "Offline", _runtimeReady ? "ready" : "error");
     if (!_runtimeReady) {
@@ -372,11 +524,127 @@ async function createSession() {
       week,
     });
     _sessionId = session.id;
+    // Refrescar historial con la nueva sesión
+    loadSessions(_course.project_path);
     return true;
   } catch (err) {
     console.error("[jintia-chat] agent_create_session error:", err);
     toast("No se pudo crear la sesión: " + String(err), "error", 6000);
     return false;
+  }
+}
+
+// ── Codex (ChatGPT sin API key) ───────────────────────────────────────────
+
+function updateProviderUI() {
+  const isCodex = _provider === "codex";
+  const modelSel = el("jc-model-select");
+  if (modelSel) {
+    modelSel.disabled = isCodex || !_runtimeReady;
+    modelSel.title = isCodex ? "El modelo lo gestiona ChatGPT automáticamente" : "Modelo de IA (solo OpenCode)";
+  }
+  const footer = el("jc-powered-by");
+  if (footer) footer.textContent = isCodex ? "Powered by OpenAI Codex · ChatGPT" : "Powered by OpenCode · Jintia Skill";
+}
+
+async function startCodexIfNeeded() {
+  try {
+    const s = await invoke("codex_status");
+    if (!s.installed) {
+      toast("Codex CLI no está instalado. Ve a Ajustes > Conexiones para instalarlo.", "error", 10000);
+      return false;
+    }
+    if (!s.running) {
+      toast("Iniciando Codex app-server…", "loading", 8000);
+      const r = await invoke("codex_start");
+      if (!r.success) {
+        toast(`No se pudo iniciar Codex: ${r.message}`, "error", 8000);
+        return false;
+      }
+    }
+    const fresh = await invoke("codex_status");
+    if (!fresh.logged_in) {
+      toast("Codex activo pero sin sesión de ChatGPT. Ve a Ajustes > Conexiones > Conectar ChatGPT.", "warning", 10000);
+    }
+    return true;
+  } catch (e) {
+    toast(`Error al verificar Codex: ${e}`, "error", 8000);
+    return false;
+  }
+}
+
+async function sendMessageViaCodex(text) {
+  const cwd = _course?.project_path;
+  if (!cwd) return;
+
+  const ok = await startCodexIfNeeded();
+  if (!ok) {
+    _busy = false;
+    setSendEnabled(true);
+    setAbortVisible(false);
+    return;
+  }
+
+  // Obtener o crear un thread para este curso
+  if (!_codexThreadId) {
+    try {
+      _codexThreadId = await invoke("codex_start_thread", { cwd });
+    } catch (e) {
+      toast(`No se pudo crear el hilo Codex: ${e}`, "error", 6000);
+      _busy = false;
+      setSendEnabled(true);
+      setAbortVisible(false);
+      return;
+    }
+  }
+
+  // Suscribir a eventos de respuesta (solo una vez por hilo)
+  await ensureCodexListener();
+
+  showThinkingBubble();
+  setStatus("ChatGPT está pensando…", "working");
+
+  try {
+    await invoke("codex_submit_turn", { threadId: _codexThreadId, message: text });
+  } catch (e) {
+    _busy = false;
+    hideThinkingBubble();
+    setSendEnabled(true);
+    setAbortVisible(false);
+    setStatus("Error", "error");
+    toast(`No se pudo enviar a Codex: ${e}`, "error", 6000);
+  }
+}
+
+async function ensureCodexListener() {
+  if (_codexUnlisten) return;
+  _codexUnlisten = await listen("codex:turn.completed", (event) => {
+    const params = event.payload?.params || {};
+    if (params.threadId && params.threadId !== _codexThreadId) return;
+
+    hideThinkingBubble();
+    // Extraer texto del primer mensaje del asistente
+    const items = params.items || [];
+    for (const item of items) {
+      if (item.role !== "assistant") continue;
+      const text = (item.content || [])
+        .filter(c => c.type === "output_text" || c.type === "text")
+        .map(c => c.text || "")
+        .join("")
+        .trim();
+      if (text) appendAssistantMessage(text);
+    }
+    _busy = false;
+    setSendEnabled(true);
+    setAbortVisible(false);
+    setStatus("ChatGPT listo", "ready");
+  });
+}
+
+function teardownCodexListener() {
+  if (_codexUnlisten) {
+    _codexUnlisten();
+    _codexUnlisten = null;
   }
 }
 
@@ -398,6 +666,11 @@ async function sendMessage() {
   setSendEnabled(false);
   setAbortVisible(true);
   _busy = true;
+
+  if (_provider === "codex") {
+    await sendMessageViaCodex(text);
+    return;
+  }
 
   try {
     await invoke("agent_send_message", {
@@ -422,10 +695,12 @@ async function sendMessage() {
 export function setActiveCourse(course, week) {
   _course = course;
   disconnectSSE();
-  _sessionId    = null;
-  _runtimeReady = false;
-  _port         = 0;
-  _busy         = false;
+  teardownCodexListener();
+  _sessionId     = null;
+  _runtimeReady  = false;
+  _port          = 0;
+  _busy          = false;
+  _codexThreadId = null;
 
   requestAnimationFrame(() => {
     const sel = el("jc-course-select");
@@ -444,10 +719,12 @@ export function setActiveCourse(course, week) {
 export function renderJintiaChat() {
   ensureChatStyles();
   disconnectSSE();
-  _sessionId    = null;
-  _runtimeReady = false;
-  _port         = 0;
-  _busy         = false;
+  teardownCodexListener();
+  _sessionId     = null;
+  _runtimeReady  = false;
+  _port          = 0;
+  _busy          = false;
+  _codexThreadId = null;
 
   if (!_course) {
     _course = (state.courses || []).find(c => c.project_path) || null;
@@ -463,7 +740,20 @@ export function renderJintiaChat() {
   if (!container) return;
 
   container.innerHTML = `
-    <div class="flex h-full flex-col">
+    <div class="flex h-full">
+
+      <!-- Sidebar de historial (oculto hasta conectar) -->
+      <div id="jc-sessions-panel" class="hidden w-48 shrink-0 flex-col border-r border-gray-200 bg-gray-50">
+        <div class="border-b border-gray-200 px-3 py-2.5 flex items-center justify-between">
+          <span class="text-[10.5px] font-bold uppercase tracking-wider text-gray-400">Historial</span>
+        </div>
+        <div id="jc-sessions-list" class="flex-1 overflow-y-auto p-1 flex flex-col gap-0.5">
+          <div class="px-2 py-2 text-[11px] text-gray-400 italic">Conecta para ver el historial</div>
+        </div>
+      </div>
+
+      <!-- Área principal del chat -->
+      <div class="flex flex-1 flex-col min-w-0">
 
       <!-- Barra de contexto -->
       <div class="flex flex-wrap items-center gap-3 border-b border-gray-200 bg-white px-6 py-3 shrink-0">
@@ -480,8 +770,13 @@ export function renderJintiaChat() {
             ${weeks.map(w => `<option value="${w}">Semana ${String(w).padStart(2, "0")}</option>`).join("")}
           </select>
         </div>
-        <div class="ml-auto flex items-center gap-2">
-          <select id="jc-model-select" disabled title="Modelo de IA"
+        <div class="ml-auto flex items-center gap-2 flex-wrap">
+          <select id="jc-provider-select" title="Proveedor de IA"
+            class="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand-500">
+            <option value="opencode" ${_provider === "opencode" ? "selected" : ""}>OpenCode</option>
+            <option value="codex" ${_provider === "codex" ? "selected" : ""}>ChatGPT (Codex)</option>
+          </select>
+          <select id="jc-model-select" disabled title="Modelo de IA (solo OpenCode)"
             class="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-40 max-w-[180px] truncate">
             <option value="">Cargando modelo…</option>
           </select>
@@ -531,12 +826,13 @@ export function renderJintiaChat() {
             </button>
           </div>
         </div>
-        <div class="mt-1.5 text-[10px] text-gray-400 text-center">
+        <div class="mt-1.5 text-[10px] text-gray-400 text-center" id="jc-powered-by">
           Powered by OpenCode · Jintia Skill
         </div>
       </div>
 
-    </div>
+      </div><!-- fin área principal -->
+    </div><!-- fin flex h-full -->
   `;
 
   if (_course?.project_path) {
@@ -548,18 +844,32 @@ export function renderJintiaChat() {
 }
 
 function bindChatEvents() {
+  el("jc-provider-select")?.addEventListener("change", e => {
+    _provider = e.target.value;
+    teardownCodexListener();
+    _codexThreadId = null;
+    updateProviderUI();
+    if (_provider === "codex") {
+      toast("Modo ChatGPT activado. Asegúrate de haber conectado tu cuenta en Ajustes > Conexiones.", "info", 6000);
+    }
+  });
+
   el("jc-course-select")?.addEventListener("change", e => {
     const path = e.target.value;
     _course = (state.courses || []).find(c => c.project_path === path) || null;
     disconnectSSE();
+    teardownCodexListener();
     _sessionId = null;
     _runtimeReady = false;
     _port = 0;
     _busy = false;
+    _codexThreadId = null;
+    _sessionsLoaded = false;
     setStatus("Desconectado", "neutral");
     el("jc-btn-connect").disabled = false;
     setSendEnabled(false);
     el("jc-btn-new-session").disabled = true;
+    hideSessionsPanel();
   });
 
   el("jc-btn-connect")?.addEventListener("click", async () => {
@@ -586,13 +896,19 @@ function bindChatEvents() {
   el("jc-btn-new-session")?.addEventListener("click", () => {
     _sessionId = null;
     _assistantEl = null;
+    _assistantRaw = "";
+    _reasoningEl = null;
+    _currentPartType = null;
     _busy = false;
+    teardownCodexListener();
+    _codexThreadId = null;
     hideThinkingBubble();
     clearFeed();
-    setStatus("OpenCode listo", "ready");
+    setStatus(_provider === "codex" ? "ChatGPT listo" : "OpenCode listo", "ready");
     setSendEnabled(true);
     setAbortVisible(false);
     toast("Nueva sesión iniciada", "success", 2000);
+    if (_provider === "opencode" && _course?.project_path) loadSessions(_course.project_path);
   });
 
   const input = el("jc-input");

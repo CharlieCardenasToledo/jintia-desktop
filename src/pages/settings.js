@@ -3,7 +3,9 @@ import {
   downloadNodeRuntime, downloadPythonRuntime, downloadSkillRuntime, installVivliostyleCli,
   configureMcp, configureCodexMcp, getSetupStatus, checkNotebookLMAuth, runNotebookLMAuth,
   installSkill, installOpenAIPlugin,
-  resetOnboarding, getSkillPath, extractSitePalette, runSkillTool, detectHarnesses, manageHarnesses
+  resetOnboarding, getSkillPath, extractSitePalette, runSkillTool, detectHarnesses, manageHarnesses,
+  getAiPreference,
+  codexStatus, codexStart, codexStop, codexStartLogin,
 } from "../api.js";
 import { state, saveConfig } from "../state.js";
 import { navigate } from "../router.js";
@@ -302,6 +304,27 @@ export async function renderSettings() {
                 </button>
               </div>
             </div>
+
+            <!-- Codex / ChatGPT row -->
+            <div class="flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 text-[13px] font-semibold text-app-text">
+                  ${ic("bot", 15)} ChatGPT (Codex app-server)
+                </div>
+                <div id="codex-status-label" class="mt-0.5 text-xs text-app-muted" role="status" aria-live="polite">Verificando…</div>
+              </div>
+              <div class="flex gap-2">
+                <button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" id="btn-codex-refresh">
+                  ${ic("refresh-cw", 14)} Estado
+                </button>
+                <button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)} hidden" id="btn-codex-stop">
+                  ${ic("square", 14)} Detener
+                </button>
+                <button class="${cx(ui.button.base, ui.button.primary, ui.button.sm)}" id="btn-codex-login">
+                  ${ic("key", 14)} Conectar ChatGPT
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -393,6 +416,13 @@ export async function renderSettings() {
         <section class="${cx(ui.surface.card, 'p-4 sm:p-5', sectionHidden("app-prefs"))}" id="app-prefs" data-settings-panel>
           <div class="mb-4 flex items-center gap-2.5 border-b border-slate-300/40 pb-3.5 text-[15px] font-bold text-app-text">
             <span class="text-teal-600">${ic("sliders-horizontal", 20)}</span> Preferencias
+          </div>
+
+          <!-- Modelo de IA del chat -->
+          <div class="mb-3.5 rounded-lg border border-slate-200 bg-white px-3.5 py-3">
+            <div class="mb-1.5 text-[11.5px] font-bold uppercase tracking-wider text-app-muted">Modelo de IA del chat</div>
+            <div id="ai-pref-val" class="text-[12.5px] text-brand">Cargando…</div>
+            <div class="mt-1.5 text-[11px] text-app-muted">Se configura desde el selector de modelo en el chat de Jintia. El chat abrirá automáticamente con el modelo guardado.</div>
           </div>
 
           <!-- Workspace root -->
@@ -521,8 +551,42 @@ export async function renderSettings() {
 
   el.querySelector("#btn-verify-nlm")?.addEventListener("click", verifyNlmAuth);
   el.querySelector("#btn-auth-nlm")?.addEventListener("click", runNlmAuth);
+  el.querySelector("#btn-codex-refresh")?.addEventListener("click", loadCodexStatus);
+  el.querySelector("#btn-codex-stop")?.addEventListener("click", async () => {
+    await codexStop();
+    toast("Codex detenido.", "info", 3000);
+    loadCodexStatus();
+  });
+  el.querySelector("#btn-codex-login")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btn-codex-login");
+    if (btn) { btn.disabled = true; btn.innerHTML = `<span class="animate-spin">${ic("loader-2", 14)}</span> Iniciando…`; refreshIcons(); }
+    try {
+      const status = await codexStatus();
+      if (!status.running) {
+        toast("Iniciando Codex app-server…", "loading", 10000);
+        const startResult = await codexStart();
+        if (!startResult.success) {
+          toast(startResult.message, "error", 8000);
+          return;
+        }
+      }
+      const url = await codexStartLogin();
+      await import("@tauri-apps/plugin-opener").then(m => m.openUrl(url));
+      toast("Se abrió la página de autenticación de ChatGPT. Completa el inicio de sesión en el navegador.", "info", 15000);
+      setTimeout(loadCodexStatus, 8000);
+    } catch (e) {
+      toast(`No se pudo iniciar la sesión de ChatGPT: ${e}`, "error", 8000);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `${ic("key", 14)} Conectar ChatGPT`;
+        refreshIcons();
+      }
+    }
+  });
   verifyNlmAuth();
   loadMcpStatus();
+  loadCodexStatus();
 
   // ── Notebooks ─────────────────────────────────────────────────────────────
   renderNotebookList();
@@ -540,6 +604,7 @@ export async function renderSettings() {
 
   // ── App Preferences ───────────────────────────────────────────────────────
   loadSkillPath();
+  loadAiPreference();
   el.querySelector("#btn-change-workspace-root")?.addEventListener("click", async () => {
     const current = state.config?.courseWorkspaceRoot || undefined;
     const chosen = await pickDirectory("Selecciona la carpeta raíz de tus cursos", current);
@@ -1284,5 +1349,54 @@ async function loadSkillPath() {
   } catch {
     el.textContent = "No disponible";
     el.style.color = "var(--muted)";
+  }
+}
+
+async function loadAiPreference() {
+  const el = document.getElementById("ai-pref-val");
+  if (!el) return;
+  try {
+    const pref = await getAiPreference();
+    const label = pref.model_name || pref.model_id;
+    el.textContent = label || "Sin preferencia guardada";
+    el.style.color = label ? "var(--teal)" : "var(--muted)";
+  } catch {
+    el.textContent = "No disponible";
+    el.style.color = "var(--muted)";
+  }
+}
+
+async function loadCodexStatus() {
+  const label = document.getElementById("codex-status-label");
+  const btnLogin = document.getElementById("btn-codex-login");
+  const btnStop = document.getElementById("btn-codex-stop");
+  if (!label) return;
+  try {
+    const s = await codexStatus();
+    if (!s.installed) {
+      label.textContent = "Codex CLI no instalado. Ejecuta: npm install -g @openai/codex";
+      label.style.color = "var(--red)";
+      if (btnLogin) btnLogin.disabled = true;
+      if (btnStop) btnStop.classList.add("hidden");
+      return;
+    }
+    if (!s.running) {
+      label.textContent = "Codex instalado pero no iniciado.";
+      label.style.color = "var(--muted)";
+      if (btnLogin) btnLogin.disabled = false;
+      if (btnStop) btnStop.classList.add("hidden");
+      return;
+    }
+    if (s.logged_in && s.account?.email) {
+      label.textContent = `Conectado — ${s.account.email}${s.account.plan_type ? ` (${s.account.plan_type})` : ""}`;
+      label.style.color = "var(--green)";
+    } else if (s.running) {
+      label.textContent = "Codex activo, sin sesión de ChatGPT.";
+      label.style.color = "var(--yellow)";
+    }
+    if (btnStop) btnStop.classList.remove("hidden");
+    if (btnLogin) btnLogin.disabled = false;
+  } catch {
+    if (label) { label.textContent = "No disponible"; label.style.color = "var(--muted)"; }
   }
 }

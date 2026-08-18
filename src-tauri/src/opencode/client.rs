@@ -84,6 +84,15 @@ impl OpenCodeClient {
         Ok(active)
     }
 
+    pub fn list_sessions(&self) -> Result<Vec<OcSession>, String> {
+        self.client
+            .get(format!("{}/session", self.base))
+            .send()
+            .map_err(|e| e.to_string())?
+            .json::<Vec<OcSession>>()
+            .map_err(|e| e.to_string())
+    }
+
     pub fn get_messages(&self, session_id: &str) -> Result<Vec<OcMessage>, String> {
         self.client
             .get(format!("{}/session/{}/message", self.base, session_id))

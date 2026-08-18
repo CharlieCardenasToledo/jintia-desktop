@@ -1,4 +1,5 @@
 mod capabilities;
+mod codex;
 mod config;
 mod course;
 mod course_state;
@@ -652,7 +653,89 @@ async fn get_capabilities_profiles() -> serde_json::Value {
     .unwrap_or(serde_json::Value::Null)
 }
 
+// ── Codex app-server commands ─────────────────────────────────────────────
+
+#[tauri::command]
+fn codex_status(manager: tauri::State<codex::CodexManager>) -> serde_json::Value {
+    let s = manager.status();
+    serde_json::json!({
+        "installed": s.installed,
+        "running": s.running,
+        "logged_in": s.logged_in,
+        "account": s.account,
+    })
+}
+
+#[tauri::command]
+fn codex_start(
+    app: tauri::AppHandle,
+    manager: tauri::State<codex::CodexManager>,
+) -> ActionResult {
+    manager
+        .start(app)
+        .map(|_| ActionResult::ok("Codex iniciado."))
+        .unwrap_or_else(ActionResult::error)
+}
+
+#[tauri::command]
+fn codex_stop(manager: tauri::State<codex::CodexManager>) {
+    manager.stop();
+}
+
+#[tauri::command]
+fn codex_get_account(manager: tauri::State<codex::CodexManager>) -> serde_json::Value {
+    match manager.get_account() {
+        Ok(a) => serde_json::json!({ "ok": true, "account": a }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+    }
+}
+
+#[tauri::command]
+fn codex_start_login(manager: tauri::State<codex::CodexManager>) -> Result<String, String> {
+    manager.start_login()
+}
+
+#[tauri::command]
+fn codex_start_thread(
+    cwd: String,
+    manager: tauri::State<codex::CodexManager>,
+) -> Result<String, String> {
+    manager.start_thread(&cwd)
+}
+
+#[tauri::command]
+fn codex_submit_turn(
+    thread_id: String,
+    message: String,
+    manager: tauri::State<codex::CodexManager>,
+) -> Result<(), String> {
+    manager.submit_turn(&thread_id, &message)
+}
+
 // ── OpenCode runtime commands ─────────────────────────────────────────────
+
+#[tauri::command]
+async fn get_ai_preference() -> serde_json::Value {
+    let pref = config::get_ai_preference();
+    serde_json::json!({
+        "provider_id": pref.provider_id,
+        "model_id": pref.model_id,
+        "model_name": pref.model_name,
+    })
+}
+
+#[tauri::command]
+async fn save_ai_preference(
+    provider_id: String,
+    model_id: String,
+    model_name: String,
+) -> ActionResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        config::save_ai_preference(provider_id, model_id, model_name)
+    })
+    .await
+    .unwrap_or_else(|e| ActionResult::error(format!("{e}")))
+}
 
 #[tauri::command]
 fn opencode_start_course(
@@ -720,6 +803,17 @@ fn agent_send_message(
 }
 
 #[tauri::command]
+fn opencode_list_sessions(
+    course_path: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<Vec<opencode::models::OcSession>, String> {
+    let port = manager
+        .get_port(&course_path)
+        .ok_or_else(|| "OpenCode no está iniciado para este curso.".to_string())?;
+    opencode::client::OpenCodeClient::new(port).list_sessions()
+}
+
+#[tauri::command]
 fn opencode_list_models(
     course_path: String,
     manager: tauri::State<opencode::OpenCodeManager>,
@@ -760,6 +854,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(opencode::OpenCodeManager::new())
+        .manage(codex::CodexManager::new())
         .invoke_handler(tauri::generate_handler![
             check_dependencies,
             download_node_runtime,
@@ -823,6 +918,16 @@ pub fn run() {
             agent_get_messages,
             agent_abort,
             opencode_list_models,
+            opencode_list_sessions,
+            get_ai_preference,
+            save_ai_preference,
+            codex_status,
+            codex_start,
+            codex_stop,
+            codex_get_account,
+            codex_start_login,
+            codex_start_thread,
+            codex_submit_turn,
         ])
         .setup(|_app| {
             paths::migrate_app_dir_if_needed();

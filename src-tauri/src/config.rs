@@ -53,13 +53,58 @@ fn validate_institution(config: &InstitutionConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn active_theme_from_settings() -> String {
-    let path = app_config_dir().ok().map(|dir| dir.join("settings.json"));
-    path.and_then(|path| fs::read_to_string(path).ok())
+fn read_settings() -> Value {
+    app_config_dir()
+        .ok()
+        .map(|dir| dir.join("settings.json"))
+        .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|value| value.get("activeTemplate")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| json!({"schemaVersion": 1}))
+}
+
+fn write_settings(settings: &Value) -> Result<bool, String> {
+    let path = app_config_dir()?.join("settings.json");
+    let bytes = serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?;
+    atomic_write_if_changed(&path, &bytes)
+}
+
+fn active_theme_from_settings() -> String {
+    read_settings()
+        .get("activeTemplate")
+        .and_then(Value::as_str)
+        .map(str::to_string)
         .filter(|id| theme_exists(id))
         .unwrap_or_else(|| DEFAULT_THEME.to_string())
+}
+
+pub struct AiPreference {
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub model_name: Option<String>,
+}
+
+pub fn get_ai_preference() -> AiPreference {
+    let settings = read_settings();
+    AiPreference {
+        provider_id: settings.get("aiModelProvider").and_then(Value::as_str).map(str::to_string),
+        model_id: settings.get("aiModelId").and_then(Value::as_str).map(str::to_string),
+        model_name: settings.get("aiModelName").and_then(Value::as_str).map(str::to_string),
+    }
+}
+
+pub fn save_ai_preference(provider_id: String, model_id: String, model_name: String) -> ActionResult {
+    let _operation = match CONFIG_WRITE_OPERATION.lock() {
+        Ok(op) => op,
+        Err(_) => return ActionResult::error("El estado interno de configuración está bloqueado."),
+    };
+    let mut settings = read_settings();
+    settings["aiModelProvider"] = Value::String(provider_id);
+    settings["aiModelId"] = Value::String(model_id);
+    settings["aiModelName"] = Value::String(model_name);
+    match write_settings(&settings) {
+        Ok(_) => ActionResult::ok("Preferencia de modelo guardada."),
+        Err(e) => ActionResult::error(e),
+    }
 }
 
 fn themes_dir() -> PathBuf {
@@ -338,7 +383,8 @@ pub fn set_active_template(template_id: String) -> ActionResult {
     if !theme_exists(&template_id) {
         return ActionResult::error(format!("Tema desconocido: {template_id}"));
     }
-    let settings = json!({ "schemaVersion": 1, "activeTemplate": template_id });
+    let mut settings = read_settings();
+    settings["activeTemplate"] = Value::String(template_id.clone());
     let settings_path = match app_config_dir() {
         Ok(dir) => dir.join("settings.json"),
         Err(error) => return ActionResult::error(error),

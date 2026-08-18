@@ -262,6 +262,10 @@ const handlers = {
     report: { tool: "jintia doctor", ok: true, checks: [] }
   }),
 
+  // ── Preferencias de IA ─────────────────────────────────────────────────
+  get_ai_preference: () => ({ provider_id: null, model_id: null, model_name: null }),
+  save_ai_preference: () => actionResult(true, "Preferencia guardada (mock)."),
+
   // ── OpenCode / Chat nativo ──────────────────────────────────────────────
   opencode_start_course: ({ coursePath }) => ({
     course_path: coursePath,
@@ -274,6 +278,11 @@ const handlers = {
     port: 14200,
     status: "ready",
   }),
+  opencode_list_sessions: ({ coursePath } = {}) => [
+    { id: "ses_mock_001", title: "Jintia — Semana 3", directory: coursePath },
+    { id: "ses_mock_002", title: "Jintia — Semana 1", directory: coursePath },
+    { id: "ses_mock_003", title: "Jintia — Chat", directory: coursePath },
+  ],
   opencode_list_models: () => [
     { id: "deepseek-v4-flash-free", provider_id: "opencode", name: "DeepSeek V4 Flash Free" },
     { id: "nemotron-3.5-lightning-free", provider_id: "opencode", name: "Nemotron 3.5 Lightning Free" },
@@ -288,6 +297,20 @@ const handlers = {
     { info: { role: "assistant" }, parts: [{ type: "text", text: "¡Hola! Soy Jintia. ¿En qué semana trabajamos hoy?" }] },
   ],
   agent_abort: () => undefined,
+
+  // ── Codex app-server (ChatGPT sin API key) ──────────────────────────────
+  codex_status: () => ({
+    installed: false,
+    running: false,
+    logged_in: false,
+    account: null,
+  }),
+  codex_start: () => actionResult(false, "Codex CLI no encontrado en este entorno (mock). Instálalo con: npm install -g @openai/codex"),
+  codex_stop: () => undefined,
+  codex_get_account: () => ({ ok: false, error: "Codex no iniciado (mock)" }),
+  codex_start_login: () => { throw new Error("Codex no iniciado (mock)"); },
+  codex_start_thread: () => { throw new Error("Codex no iniciado (mock)"); },
+  codex_submit_turn: () => { throw new Error("Codex no iniciado (mock)"); },
 };
 
 export async function invoke(cmd, args = {}) {

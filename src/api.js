@@ -238,7 +238,44 @@ export async function installNpmPackages(packages) {
   return invoke("install_npm_packages", { packages });
 }
 
-// ── Preview LaTeX local ──────────────────────────────────────────────────
+// ── Preferencias de IA ───────────────────────────────────────────────────
+export async function getAiPreference() {
+  return invoke("get_ai_preference");
+}
+
+export async function saveAiPreference(providerId, modelId, modelName) {
+  return invoke("save_ai_preference", { providerId, modelId, modelName });
+}
+
+// ── Codex app-server (ChatGPT sin API key) ───────────────────────────────
+export async function codexStatus() {
+  return invoke("codex_status");
+}
+
+export async function codexStart() {
+  return invoke("codex_start");
+}
+
+export async function codexStop() {
+  return invoke("codex_stop");
+}
+
+export async function codexGetAccount() {
+  return invoke("codex_get_account");
+}
+
+export async function codexStartLogin() {
+  return invoke("codex_start_login");
+}
+
+export async function codexStartThread(cwd) {
+  return invoke("codex_start_thread", { cwd });
+}
+
+export async function codexSubmitTurn(threadId, message) {
+  return invoke("codex_submit_turn", { threadId, message });
+}
+
 // ── Diálogos ─────────────────────────────────────────────────────────────
 export async function pickDirectory(title, defaultPath = undefined) {
   try {
