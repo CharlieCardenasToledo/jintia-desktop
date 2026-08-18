@@ -2,6 +2,9 @@
  * jintia-chat.js — Chat nativo con OpenCode (Ask Jintia)
  * Plan Maestro sección 29: "Ask Jintia" dentro de una asignatura/semana.
  * Arquitectura: React UI → Tauri commands → OpenCode process → Jintia Skill
+ *
+ * Streaming: usa SSE (GET /event) en lugar de polling. Los deltas de texto
+ * llegan evento a evento (message.part.delta) y se concatenan en tiempo real.
  */
 import { invoke }     from "@tauri-apps/api/core";
 import { ic }         from "../icons.js";
@@ -11,11 +14,13 @@ import { escapeHtml } from "../dom.js";
 import { toast }      from "../toast.js";
 
 // ── Estado de la página ────────────────────────────────────────────────────
-let _course = null;
-let _sessionId = null;
-let _polling = null;
+let _course      = null;
+let _sessionId   = null;
+let _port        = 0;
+let _sse         = null;   // EventSource activo
+let _assistantEl = null;   // <div> de texto en la burbuja que recibe deltas SSE
 let _runtimeReady = false;
-let _lastMsgCount = 0;
+let _busy        = false;
 
 // ── Helpers DOM ────────────────────────────────────────────────────────────
 const el = id => document.getElementById(id);
@@ -33,7 +38,7 @@ function setStatus(text, kind = "neutral") {
   badge.textContent = text;
 }
 
-// CSS de animaciones para la burbuja de pensando (inyectado una sola vez)
+// CSS de animaciones inyectado una sola vez
 let _stylesInjected = false;
 function ensureChatStyles() {
   if (_stylesInjected) return;
@@ -96,26 +101,11 @@ function hideThinkingBubble() {
   el("jc-thinking")?.remove();
 }
 
-// Typewriter: revela el texto en el elemento dado de a chunks, scrolleando a medida
-function typewriterReveal(textEl, text, onDone) {
-  let i = 0;
-  const CHUNK = 3;
-  const MS    = 18;
-  const tick  = setInterval(() => {
-    i = Math.min(i + CHUNK, text.length);
-    textEl.textContent = text.slice(0, i);
-    scrollFeed();
-    if (i >= text.length) { clearInterval(tick); onDone?.(); }
-  }, MS);
-  return tick;
-}
-
-// Añade mensaje del asistente con efecto typewriter; antes mueve la burbuja "pensando"
-function appendAssistantMessage(text) {
-  hideThinkingBubble();
+// Crea una burbuja de asistente vacía y retorna el elemento de texto
+// que irá recibiendo los deltas SSE.
+function createAssistantBubble() {
   const feed = el("jc-activity-feed");
-  if (!feed) return;
-
+  if (!feed) return null;
   const wrap = document.createElement("div");
   wrap.className = "flex gap-2.5 mb-3 jc-msg-in";
   wrap.innerHTML = `
@@ -123,37 +113,80 @@ function appendAssistantMessage(text) {
     <div class="max-w-[80%] rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 leading-relaxed whitespace-pre-wrap"></div>`;
   feed.appendChild(wrap);
   scrollFeed();
-
-  const textEl = wrap.querySelector("div:last-child");
-  typewriterReveal(textEl, text, null);
+  return wrap.querySelector("div:last-child");
 }
 
 function messageHtml(msg) {
-  // OpenCode ≥1.18: role está en msg.info.role, no en el nivel raíz
   const role = msg.info?.role || msg.role || "assistant";
   const text = (msg.parts || [])
     .filter(p => p.type === "text")
     .map(p => p.text || "")
     .join("\n")
     .trim();
-  if (!text) return null;
-  if (role === "user") {
-    return `<div class="flex justify-end mb-3">
-      <div class="max-w-[80%] rounded-xl bg-gray-900 px-4 py-2.5 text-sm text-white leading-relaxed">${escapeHtml(text)}</div>
-    </div>`;
-  }
-  return null; // las del asistente se renderizan via appendAssistantMessage con typewriter
+  if (!text || role !== "user") return null;
+  return `<div class="flex justify-end mb-3">
+    <div class="max-w-[80%] rounded-xl bg-gray-900 px-4 py-2.5 text-sm text-white leading-relaxed">${escapeHtml(text)}</div>
+  </div>`;
 }
 
 // ── Control de botones ─────────────────────────────────────────────────────
 function setSendEnabled(enabled) {
   const btn = el("jc-btn-send");
+  const inp = el("jc-input");
   if (btn) btn.disabled = !enabled;
+  if (inp) inp.disabled = !enabled;
 }
 
 function setAbortVisible(visible) {
   const btn = el("jc-btn-abort");
   if (btn) btn.hidden = !visible;
+}
+
+// ── SSE streaming ──────────────────────────────────────────────────────────
+function connectSSE(port) {
+  disconnectSSE();
+  try {
+    _sse = new EventSource(`http://127.0.0.1:${port}/event`);
+    _sse.onmessage = (ev) => {
+      try { handleSSE(JSON.parse(ev.data)); } catch {}
+    };
+    _sse.onerror = () => {}; // EventSource reintenta solo; silenciar en mock
+  } catch {}
+}
+
+function disconnectSSE() {
+  if (_sse) { _sse.close(); _sse = null; }
+  _assistantEl = null;
+}
+
+function handleSSE(event) {
+  const props = event.properties || {};
+
+  if (event.type === "message.part.delta") {
+    if (props.sessionID !== _sessionId || props.field !== "text") return;
+    // Primera delta: ocultar burbuja de "pensando" y crear burbuja real
+    if (!_assistantEl) {
+      hideThinkingBubble();
+      _assistantEl = createAssistantBubble();
+    }
+    if (_assistantEl) {
+      _assistantEl.textContent += props.delta;
+      scrollFeed();
+    }
+
+  } else if (event.type === "session.status") {
+    if (props.sessionID !== _sessionId) return;
+    const st = props.status?.type;
+    // "busy" → generando; cualquier otro estado (idle, error…) → terminó
+    if (st && st !== "busy") {
+      _assistantEl = null;
+      _busy = false;
+      hideThinkingBubble();
+      setSendEnabled(true);
+      setAbortVisible(false);
+      setStatus(st === "error" ? "Error" : "OpenCode listo", st === "error" ? "error" : "ready");
+    }
+  }
 }
 
 // ── Iniciar runtime OpenCode ───────────────────────────────────────────────
@@ -164,10 +197,12 @@ async function startRuntime(coursePath) {
   try {
     const info = await invoke("opencode_start_course", { coursePath });
     _runtimeReady = info.status === "ready";
+    _port = info.port;
+    if (_runtimeReady) connectSSE(_port);
     setStatus(_runtimeReady ? "OpenCode listo" : "Offline", _runtimeReady ? "ready" : "error");
-    if (!_runtimeReady && connectBtn) connectBtn.disabled = false;
     if (!_runtimeReady) {
       console.error("[jintia-chat] opencode_start_course no retornó ready:", info);
+      if (connectBtn) connectBtn.disabled = false;
     }
     return _runtimeReady;
   } catch (err) {
@@ -189,7 +224,6 @@ async function createSession() {
       week,
     });
     _sessionId = session.id;
-    _lastMsgCount = 0;
     return true;
   } catch (err) {
     console.error("[jintia-chat] agent_create_session error:", err);
@@ -198,68 +232,24 @@ async function createSession() {
   }
 }
 
-// ── Polling de mensajes ────────────────────────────────────────────────────
-function startPolling() {
-  if (_polling) clearInterval(_polling);
-  _polling = setInterval(async () => {
-    if (!_sessionId || !_course?.project_path) return;
-    try {
-      const msgs = await invoke("agent_get_messages", {
-        coursePath: _course.project_path,
-        sessionId: _sessionId,
-      });
-      if (msgs.length > _lastMsgCount) {
-        const newMsgs = msgs.slice(_lastMsgCount);
-        _lastMsgCount = msgs.length;
-        for (const msg of newMsgs) {
-          const role = msg.info?.role || msg.role || "assistant";
-          const text = (msg.parts || [])
-            .filter(p => p.type === "text")
-            .map(p => p.text || "")
-            .join("\n")
-            .trim();
-          if (!text) continue;
-          if (role === "assistant") {
-            appendAssistantMessage(text);
-          } else {
-            // Mensajes de usuario adicionales (poco común pero posible)
-            const html = messageHtml(msg);
-            if (html) appendMessage(html);
-          }
-        }
-        setStatus("OpenCode listo", "ready");
-        setSendEnabled(true);
-        setAbortVisible(false);
-      }
-    } catch (err) { console.warn("[jintia-chat] poll error:", err); }
-  }, 1500);
-}
-
-function stopPolling() {
-  if (_polling) { clearInterval(_polling); _polling = null; }
-}
-
 // ── Enviar mensaje ─────────────────────────────────────────────────────────
 async function sendMessage() {
   const input = el("jc-input");
   const text = (input?.value || "").trim();
-  if (!text || !_runtimeReady) return;
+  if (!text || !_runtimeReady || _busy) return;
 
   if (!_sessionId) {
     const ok = await createSession();
     if (!ok) return;
-    startPolling();
   }
 
   input.value = "";
   input.style.height = "auto";
 
-  // Mostrar mensaje del usuario inmediatamente en el feed
   appendMessage(messageHtml({ role: "user", parts: [{ type: "text", text }] }));
-  // Incrementar el contador para que el polling salte este mensaje del API
-  _lastMsgCount += 1;
   setSendEnabled(false);
   setAbortVisible(true);
+  _busy = true;
 
   try {
     await invoke("agent_send_message", {
@@ -267,14 +257,12 @@ async function sendMessage() {
       sessionId: _sessionId,
       message: text,
     });
-    // Prompt enviado — mostrar burbuja "pensando" y estado
     showThinkingBubble();
     setStatus("Jintia está pensando…", "working");
   } catch (err) {
-    setStatus("Error al enviar", "error");
+    _busy = false;
     setSendEnabled(true);
     setAbortVisible(false);
-    _lastMsgCount -= 1;
     toast("Error al enviar: " + String(err), "error", 5000);
   }
 }
@@ -283,12 +271,12 @@ async function sendMessage() {
 /** Llamado desde courses.js al hacer clic en el botón Jintia de un curso. */
 export function setActiveCourse(course, week) {
   _course = course;
-  stopPolling();
+  disconnectSSE();
   _sessionId = null;
   _runtimeReady = false;
-  _lastMsgCount = 0;
+  _port = 0;
+  _busy = false;
 
-  // Sincronizar selectores si ya se renderizó la página
   requestAnimationFrame(() => {
     const sel = el("jc-course-select");
     if (sel && course?.project_path) sel.value = course.project_path;
@@ -305,12 +293,12 @@ export function setActiveCourse(course, week) {
 // ── Renderizado principal ──────────────────────────────────────────────────
 export function renderJintiaChat() {
   ensureChatStyles();
-  stopPolling();
-  _sessionId = null;
-  _lastMsgCount = 0;
+  disconnectSSE();
+  _sessionId   = null;
   _runtimeReady = false;
+  _port        = 0;
+  _busy        = false;
 
-  // Usar el primer curso disponible si no hay uno activo
   if (!_course) {
     _course = (state.courses || []).find(c => c.project_path) || null;
   }
@@ -397,7 +385,6 @@ export function renderJintiaChat() {
     </div>
   `;
 
-  // Restaurar curso activo en los selectores
   if (_course?.project_path) {
     const sel = el("jc-course-select");
     if (sel) sel.value = _course.project_path;
@@ -407,21 +394,20 @@ export function renderJintiaChat() {
 }
 
 function bindChatEvents() {
-  // Cambio de asignatura
   el("jc-course-select")?.addEventListener("change", e => {
     const path = e.target.value;
     _course = (state.courses || []).find(c => c.project_path === path) || null;
+    disconnectSSE();
     _sessionId = null;
     _runtimeReady = false;
-    stopPolling();
+    _port = 0;
+    _busy = false;
     setStatus("Desconectado", "neutral");
     el("jc-btn-connect").disabled = false;
     setSendEnabled(false);
-    el("jc-input").disabled = true;
     el("jc-btn-new-session").disabled = true;
   });
 
-  // Conectar runtime
   el("jc-btn-connect")?.addEventListener("click", async () => {
     if (!_course?.project_path) {
       toast("Selecciona una asignatura primero", "warning", 3000);
@@ -429,10 +415,8 @@ function bindChatEvents() {
     }
     const ok = await startRuntime(_course.project_path);
     if (ok) {
-      el("jc-input").disabled = false;
       setSendEnabled(true);
       el("jc-btn-new-session").disabled = false;
-      // Limpiar placeholder y mostrar bienvenida
       clearFeed();
       appendMessage(`<div class="flex gap-2.5 mb-3">
         <div class="mt-0.5 h-6 w-6 rounded-full bg-brand-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold select-none">J</div>
@@ -445,12 +429,11 @@ function bindChatEvents() {
     }
   });
 
-  // Nueva sesión
   el("jc-btn-new-session")?.addEventListener("click", () => {
-    stopPolling();
-    hideThinkingBubble();
     _sessionId = null;
-    _lastMsgCount = 0;
+    _assistantEl = null;
+    _busy = false;
+    hideThinkingBubble();
     clearFeed();
     setStatus("OpenCode listo", "ready");
     setSendEnabled(true);
@@ -458,7 +441,6 @@ function bindChatEvents() {
     toast("Nueva sesión iniciada", "success", 2000);
   });
 
-  // Textarea: auto-resize + Enter para enviar
   const input = el("jc-input");
   input?.addEventListener("input", () => {
     input.style.height = "auto";
@@ -471,10 +453,8 @@ function bindChatEvents() {
     }
   });
 
-  // Botón enviar
   el("jc-btn-send")?.addEventListener("click", () => sendMessage());
 
-  // Botón abortar
   el("jc-btn-abort")?.addEventListener("click", async () => {
     if (!_sessionId || !_course?.project_path) return;
     try {
@@ -483,8 +463,9 @@ function bindChatEvents() {
         sessionId: _sessionId,
       });
       hideThinkingBubble();
+      _assistantEl = null;
+      _busy = false;
       setStatus("Cancelado", "neutral");
-      stopPolling();
       setSendEnabled(true);
       setAbortVisible(false);
     } catch (err) {
