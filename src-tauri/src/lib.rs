@@ -848,6 +848,31 @@ fn agent_abort(
     opencode::client::OpenCodeClient::new(port).abort_session(&session_id)
 }
 
+#[tauri::command]
+fn opencode_rename_session(
+    course_path: String,
+    session_id: String,
+    title: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<(), String> {
+    let port = manager
+        .get_port(&course_path)
+        .ok_or_else(|| "OpenCode no está iniciado.".to_string())?;
+    opencode::client::OpenCodeClient::new(port).rename_session(&session_id, &title)
+}
+
+#[tauri::command]
+fn opencode_delete_session(
+    course_path: String,
+    session_id: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<(), String> {
+    let port = manager
+        .get_port(&course_path)
+        .ok_or_else(|| "OpenCode no está iniciado.".to_string())?;
+    opencode::client::OpenCodeClient::new(port).delete_session(&session_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -919,6 +944,8 @@ pub fn run() {
             agent_abort,
             opencode_list_models,
             opencode_list_sessions,
+            opencode_rename_session,
+            opencode_delete_session,
             get_ai_preference,
             save_ai_preference,
             codex_status,

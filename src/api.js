@@ -247,6 +247,14 @@ export async function saveAiPreference(providerId, modelId, modelName) {
   return invoke("save_ai_preference", { providerId, modelId, modelName });
 }
 
+export async function opencodeRenameSession(coursePath, sessionId, title) {
+  return invoke("opencode_rename_session", { coursePath, sessionId, title });
+}
+
+export async function opencodeDeleteSession(coursePath, sessionId) {
+  return invoke("opencode_delete_session", { coursePath, sessionId });
+}
+
 // ── Codex app-server (ChatGPT sin API key) ───────────────────────────────
 export async function codexStatus() {
   return invoke("codex_status");

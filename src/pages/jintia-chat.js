@@ -14,6 +14,15 @@ import { ui, cx }     from "../uiClasses.js";
 import { state }      from "../state.js";
 import { escapeHtml } from "../dom.js";
 import { toast }      from "../toast.js";
+import {
+  checkNotebookLMAuth,
+  listNotebooksMcp,
+  listAccountNotebooksMcp,
+  saveNotebooksConfig,
+  opencodeRenameSession,
+  opencodeDeleteSession,
+} from "../api.js";
+import { saveCourses } from "../state.js";
 
 // Configurar marked: sin modo pedantic, con saltos de línea = <br>
 marked.use({ breaks: true, gfm: true });
@@ -39,6 +48,8 @@ let _provider        = "opencode";
 let _codexThreadId   = null;
 // Función de cancelación del listener Tauri para eventos Codex
 let _codexUnlisten   = null;
+// Flag para no mostrar el picker de notebook dos veces en la misma sesión de conexión
+let _notebookChecked = false;
 
 // ── Helpers DOM ────────────────────────────────────────────────────────────
 const el = id => document.getElementById(id);
@@ -308,23 +319,144 @@ async function loadSessions(coursePath) {
   }
 }
 
+// Títulos locales: clave de sesión → título personalizado (override cliente)
+const _localTitles = (() => {
+  try { return JSON.parse(localStorage.getItem("jintia_session_titles") || "{}"); }
+  catch { return {}; }
+})();
+
+function saveLocalTitles() {
+  try { localStorage.setItem("jintia_session_titles", JSON.stringify(_localTitles)); } catch {}
+}
+
+function sessionTitle(s) {
+  return _localTitles[s.id] || s.title || "Sin título";
+}
+
 function renderSessionsList(list, sessions, coursePath) {
   list.innerHTML = sessions.map(s => {
-    const active = s.id === _sessionId;
-    return `<button
-      class="w-full text-left rounded-md px-2.5 py-2 text-xs transition-colors ${active
-        ? "bg-brand-100 text-brand-700 font-semibold"
-        : "text-gray-700 hover:bg-gray-100"}"
-      data-session-id="${escapeHtml(s.id)}"
-      title="${escapeHtml(s.title || s.id)}">
-      <div class="truncate font-medium leading-snug">${escapeHtml(s.title || "Sin título")}</div>
-      <div class="mt-0.5 font-mono text-[10px] text-gray-400 truncate">${escapeHtml(s.id.slice(0, 10))}…</div>
-    </button>`;
+    const active  = s.id === _sessionId;
+    const title   = sessionTitle(s);
+    const baseRow = active
+      ? "bg-brand-100 text-brand-700"
+      : "text-gray-700 hover:bg-gray-100";
+    return `
+      <div class="group relative flex items-center rounded-md ${baseRow} transition-colors"
+           data-session-row="${escapeHtml(s.id)}">
+        <button class="min-w-0 flex-1 text-left px-2.5 py-2 text-xs"
+                data-session-id="${escapeHtml(s.id)}"
+                title="${escapeHtml(title)}">
+          <div class="truncate font-medium leading-snug">${escapeHtml(title)}</div>
+          <div class="mt-0.5 font-mono text-[10px] text-gray-400 truncate">${escapeHtml(s.id.slice(0, 10))}…</div>
+        </button>
+        <!-- Acciones: aparecen al pasar el cursor -->
+        <div class="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 rounded px-0.5 shadow-sm">
+          <button class="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700"
+                  data-rename-session="${escapeHtml(s.id)}"
+                  title="Renombrar">
+            ${ic("pencil", 11)}
+          </button>
+          <button class="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500"
+                  data-delete-session="${escapeHtml(s.id)}"
+                  title="Eliminar">
+            ${ic("trash-2", 11)}
+          </button>
+        </div>
+      </div>`;
   }).join("");
 
+  // Click para cambiar de sesión
   list.querySelectorAll("[data-session-id]").forEach(btn => {
     btn.addEventListener("click", () => switchToSession(btn.dataset.sessionId, coursePath));
   });
+
+  // Botones de renombrar
+  list.querySelectorAll("[data-rename-session]").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      startInlineRename(btn.dataset.renameSession, coursePath, sessions);
+    });
+  });
+
+  // Botones de eliminar
+  list.querySelectorAll("[data-delete-session]").forEach(btn => {
+    btn.addEventListener("click", async e => {
+      e.stopPropagation();
+      await deleteSession(btn.dataset.deleteSession, coursePath, sessions);
+    });
+  });
+}
+
+function startInlineRename(sessionId, coursePath, sessions) {
+  const row = el("jc-sessions-list")?.querySelector(`[data-session-row="${sessionId}"]`);
+  if (!row) return;
+
+  const s     = sessions.find(x => x.id === sessionId);
+  const current = sessionTitle(s || { id: sessionId });
+
+  // Reemplazar contenido del botón principal con un input
+  const titleBtn = row.querySelector("[data-session-id]");
+  if (!titleBtn) return;
+  const inputId = `jc-rename-input-${sessionId}`;
+  row.querySelector(".hidden.group-hover\\:flex")?.classList.add("!hidden"); // ocultar acciones
+  titleBtn.innerHTML = `
+    <input id="${inputId}" class="w-full rounded border border-brand-400 bg-white px-1.5 py-0.5 text-xs text-gray-800 outline-none ring-2 ring-brand-200"
+           value="${escapeHtml(current)}" autocomplete="off" spellcheck="false">`;
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.focus();
+  input.select();
+
+  async function commit() {
+    const newTitle = input.value.trim();
+    if (newTitle && newTitle !== current) {
+      _localTitles[sessionId] = newTitle;
+      saveLocalTitles();
+      // Intentar renombrar en el servidor (falla silenciosamente si no está soportado)
+      try {
+        await opencodeRenameSession(coursePath, sessionId, newTitle);
+      } catch {}
+    }
+    loadSessions(coursePath);
+  }
+
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter")  { e.preventDefault(); commit(); }
+    if (e.key === "Escape") { loadSessions(coursePath); }
+  });
+  input.addEventListener("blur", commit);
+}
+
+async function deleteSession(sessionId, coursePath, sessions) {
+  const s     = sessions.find(x => x.id === sessionId);
+  const title = sessionTitle(s || { id: sessionId });
+  if (!window.confirm(`¿Eliminar "${title}"?\nSe borrará el historial de esta conversación.`)) return;
+
+  // Ocultar inmediatamente del sidebar (UX optimista)
+  const row = el("jc-sessions-list")?.querySelector(`[data-session-row="${sessionId}"]`);
+  row?.remove();
+
+  // Si era la sesión activa, limpiar el feed
+  if (_sessionId === sessionId) {
+    _sessionId = null;
+    clearFeed();
+    setStatus("OpenCode listo", "ready");
+    setSendEnabled(true);
+  }
+
+  // Limpiar título local si existía
+  delete _localTitles[sessionId];
+  saveLocalTitles();
+
+  // Intentar eliminar en el servidor
+  try {
+    await opencodeDeleteSession(coursePath, sessionId);
+  } catch {
+    // Si la API no lo soporta, quedó oculto localmente — se recupera al recargar
+  }
+
+  // Recargar para reflejar el estado real del servidor
+  await loadSessions(coursePath);
 }
 
 async function switchToSession(sessionId, coursePath) {
@@ -345,10 +477,10 @@ async function switchToSession(sessionId, coursePath) {
   // Actualizar resaltado inmediatamente
   const list = el("jc-sessions-list");
   if (list) {
-    list.querySelectorAll("[data-session-id]").forEach(btn => {
-      const active = btn.dataset.sessionId === sessionId;
-      btn.className = `w-full text-left rounded-md px-2.5 py-2 text-xs transition-colors ${active
-        ? "bg-brand-100 text-brand-700 font-semibold"
+    list.querySelectorAll("[data-session-row]").forEach(row => {
+      const active = row.dataset.sessionRow === sessionId;
+      row.className = `group relative flex items-center rounded-md transition-colors ${active
+        ? "bg-brand-100 text-brand-700"
         : "text-gray-700 hover:bg-gray-100"}`;
     });
   }
@@ -484,6 +616,175 @@ function handleSSE(event) {
   }
 }
 
+// ── Auto-conexión de notebook ─────────────────────────────────────────────
+// Reutiliza la sesión de NotebookLM establecida en el onboarding.
+// Si el curso ya tiene notebook_id → no hace nada.
+// Si hay sesión activa y el curso no tiene notebook → muestra picker inline.
+async function autoConnectNotebook() {
+  if (_notebookChecked) return;
+  _notebookChecked = true;
+
+  // Curso ya vinculado: nada que hacer
+  if (_course?.notebook_id) return;
+
+  let auth;
+  try {
+    auth = await checkNotebookLMAuth();
+  } catch {
+    return; // MCP no disponible — ignorar silenciosamente
+  }
+
+  if (!auth.authenticated) {
+    // Sin sesión: aviso suave en el feed, no bloquear el chat
+    appendMessage(`
+      <div class="ml-8 mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+        ${ic("triangle-alert", 14)}
+        <span>Este curso no tiene NotebookLM vinculado y no hay sesión activa de Google. El chat funcionará sin contexto de fuentes.
+          <a href="#" id="jc-nlm-goto-settings" class="ml-1 font-semibold underline">Configurar en Ajustes</a>
+        </span>
+      </div>`);
+    document.getElementById("jc-nlm-goto-settings")?.addEventListener("click", e => {
+      e.preventDefault();
+      import("../router.js").then(m => m.navigate("settings"));
+    });
+    return;
+  }
+
+  // Hay sesión: cargar notebooks disponibles (biblioteca local primero)
+  let notebooks = [];
+  try {
+    notebooks = await listNotebooksMcp();
+  } catch {
+    return;
+  }
+
+  if (!notebooks.length) return; // Sin notebooks configurados — no mostrar picker
+
+  showNotebookPicker(notebooks);
+}
+
+function showNotebookPicker(notebooks) {
+  const feed = el("jc-activity-feed");
+  if (!feed) return;
+
+  const card = document.createElement("div");
+  card.id = "jc-notebook-picker";
+  card.className = "mb-4 jc-msg-in";
+  card.innerHTML = `
+    <div class="ml-8 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3">
+      <div class="mb-2 flex items-center gap-2 text-[12px] font-semibold text-teal-800">
+        ${ic("book-open", 14)} Vincular NotebookLM a este curso
+      </div>
+      <p class="mb-2.5 text-[11.5px] text-teal-700 leading-relaxed">
+        Selecciona el notebook con los materiales de esta asignatura. Jintia lo usará como contexto para todas las respuestas.
+      </p>
+      <div class="flex items-center gap-2 flex-wrap">
+        <select id="jc-nb-select" class="flex-1 min-w-0 rounded-lg border border-teal-300 bg-white px-2.5 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-400">
+          <option value="">— Selecciona un notebook —</option>
+          ${notebooks.map(nb => `<option value="${escapeHtml(nb.id)}" data-url="${escapeHtml(nb.url || "")}" data-name="${escapeHtml(nb.name || nb.id)}">${escapeHtml(nb.name || nb.id)}</option>`).join("")}
+        </select>
+        <button id="jc-nb-save" class="${cx(ui.button.base, ui.button.primary, ui.button.sm)}" disabled>
+          ${ic("link", 14)} Vincular
+        </button>
+        <button id="jc-nb-scan" class="${cx(ui.button.base, ui.button.ghost, ui.button.sm)}" title="Buscar más en tu cuenta Google">
+          ${ic("refresh-cw", 12)} Buscar más
+        </button>
+        <button id="jc-nb-skip" class="${cx(ui.button.base, ui.button.ghost, ui.button.sm)} text-gray-400">
+          Omitir
+        </button>
+      </div>
+      <div id="jc-nb-scanning" class="hidden mt-2 text-[11px] text-teal-600">Buscando en tu cuenta…</div>
+    </div>`;
+
+  feed.appendChild(card);
+  scrollFeed();
+
+  const select = card.querySelector("#jc-nb-select");
+  const saveBtn = card.querySelector("#jc-nb-save");
+  const scanBtn = card.querySelector("#jc-nb-scan");
+  const skipBtn = card.querySelector("#jc-nb-skip");
+  const scanMsg = card.querySelector("#jc-nb-scanning");
+
+  select?.addEventListener("change", () => {
+    if (saveBtn) saveBtn.disabled = !select.value;
+  });
+
+  saveBtn?.addEventListener("click", async () => {
+    const opt = select.options[select.selectedIndex];
+    if (!opt?.value) return;
+    const notebookId  = opt.value;
+    const notebookUrl  = opt.dataset.url || "";
+    const notebookName = opt.dataset.name || notebookId;
+    await linkNotebookToCourse(notebookId, notebookName, notebookUrl);
+    card.remove();
+  });
+
+  scanBtn?.addEventListener("click", async () => {
+    if (scanMsg) scanMsg.classList.remove("hidden");
+    if (scanBtn) scanBtn.disabled = true;
+    try {
+      const more = await listAccountNotebooksMcp();
+      // Fusionar con los ya existentes en el select
+      const existing = new Set([...select.options].map(o => o.value).filter(Boolean));
+      more.forEach(nb => {
+        if (!existing.has(nb.id)) {
+          const opt = document.createElement("option");
+          opt.value = nb.id;
+          opt.dataset.url = nb.url || "";
+          opt.dataset.name = nb.name || nb.id;
+          opt.textContent = nb.name || nb.id;
+          select.appendChild(opt);
+        }
+      });
+      if (scanMsg) scanMsg.textContent = `${more.length} notebook(s) encontrados en tu cuenta.`;
+    } catch (e) {
+      if (scanMsg) scanMsg.textContent = `No se pudo buscar: ${e}`;
+    } finally {
+      if (scanBtn) scanBtn.disabled = false;
+    }
+  });
+
+  skipBtn?.addEventListener("click", () => card.remove());
+}
+
+async function linkNotebookToCourse(notebookId, notebookName, notebookUrl) {
+  if (!_course) return;
+
+  // Actualizar state.courses
+  const idx = state.courses.findIndex(c => c.project_path === _course.project_path);
+  if (idx !== -1) {
+    state.courses[idx] = {
+      ...state.courses[idx],
+      notebook_id:   notebookId,
+      notebook_name: notebookName,
+      notebook_url:  notebookUrl,
+    };
+    _course = state.courses[idx];
+
+    // Persistir en localStorage (igual que courses.js)
+    try { saveCourses(); } catch {}
+
+    // Sincronizar notebooks.json en disco (para que OpenCode lo lea)
+    const entries = state.courses
+      .filter(c => String(c.notebook_id || "").trim() && String(c.project_path || "").trim())
+      .map(c => ({
+        courseCode:  c.code,
+        courseName:  c.name,
+        rootPath:    c.project_path,
+        notebookId:  c.notebook_id,
+        notebookUrl: c.notebook_url || "",
+      }));
+    try {
+      await saveNotebooksConfig(entries);
+    } catch (e) {
+      toast(`Notebook vinculado, pero no se pudo actualizar notebooks.json: ${e}`, "error", 7000);
+      return;
+    }
+  }
+
+  toast(`NotebookLM vinculado: ${notebookName}`, "success", 4000);
+}
+
 // ── Iniciar runtime OpenCode ───────────────────────────────────────────────
 async function startRuntime(coursePath) {
   setStatus("Iniciando OpenCode…", "working");
@@ -495,9 +796,10 @@ async function startRuntime(coursePath) {
     _port = info.port;
     if (_runtimeReady) {
       connectSSE(_port);
-      loadModels(coursePath);   // sin await — paralelo
+      loadModels(coursePath);      // sin await — paralelo
       showSessionsPanel();
-      loadSessions(coursePath); // sin await — paralelo
+      loadSessions(coursePath);    // sin await — paralelo
+      autoConnectNotebook();       // sin await — aparece en el feed si hace falta
     }
     setStatus(_runtimeReady ? "OpenCode listo" : "Offline", _runtimeReady ? "ready" : "error");
     if (!_runtimeReady) {
@@ -693,14 +995,15 @@ async function sendMessage() {
 // ── API pública ────────────────────────────────────────────────────────────
 /** Llamado desde courses.js al hacer clic en el botón Jintia de un curso. */
 export function setActiveCourse(course, week) {
-  _course = course;
+  _course          = course;
   disconnectSSE();
   teardownCodexListener();
-  _sessionId     = null;
-  _runtimeReady  = false;
-  _port          = 0;
-  _busy          = false;
-  _codexThreadId = null;
+  _sessionId       = null;
+  _runtimeReady    = false;
+  _port            = 0;
+  _busy            = false;
+  _codexThreadId   = null;
+  _notebookChecked = false;
 
   requestAnimationFrame(() => {
     const sel = el("jc-course-select");
@@ -720,11 +1023,12 @@ export function renderJintiaChat() {
   ensureChatStyles();
   disconnectSSE();
   teardownCodexListener();
-  _sessionId     = null;
-  _runtimeReady  = false;
-  _port          = 0;
-  _busy          = false;
-  _codexThreadId = null;
+  _sessionId       = null;
+  _runtimeReady    = false;
+  _port            = 0;
+  _busy            = false;
+  _codexThreadId   = null;
+  _notebookChecked = false;
 
   if (!_course) {
     _course = (state.courses || []).find(c => c.project_path) || null;
@@ -859,12 +1163,13 @@ function bindChatEvents() {
     _course = (state.courses || []).find(c => c.project_path === path) || null;
     disconnectSSE();
     teardownCodexListener();
-    _sessionId = null;
-    _runtimeReady = false;
-    _port = 0;
-    _busy = false;
-    _codexThreadId = null;
-    _sessionsLoaded = false;
+    _sessionId       = null;
+    _runtimeReady    = false;
+    _port            = 0;
+    _busy            = false;
+    _codexThreadId   = null;
+    _notebookChecked = false;
+    _sessionsLoaded  = false;
     setStatus("Desconectado", "neutral");
     el("jc-btn-connect").disabled = false;
     setSendEnabled(false);

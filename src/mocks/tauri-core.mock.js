@@ -278,6 +278,8 @@ const handlers = {
     port: 14200,
     status: "ready",
   }),
+  opencode_rename_session: () => undefined,
+  opencode_delete_session: () => undefined,
   opencode_list_sessions: ({ coursePath } = {}) => [
     { id: "ses_mock_001", title: "Jintia — Semana 3", directory: coursePath },
     { id: "ses_mock_002", title: "Jintia — Semana 1", directory: coursePath },
