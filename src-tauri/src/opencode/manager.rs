@@ -1,5 +1,6 @@
 use super::client::OpenCodeClient;
 use super::models::{RuntimeInfo, RuntimeStatus};
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -52,6 +53,59 @@ impl OpenCodeManager {
         None
     }
 
+    /// Escribe (o actualiza) `opencode.json` en el directorio del curso con la
+    /// configuración del servidor MCP de NotebookLM. OpenCode lee este archivo al
+    /// arrancar para registrar los servidores MCP disponibles para la Skill de Jintia.
+    /// Si el MCP administrado no está instalado, se omite sin error.
+    fn write_opencode_mcp_config(course_path: &Path) -> Result<(), String> {
+        let managed = crate::mcp::managed_mcp()?;
+        let managed_path = crate::mcp::managed_node_runtime_path_text()?;
+
+        let config_path = course_path.join("opencode.json");
+        let mut config: serde_json::Value = if config_path.exists() {
+            std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .unwrap_or_else(|| json!({}))
+        } else {
+            json!({})
+        };
+
+        if !config.get("mcp").is_some_and(|v| v.is_object()) {
+            config["mcp"] = json!({});
+        }
+        config["mcp"]["notebooklm"] = json!({
+            "type": "local",
+            "command": [
+                managed.node.to_string_lossy().as_ref(),
+                managed.bin.to_string_lossy().as_ref()
+            ],
+            "env": {
+                "PATH": managed_path
+            }
+        });
+
+        let bytes = serde_json::to_vec_pretty(&config)
+            .map_err(|e| format!("No se pudo serializar opencode.json: {e}"))?;
+        crate::paths::atomic_write(&config_path, &bytes)
+    }
+
+    /// Copia el archivo `notebooks.json` global al subdirectorio `config/` del
+    /// curso para que la Skill de Jintia lo encuentre vía ruta relativa desde
+    /// el CWD que usa OpenCode. Se omite silenciosamente si la fuente no existe.
+    fn sync_notebooks_to_course(course_path: &Path) {
+        let src = match crate::paths::app_config_dir() {
+            Ok(dir) => dir.join("notebooks.json"),
+            Err(_) => return,
+        };
+        if !src.is_file() {
+            return;
+        }
+        let Ok(bytes) = std::fs::read(&src) else { return };
+        let dest = course_path.join("config").join("notebooks.json");
+        let _ = crate::paths::atomic_write_if_changed(&dest, &bytes);
+    }
+
     fn free_port() -> u16 {
         use std::net::TcpListener;
         TcpListener::bind("127.0.0.1:0")
@@ -61,6 +115,35 @@ impl OpenCodeManager {
 
     pub fn start(&self, course_path: &str) -> Result<RuntimeInfo, String> {
         let key = course_path.to_string();
+        let work_dir = Path::new(course_path);
+
+        // Crear AGENTS.md con contexto de Jintia si aún no existe.
+        // OpenCode lo lee al iniciar para usarlo como contexto del sistema.
+        let agents_file = work_dir.join("AGENTS.md");
+        if !agents_file.exists() {
+            let _ = std::fs::write(
+                &agents_file,
+                "# Jintia — Asistente Pedagógico\n\
+                 \n\
+                 Eres Jintia, un asistente pedagógico especializado en diseño instruccional\n\
+                 universitario para docentes hispanohablantes.\n\
+                 \n\
+                 Responde **siempre en español**, sin excepción, independientemente del idioma\n\
+                 en que te escriban. Usa un tono profesional pero cercano.\n",
+            );
+        }
+
+        // Inyecta opencode.json con el servidor MCP de NotebookLM para que la
+        // Skill de Jintia pueda llamar ask_question directamente, sin caer en
+        // el fallback de Python/patchright. Si el MCP aún no está instalado se
+        // omite sin error — OpenCode arranca igualmente.
+        // Se escribe siempre (incluso si OpenCode ya corre) para que el archivo
+        // esté actualizado cuando el proceso se reinicie.
+        let _ = Self::write_opencode_mcp_config(work_dir);
+        // Copia notebooks.json al directorio del curso para que la Skill lo
+        // encuentre por ruta relativa (config/notebooks.json) sin requerir que
+        // el usuario haya vuelto a guardar la config desde el onboarding.
+        Self::sync_notebooks_to_course(work_dir);
 
         // Reusar proceso existente si ya está sano
         {
@@ -81,23 +164,6 @@ impl OpenCodeManager {
             .ok_or_else(|| "OpenCode no encontrado. Instálalo con: npm install -g opencode-ai".to_string())?;
 
         let port = Self::free_port();
-        let work_dir = Path::new(course_path);
-
-        // Crear AGENTS.md con contexto de Jintia si aún no existe.
-        // OpenCode lo lee al iniciar para usarlo como contexto del sistema.
-        let agents_file = work_dir.join("AGENTS.md");
-        if !agents_file.exists() {
-            let _ = std::fs::write(
-                &agents_file,
-                "# Jintia — Asistente Pedagógico\n\
-                 \n\
-                 Eres Jintia, un asistente pedagógico especializado en diseño instruccional\n\
-                 universitario para docentes hispanohablantes.\n\
-                 \n\
-                 Responde **siempre en español**, sin excepción, independientemente del idioma\n\
-                 en que te escriban. Usa un tono profesional pero cercano.\n",
-            );
-        }
 
         #[cfg(target_os = "windows")]
         let child = Command::new("cmd")

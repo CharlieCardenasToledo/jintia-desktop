@@ -303,6 +303,16 @@ pub fn save_notebooks(entries: Vec<NotebookEntry>) -> ActionResult {
         ));
     }
 
+    // Sincroniza también en el directorio raíz de cada curso para que la
+    // Skill de Jintia (ejecutada por OpenCode en ese directorio) lo encuentre
+    // con una ruta relativa config/notebooks.json sin requerir paths absolutos.
+    for course in &courses {
+        if let Some(root) = course.get("rootPath").and_then(Value::as_str) {
+            let course_config = std::path::Path::new(root).join("config").join("notebooks.json");
+            let _ = atomic_write_if_changed(&course_config, &bytes);
+        }
+    }
+
     ActionResult::ok(format!(
         "Registro de notebooks guardado en:\n{}",
         path_text(&path)
