@@ -785,6 +785,26 @@ async function linkNotebookToCourse(notebookId, notebookName, notebookUrl) {
   toast(`NotebookLM vinculado: ${notebookName}`, "success", 4000);
 }
 
+// ── Conectar y mostrar saludo ─────────────────────────────────────────────
+async function connectAndGreet(coursePath) {
+  const ok = await startRuntime(coursePath);
+  if (ok) {
+    setSendEnabled(true);
+    const newBtn = el("jc-btn-new-session");
+    if (newBtn) newBtn.disabled = false;
+    clearFeed();
+    const course = (state.courses || []).find(c => c.project_path === coursePath) || _course;
+    appendMessage(`<div class="flex gap-2.5 mb-3">
+      <div class="mt-0.5 h-6 w-6 rounded-full bg-brand-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold select-none">J</div>
+      <div class="max-w-[80%] rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 leading-relaxed">
+        Hola, soy Jintia. Estoy listo para trabajar contigo en <strong>${escapeHtml(course?.name || course?.code || "tu asignatura")}</strong>.
+        Puedes pedirme que genere, revise o valide una guía semanal.
+      </div>
+    </div>`);
+    el("jc-input")?.focus();
+  }
+}
+
 // ── Iniciar runtime OpenCode ───────────────────────────────────────────────
 async function startRuntime(coursePath) {
   setStatus("Iniciando OpenCode…", "working");
@@ -1010,11 +1030,11 @@ export function setActiveCourse(course, week) {
     if (sel && course?.project_path) sel.value = course.project_path;
     const wSel = el("jc-week-select");
     if (wSel && week) wSel.value = String(week);
-    setStatus("Desconectado", "neutral");
     setSendEnabled(false);
     const connectBtn = el("jc-btn-connect");
-    if (connectBtn) connectBtn.disabled = false;
+    if (connectBtn) connectBtn.disabled = true;
     el("jc-btn-new-session") && (el("jc-btn-new-session").disabled = true);
+    if (course?.project_path) connectAndGreet(course.project_path);
   });
 }
 
@@ -1145,6 +1165,11 @@ export function renderJintiaChat() {
   }
 
   bindChatEvents();
+
+  // Auto-conectar al abrir la página si hay una asignatura disponible
+  if (_course?.project_path) {
+    requestAnimationFrame(() => connectAndGreet(_course.project_path));
+  }
 }
 
 function bindChatEvents() {
@@ -1170,11 +1195,10 @@ function bindChatEvents() {
     _codexThreadId   = null;
     _notebookChecked = false;
     _sessionsLoaded  = false;
-    setStatus("Desconectado", "neutral");
-    el("jc-btn-connect").disabled = false;
     setSendEnabled(false);
     el("jc-btn-new-session").disabled = true;
     hideSessionsPanel();
+    if (_course?.project_path) connectAndGreet(_course.project_path);
   });
 
   el("jc-btn-connect")?.addEventListener("click", async () => {
@@ -1182,20 +1206,7 @@ function bindChatEvents() {
       toast("Selecciona una asignatura primero", "warning", 3000);
       return;
     }
-    const ok = await startRuntime(_course.project_path);
-    if (ok) {
-      setSendEnabled(true);
-      el("jc-btn-new-session").disabled = false;
-      clearFeed();
-      appendMessage(`<div class="flex gap-2.5 mb-3">
-        <div class="mt-0.5 h-6 w-6 rounded-full bg-brand-600 flex items-center justify-center shrink-0 text-white text-[10px] font-bold select-none">J</div>
-        <div class="max-w-[80%] rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-800 leading-relaxed">
-          Hola, soy Jintia. Estoy listo para trabajar contigo en <strong>${escapeHtml(_course.name || _course.code || "tu asignatura")}</strong>.
-          Puedes pedirme que genere, revise o valide una guía semanal.
-        </div>
-      </div>`);
-      el("jc-input").focus();
-    }
+    await connectAndGreet(_course.project_path);
   });
 
   el("jc-btn-new-session")?.addEventListener("click", () => {
