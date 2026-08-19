@@ -1,7 +1,6 @@
 use crate::paths;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
 use tauri::AppHandle;

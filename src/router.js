@@ -33,6 +33,7 @@ export function registerPage(id, callback) {
 /** Navega a la página indicada. */
 export function navigate(page) {
   if (!PAGE_REGISTRY[page]) return;
+  const previousPage = state.page;
   state.page = page;
 
   // Gestalt: resaltar solo el ítem activo en sidebar (consistencia visual)
@@ -54,6 +55,10 @@ export function navigate(page) {
   const sub_ = document.getElementById("topbar-sub");
   if (h2)   h2.textContent   = title;
   if (sub_) sub_.textContent = sub;
+
+  document.dispatchEvent(new CustomEvent("jintia:page-changed", {
+    detail: { page, previousPage },
+  }));
 
   // Ejecutar el callback de render de la página
   renderCallbacks[page]?.();

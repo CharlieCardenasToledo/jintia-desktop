@@ -8,11 +8,24 @@ function load(key, fallback) {
   catch { return fallback; }
 }
 
+const askJintiaMock = import.meta.env?.MODE === "mock" &&
+  new URLSearchParams(globalThis.location?.search || "").get("ask-jintia") === "1";
+
+const ASK_JINTIA_DEMO_COURSES = [{
+  code: "IFT200",
+  name: "Interacción Persona Computador",
+  weeks: 16,
+  project_path: "C:\\Mock\\Jintia\\ift200_interaccion_persona_computador",
+  notebook_id: "ift200-fuentes",
+  notebook_name: "IFT200 — Fuentes verificadas del curso",
+  notebook_url: "https://notebook.google.com/notebook/ift200-fuentes",
+}];
+
 export const state = {
-  page:          "courses",
+  page:          askJintiaMock ? "jintia-chat" : "courses",
   deps:          [],
   config:        load("ids_config",  {}),
-  courses:       load("ids_courses", []),
+  courses:       askJintiaMock ? ASK_JINTIA_DEMO_COURSES : load("ids_courses", []),
   editingCourse: undefined,
 };
 

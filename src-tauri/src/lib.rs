@@ -25,6 +25,17 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
+fn open_web_source(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(&url).map_err(|_| "Enlace de fuente no válido".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("Solo se permiten fuentes web HTTP o HTTPS".to_string());
+    }
+    app.opener()
+        .open_url(parsed.as_str(), None::<&str>)
+        .map_err(|error| format!("No se pudo abrir la fuente: {error}"))
+}
+
+#[tauri::command]
 async fn check_dependencies() -> Vec<DependencyStatus> {
     tauri::async_runtime::spawn_blocking(capabilities::check_dependencies)
         .await
@@ -490,10 +501,10 @@ async fn run_skill_tool(
 }
 
 #[tauri::command]
-async fn check_migration_needed(project_path: String) -> models::MigrationStatus {
+async fn check_migration_needed(project_path: String) -> MigrationStatus {
     tauri::async_runtime::spawn_blocking(move || course::check_migration_needed(project_path))
         .await
-        .unwrap_or_else(|_| models::MigrationStatus {
+        .unwrap_or_else(|_| MigrationStatus {
             needs_migration: false,
             latex_dirs_found: 0,
             tex_files_found: 0,
@@ -711,12 +722,42 @@ fn codex_start_thread(
 }
 
 #[tauri::command]
+fn codex_list_models(manager: tauri::State<codex::CodexManager>) -> Result<serde_json::Value, String> {
+    manager.list_models()
+}
+
+#[tauri::command]
+fn codex_read_rate_limits(manager: tauri::State<codex::CodexManager>) -> Result<serde_json::Value, String> {
+    manager.read_rate_limits()
+}
+
+#[tauri::command]
 fn codex_submit_turn(
     thread_id: String,
     message: String,
+    model: Option<String>,
+    effort: Option<String>,
+    manager: tauri::State<codex::CodexManager>,
+) -> Result<String, String> {
+    manager.submit_turn(&thread_id, &message, model.as_deref(), effort.as_deref())
+}
+
+#[tauri::command]
+fn codex_interrupt_turn(
+    thread_id: String,
+    turn_id: String,
     manager: tauri::State<codex::CodexManager>,
 ) -> Result<(), String> {
-    manager.submit_turn(&thread_id, &message)
+    manager.interrupt_turn(&thread_id, &turn_id)
+}
+
+#[tauri::command]
+fn codex_respond_approval(
+    id: serde_json::Value,
+    decision: String,
+    manager: tauri::State<codex::CodexManager>,
+) -> Result<(), String> {
+    manager.respond_approval(id, &decision)
 }
 
 // ── OpenCode runtime commands ─────────────────────────────────────────────
@@ -888,6 +929,7 @@ pub fn run() {
         .manage(opencode::OpenCodeManager::new())
         .manage(codex::CodexManager::new())
         .invoke_handler(tauri::generate_handler![
+            open_web_source,
             check_dependencies,
             download_node_runtime,
             get_node_runtime_status,
@@ -962,7 +1004,11 @@ pub fn run() {
             codex_get_account,
             codex_start_login,
             codex_start_thread,
+            codex_list_models,
+            codex_read_rate_limits,
             codex_submit_turn,
+            codex_interrupt_turn,
+            codex_respond_approval,
         ])
         .setup(|_app| {
             paths::migrate_app_dir_if_needed();

@@ -99,13 +99,14 @@ pub(crate) fn course_directory(
 // ── Public re-exports ─────────────────────────────────────────────────────────
 pub use migration::{check_migration_needed, run_migration};
 pub use structure::{create_course_structure, run_self_test, save_course_settings};
-pub use syllabus::{append_demo_week, build_syllabus_md, generate_syllabus};
+pub use syllabus::generate_syllabus;
 pub use welcome::generate_welcome_guide_pdf;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::syllabus::build_syllabus_md;
     use crate::models::WeekData;
 
     #[test]

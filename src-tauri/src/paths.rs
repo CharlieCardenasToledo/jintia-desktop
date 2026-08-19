@@ -90,13 +90,6 @@ pub fn openai_plugin_dir() -> Result<PathBuf, String> {
     Ok(home_dir()?.join(".codex").join("plugins").join("jintia"))
 }
 
-pub fn openai_marketplace_path() -> Result<PathBuf, String> {
-    Ok(home_dir()?
-        .join(".agents")
-        .join("plugins")
-        .join("marketplace.json"))
-}
-
 pub fn installed_skill_dir() -> Result<PathBuf, String> {
     skill_dir()
 }

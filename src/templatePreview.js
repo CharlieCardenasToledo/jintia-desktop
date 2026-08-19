@@ -1,15 +1,17 @@
 /**
- * templatePreview.js — Motor de preview HTML que replica el aspecto de un PDF LaTeX
+ * templatePreview.js — Motor de preview HTML que aproxima el aspecto del PDF
  *
- * Renderiza una versión HTML pixel-approx del documento LaTeX generado,
- * usando datos reales del usuario + lorem ipsum para el contenido.
- * No requiere compilar LaTeX — es una representación visual fiel.
+ * Renderiza una versión HTML pixel-approx de la guía compilada por la Skill
+ * (temas HTML + Vivliostyle), usando datos reales del usuario + lorem ipsum
+ * para el contenido. No requiere compilar el PDF — es una representación
+ * visual aproximada del tema elegido.
  *
  * Principio aplicado: Don Norman — Feedback: el usuario ve el resultado
  * antes de generar el archivo real.
  */
 
 import { escapeHtml } from "./dom.js";
+import { buildSampleGuideData } from "./sampleGuide.js";
 
 // Lorem ipsum académico en español
 const LOREM = {
@@ -49,31 +51,78 @@ const PREVIEW = {
 };
 
 /**
- * Renderiza el preview HTML de una plantilla dado su tipo y la config institucional.
- * @param {string} previewType - ID del tipo de preview ("elegantbook-clasico" etc.)
- * @param {object} config - Configuración institucional del usuario
+ * Renderiza el preview HTML de una plantilla dado el objeto de plantilla real
+ * (tal como lo devuelve `listTemplates()`) y la config institucional completa.
+ * @param {object} template - Plantilla real de la Skill ({ id, overrides?: { colors } , ... })
+ * @param {object} config - Configuración institucional del usuario (autor, carrera,
+ *   facultad, institución, color de marca)
  * @param {string} activeId - ID de la plantilla actualmente activa
  * @returns {string} HTML string
  */
-export function renderTemplatePreview(previewType, config, activeId) {
-  const candidate = config.colorHex || rgbToHex(config.colorR ?? 0, config.colorG ?? 121, config.colorB ?? 107);
+export function renderTemplatePreview(template, config, activeId) {
+  const templateId = typeof template === "string" ? template : template?.id;
+  // Un tema puede declarar su propia paleta (ej. jintia-tecnico define un
+  // acento azul-grisáceo fijo en meta.json > overrides.colors). Esa paleta
+  // es parte del diseño del tema y tiene prioridad sobre el color de marca
+  // institucional, igual que ocurre al compilar el PDF real.
+  const themeColors = template?.overrides?.colors || null;
+  const candidate = themeColors?.brand || config.colorHex || rgbToHex(config.colorR ?? 0, config.colorG ?? 121, config.colorB ?? 107);
   const hex = /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : "#00796b";
-  const author = escapeHtml(config.author || "Tu Nombre");
-  const degree = escapeHtml(config.degree || "Ph.D.");
-  const career = escapeHtml(config.career || "Tu Carrera");
-  const inst   = escapeHtml(config.institution || "Tu Institución");
-  const week   = "01";
+  const surface = themeColors?.surface && /^#[0-9a-f]{6}$/i.test(themeColors.surface) ? themeColors.surface : null;
+  const accent  = themeColors?.accent && /^#[0-9a-f]{6}$/i.test(themeColors.accent) ? themeColors.accent : hex;
+  const author  = escapeHtml(config.author || "Tu Nombre");
+  const degree  = escapeHtml(config.degree || "Ph.D.");
+  const career  = escapeHtml(config.career || "Tu Carrera");
+  const faculty = escapeHtml(config.faculty || "Tu Facultad");
+  const inst    = escapeHtml(config.institution || "Tu Institución");
+  const week    = "01";
+  const content = buildPreviewContent(config);
+  // Refleja la preferencia real de Ajustes > "Incluir «Producido con Jintia»
+  // en los documentos" (por defecto activada, igual que en el PDF real).
+  const credit  = config.includeJintiaCredit !== false;
 
   const luminance = getLuminance(hex);
   const textOnPrimary = luminance > 0.5 ? "#1a1a1a" : "#ffffff";
 
-  switch (previewType) {
-    case "kaohandt-marginal":     return previewKaohandtMarginal(hex, textOnPrimary, author, degree, career, inst, week);
-    default:                        return previewElegantbookClasico(hex, textOnPrimary, author, degree, career, inst, week);
+  switch (templateId) {
+    case "jintia-cuaderno":  return previewMinimalista(hex, textOnPrimary, author, degree, career, faculty, inst, week, credit);
+    case "jintia-tecnico":   return previewNotaTecnica(hex, textOnPrimary, author, degree, career, faculty, inst, week, { surface, accent }, credit);
+    case "jintia-clasico":
+    default:                 return previewElegantbookClasico(hex, textOnPrimary, author, degree, career, faculty, inst, week, content, credit);
   }
 }
 
-// ── Kaobook Marginal ─────────────────────────────────────────────────────
+function creditLine(credit) {
+  return credit
+    ? `<span style="opacity:.65">Producido con Jintia</span>`
+    : "";
+}
+
+// Deriva el texto de la vista previa de "Jintia Clásico" a partir de la guía
+// de demostración real (JINTIA-101), en vez de relleno genérico, para que la
+// vista previa refleje el flujo real de trabajo con Jintia.
+function buildPreviewContent(config) {
+  const sample = buildSampleGuideData(config);
+  const week = sample.weeksData[0];
+  const lines = text => String(text || "").split("\n").map(line => line.trim()).filter(Boolean);
+  const topics = lines(week.topics);
+  const outcomes = lines(week.outcomes);
+  const bibliography = lines(week.bibliography);
+  return {
+    intro: sample.description,
+    topics,
+    outcomes,
+    bibliography: bibliography[0] || LOREM.bibliography,
+    activity: week.gradedActivity || LOREM.activity,
+  };
+}
+
+// Los nombres de las siguientes funciones (elegantbook, kaohandt, ieee...) son
+// etiquetas internas heredadas de los mockups de diseño y no corresponden a
+// ningún tema real de la Skill. No usar estos nombres como IDs de plantilla:
+// los únicos IDs reales son "jintia-clasico", "jintia-cuaderno" y "jintia-tecnico".
+
+// ── Kaobook Marginal (layout de reserva, sin tema real asociado) ─────────
 function previewKaohandtMarginal(hex, textOnPrimary, author, degree, career, inst, week) {
   const dim = hexAlpha(hex, 0.1);
   const border = hexAlpha(hex, 0.35);
@@ -114,8 +163,8 @@ function previewKaohandtMarginal(hex, textOnPrimary, author, degree, career, ins
   </div>`;
 }
 
-// ── ElegantBook Clásico ───────────────────────────────────────────────────
-function previewElegantbookClasico(hex, textOnPrimary, author, degree, career, inst, week) {
+// ── Jintia Clásico ────────────────────────────────────────────────────────
+function previewElegantbookClasico(hex, textOnPrimary, author, degree, career, faculty, inst, week, content, credit) {
   const dim  = hexAlpha(hex, 0.12);
   const mid  = hexAlpha(hex, 0.25);
   const border = hexAlpha(hex, 0.4);
@@ -135,6 +184,7 @@ function previewElegantbookClasico(hex, textOnPrimary, author, degree, career, i
         <div class="${PREVIEW.coverMeta}">
           <div style="font-weight:700">${author}, ${degree}</div>
           <div style="color:#666;font-size:10px">Carrera de ${career}</div>
+          <div style="color:#666;font-size:10px">Facultad de ${faculty}</div>
           <div style="color:#666;font-size:10px">${inst}</div>
         </div>
       </div>
@@ -144,7 +194,7 @@ function previewElegantbookClasico(hex, textOnPrimary, author, degree, career, i
     <div class="${PREVIEW.inner}">
       <div class="${PREVIEW.header}" style="color:${hex};border-bottom-color:${border}">
         <span>Elaborado por: ${author}, ${degree}</span>
-        <span>Carrera: ${career}</span>
+        <span>${career} · ${faculty}</span>
       </div>
 
       <!-- Capítulo -->
@@ -161,11 +211,11 @@ function previewElegantbookClasico(hex, textOnPrimary, author, degree, career, i
         <div class="${PREVIEW.blockBody}">
           <div class="${PREVIEW.topicRow}">
             <span class="${PREVIEW.dot}" style="background:${hex}"></span>
-            <span>Tema 1: ${TOPICS[0]}</span>
+            <span>Tema 1: ${escapeHtml(content.topics[0] || TOPICS[0])}</span>
           </div>
           <div class="${PREVIEW.topicRow}">
             <span class="${PREVIEW.dot}" style="background:${hex}"></span>
-            <span>Tema 2: ${TOPICS[1]}</span>
+            <span>Tema 2: ${escapeHtml(content.topics[1] || TOPICS[1])}</span>
           </div>
           <div class="${PREVIEW.meta}">
             <span>4h docencia · 8h autónomo</span>
@@ -175,7 +225,7 @@ function previewElegantbookClasico(hex, textOnPrimary, author, degree, career, i
 
       <!-- Texto de cuerpo -->
       <div class="${PREVIEW.sectionTitle}">1.1 Marco Teórico</div>
-      <div class="${PREVIEW.paragraph}">${LOREM.intro}</div>
+      <div class="${PREVIEW.paragraph}">${escapeHtml(content.intro)}</div>
 
       <!-- Bloque accentblock (con color primario) -->
       <div class="${PREVIEW.block}" style="background:${hex};color:${textOnPrimary}">
@@ -192,31 +242,31 @@ function previewElegantbookClasico(hex, textOnPrimary, author, degree, career, i
       <div class="${PREVIEW.block}" style="background:#e8f7f0;border-top:2px solid #12b76a">
         <div class="${PREVIEW.blockTitle}" style="color:#16a34a">Guía Práctica</div>
         <div class="${PREVIEW.blockBody}">
-          <div class="${PREVIEW.topicRow}"><span class="${PREVIEW.dot}" style="background:#12b76a"></span><span>${OUTCOMES[0]}</span></div>
-          <div class="${PREVIEW.topicRow}"><span class="${PREVIEW.dot}" style="background:#12b76a"></span><span>${OUTCOMES[1]}</span></div>
+          <div class="${PREVIEW.topicRow}"><span class="${PREVIEW.dot}" style="background:#12b76a"></span><span>${escapeHtml(content.outcomes[0] || OUTCOMES[0])}</span></div>
+          <div class="${PREVIEW.topicRow}"><span class="${PREVIEW.dot}" style="background:#12b76a"></span><span>${escapeHtml(content.outcomes[1] || OUTCOMES[1])}</span></div>
         </div>
       </div>
 
       <!-- Bloque sandblock -->
       <div class="${PREVIEW.block}" style="background:#fdf5e6;border-top:2px solid #f79009">
         <div class="${PREVIEW.blockTitle}" style="color:#b45309">Actividad Calificada · 20%</div>
-        <div class="${PREVIEW.blockBody}">${LOREM.activity}</div>
+        <div class="${PREVIEW.blockBody}">${escapeHtml(content.activity)}</div>
       </div>
 
       <!-- Bibliografía -->
       <div class="${PREVIEW.sectionTitle}">Bibliografía</div>
-      <div class="${PREVIEW.bibliography}">${LOREM.bibliography}</div>
+      <div class="${PREVIEW.bibliography}">${escapeHtml(content.bibliography)}</div>
 
       <div class="${PREVIEW.footer}" style="border-top-color:${border}">
         <span style="color:${hex}">${inst}</span>
-        <span style="color:#999">Pág. 1</span>
+        <span style="color:#999">${creditLine(credit)}${credit ? " · " : ""}Pág. 1</span>
       </div>
     </div>
   </div>`;
 }
 
-// ── ElegantBook Minimalista ───────────────────────────────────────────────
-function previewMinimalista(hex, textOnPrimary, author, degree, career, inst, week) {
+// ── Jintia Cuaderno ───────────────────────────────────────────────────────
+function previewMinimalista(hex, textOnPrimary, author, degree, career, faculty, inst, week, credit) {
   return `
   <div class="${PREVIEW.page}">
 
@@ -228,7 +278,7 @@ function previewMinimalista(hex, textOnPrimary, author, degree, career, inst, we
       </div>
       <div style="font-size:11px;color:#555;line-height:1.8">
         <div>${author}${degree ? `, ${degree}` : ""}</div>
-        <div>${career}</div>
+        <div>${career} · ${faculty}</div>
         <div>${inst}</div>
       </div>
       <div style="margin-top:16px;font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.1em">
@@ -240,7 +290,7 @@ function previewMinimalista(hex, textOnPrimary, author, degree, career, inst, we
     <div class="${PREVIEW.inner}">
       <div class="${PREVIEW.header}" style="color:#555;border-bottom-color:#e5e7eb">
         <span>${author}, ${degree}</span>
-        <span>${career}</span>
+        <span>${career} · ${faculty}</span>
       </div>
 
       <div style="font-size:15px;font-weight:700;color:#1a1a1a;border-top:2px solid ${hex};padding-top:8px;margin:14px 0 8px">
@@ -272,23 +322,25 @@ function previewMinimalista(hex, textOnPrimary, author, degree, career, inst, we
 
       <div class="${PREVIEW.footer}" style="border-top-color:#e5e7eb">
         <span style="color:#555">${inst}</span>
-        <span style="color:#aaa">Pág. 1</span>
+        <span style="color:#aaa">${creditLine(credit)}${credit ? " · " : ""}Pág. 1</span>
       </div>
     </div>
   </div>`;
 }
 
-// ── Nota Técnica IEEE ─────────────────────────────────────────────────────
-function previewNotaTecnica(hex, textOnPrimary, author, degree, career, inst, week) {
+// ── Jintia Técnico ────────────────────────────────────────────────────────
+function previewNotaTecnica(hex, textOnPrimary, author, degree, career, faculty, inst, week, palette = {}, credit) {
+  const surface = palette.surface || "#f0f4ff";
+  const accent  = palette.accent || hex;
   return `
   <div class="${PREVIEW.page}">
 
     <!-- Cabecera IEEE -->
-    <div class="border-b-2 border-[#1a1a1a] bg-slate-50 px-5 py-4">
+    <div class="border-b-2 border-[#1a1a1a] px-5 py-4" style="background:${surface}">
       <div style="text-align:center;border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:10px">
         <div style="font-size:15px;font-weight:700;color:#1a1a1a;font-family:serif">Fundamentos y Aplicaciones</div>
         <div style="font-size:10px;color:#444;margin-top:4px;font-style:italic">Nota Técnica · Semana ${week}</div>
-        <div style="font-size:9px;color:#666;margin-top:6px">${author}${degree ? `, ${degree}` : ""} — ${career}</div>
+        <div style="font-size:9px;color:#666;margin-top:6px">${author}${degree ? `, ${degree}` : ""} — ${career} · ${faculty}</div>
         <div style="font-size:9px;color:#888">${inst}</div>
       </div>
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#555;margin-bottom:4px">Resumen</div>
@@ -305,8 +357,8 @@ function previewNotaTecnica(hex, textOnPrimary, author, degree, career, inst, we
         <div style="font-size:10px;line-height:1.6;color:#333;text-indent:1em;text-align:justify">${LOREM.body1}</div>
 
         <!-- Teorema -->
-        <div style="border:1px solid ${hex};border-radius:3px;padding:7px 9px;margin:8px 0;background:${hexAlpha(hex, 0.05)}">
-          <div style="font-size:9px;font-weight:700;color:${hex}">Definición 1.1</div>
+        <div style="border:1px solid ${accent};border-radius:3px;padding:7px 9px;margin:8px 0;background:${hexAlpha(accent, 0.05)}">
+          <div style="font-size:9px;font-weight:700;color:${accent}">Definición 1.1</div>
           <div style="font-size:10px;font-style:italic;color:#333;margin-top:3px">${LOREM.body2.slice(0, 100)}…</div>
         </div>
 
@@ -320,7 +372,7 @@ function previewNotaTecnica(hex, textOnPrimary, author, degree, career, inst, we
 
         <!-- Algoritmo -->
         <div style="border:1px solid #ccc;border-radius:3px;padding:7px 9px;margin:8px 0;background:#f8f9fa;font-family:monospace;font-size:9px;color:#333;line-height:1.8">
-          <div style="font-weight:700;margin-bottom:4px;color:${hex}">Algoritmo 1</div>
+          <div style="font-weight:700;margin-bottom:4px;color:${accent}">Algoritmo 1</div>
           <div>1: Input: datos, parámetros</div>
           <div>2: <strong>while</strong> condición <strong>do</strong></div>
           <div>3:&nbsp;&nbsp;&nbsp;Procesar(datos)</div>
@@ -335,7 +387,7 @@ function previewNotaTecnica(hex, textOnPrimary, author, degree, career, inst, we
 
     <div class="${PREVIEW.footer}" style="border-top-color:#333;margin-top:8px">
       <span style="color:#333">${inst}</span>
-      <span style="color:#999">Nota Técnica · Pág. 1</span>
+      <span style="color:#999">${creditLine(credit)}${credit ? " · " : ""}Nota Técnica · Pág. 1</span>
     </div>
   </div>`;
 }

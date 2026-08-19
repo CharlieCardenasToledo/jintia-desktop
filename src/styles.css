@@ -209,6 +209,22 @@ body::after {
 
 #app { display: flex; height: 100vh; }
 
+.app-sidebar {
+  width: 216px;
+  transition: width .2s ease;
+}
+.app-sidebar-inner { min-width: 216px; }
+.app-sidebar[data-collapsed="true"] { width: 0; }
+
+@media (min-width: 1280px) {
+  .app-sidebar { width: 240px; }
+  .app-sidebar-inner { min-width: 240px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar { transition: none; }
+}
+
 /* Navegación del onboarding: controles desnudos y un indicador animado entre pasos. */
 .onboarding-nav-arrow {
   width: 32px;
@@ -699,16 +715,37 @@ code {
 /* Mobile: Increase spacing and touch targets (max-width: 640px) */
 @media (max-width: 640px) {
   /* Topbar adjustments for small screens */
-  header[data-tauri-drag-region] {
+  .app-topbar[data-tauri-drag-region] {
     height: 56px !important;
     padding: 4px 12px !important;
-    top: 0 !important;
-    inset-x: 0 !important;
+    top: 4px !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: calc(100% - 16px) !important;
+    min-height: 56px !important;
   }
 
-  /* Adjust main content top padding for smaller topbar */
-  [class*="pt-\[80px\]"] {
-    padding-top: 64px !important;
+  .app-topbar-copy {
+    max-width: calc(100% - 144px);
+  }
+
+  .app-window-controls {
+    flex: 0 0 auto;
+  }
+
+  #topbar-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #topbar-sub {
+    display: none;
+  }
+
+  /* La barra termina en 60px; el contenido empieza sin la franja vacía previa. */
+  .app-page-stage {
+    padding-top: 68px !important;
   }
 
   /* Increase button and interactive element padding on touch devices */
@@ -739,7 +776,8 @@ code {
   }
 
   /* Compact modal for small screens */
-  [role="dialog"] {
+  [role="dialog"],
+  [role="alertdialog"] {
     max-width: 90vw !important;
     max-height: 90vh !important;
     margin: auto;
@@ -760,19 +798,26 @@ code {
 
 /* Landscape mobile: Compact vertical spacing */
 @media (max-height: 500px) and (orientation: landscape) {
-  header[data-tauri-drag-region] {
+  .app-topbar[data-tauri-drag-region] {
     height: 44px !important;
     padding: 2px 8px !important;
   }
 
-  [class*="pt-\[80px\]"] {
+  .app-page-stage {
     padding-top: 52px !important;
   }
 }
 
 @media (max-width: 760px) {
-  body { overflow: auto; }
-  #app { min-height: 100vh; height: auto; }
+  body {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  #app {
+    height: 100dvh;
+    min-height: 0;
+  }
 }
 
 /* ── Final onboarding step ─────────────────────────────────────────────────── */

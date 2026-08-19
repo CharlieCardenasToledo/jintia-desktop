@@ -186,9 +186,29 @@ pub struct NotebookEntry {
     pub notebook_url: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct TemplateColors {
+    #[serde(default)]
+    pub brand: Option<String>,
+    #[serde(default)]
+    pub surface: Option<String>,
+    #[serde(default)]
+    pub accent: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct TemplateOverrides {
+    #[serde(default)]
+    pub colors: Option<TemplateColors>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TemplateMeta {
     pub id: String,
+    // Los temas base (jintia-clasico) declaran "name"; los que extienden otro
+    // tema (jintia-cuaderno, jintia-tecnico) declaran "displayName". Sin el
+    // alias, esos dos se descartaban en list_templates() por falta de "name".
+    #[serde(alias = "displayName")]
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -198,6 +218,11 @@ pub struct TemplateMeta {
     pub featured: bool,
     #[serde(default)]
     pub version: String,
+    // Paleta propia del tema (ej. jintia-tecnico define brand/surface/accent
+    // azul-grisáceo independiente del color institucional). Cuando existe,
+    // tiene prioridad sobre el color primario configurado por el docente.
+    #[serde(default)]
+    pub overrides: Option<TemplateOverrides>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

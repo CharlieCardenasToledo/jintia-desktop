@@ -122,55 +122,6 @@ pub fn theme_exists(id: &str) -> bool {
     valid_theme_id(id) && themes_dir().join(id).join("meta.json").is_file()
 }
 
-pub struct ActiveInstitution {
-    pub author: String,
-    pub career: String,
-    pub institution: String,
-    pub primary_rgb: String,
-}
-
-fn hex_to_rgb_csv(hex: &str) -> String {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() == 6 {
-        if let (Ok(r), Ok(g), Ok(b)) = (
-            u8::from_str_radix(&hex[0..2], 16),
-            u8::from_str_radix(&hex[2..4], 16),
-            u8::from_str_radix(&hex[4..6], 16),
-        ) {
-            return format!("{r},{g},{b}");
-        }
-    }
-    "0,121,107".to_string()
-}
-
-/// Lee institution.json y devuelve los datos que necesita el preámbulo LaTeX
-/// (color de marca en RGB, autor, carrera, institución). Usa valores vacíos
-/// o el color por defecto si todavía no se configuró la institución.
-pub fn active_institution() -> ActiveInstitution {
-    let value = config_file_path("institution.json")
-        .ok()
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-
-    let get = |path: &[&str]| -> Option<String> {
-        let mut current = value.as_ref()?;
-        for key in path {
-            current = current.get(key)?;
-        }
-        current.as_str().map(str::to_string)
-    };
-
-    ActiveInstitution {
-        author: get(&["institution", "author"]).unwrap_or_default(),
-        career: get(&["institution", "career"]).unwrap_or_default(),
-        institution: get(&["institution", "name"]).unwrap_or_default(),
-        primary_rgb: hex_to_rgb_csv(
-            &get(&["branding", "primaryColor"]).unwrap_or_else(|| "#00796B".to_string()),
-        ),
-    }
-}
-
-
 pub fn apply_institution(config: InstitutionConfig) -> ActionResult {
     let _operation = match CONFIG_WRITE_OPERATION.lock() {
         Ok(operation) => operation,

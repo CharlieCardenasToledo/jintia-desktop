@@ -10,8 +10,8 @@ npx jintia harness install --project ./mi-curso --scope=project --providers=clau
 npx jintia init ./mi-curso --code IFT200 --name "Mi curso"
 npx jintia syllabus validate ./mi-curso/README.md
 npx jintia audit ./mi-curso/README.md --json
-npx jintia validate semanas/semana-03/latex/guia-semana-03.tex
-npx jintia compile semanas/semana-03/latex/guia-semana-03.tex
+npx jintia validate semanas/semana-03/guide.json
+npx jintia compile semanas/semana-03/guide.json
 ```
 
 La CLI orquesta scripts existentes. Cada comando devuelve un código distinto
@@ -20,7 +20,7 @@ de cero cuando encuentra errores que deben bloquear el flujo.
 ## Operaciones visuales y estado
 
 ```bash
-npx jintia visual render figure/specs/fig-id.json --template elegantbook-clasico
+npx jintia visual render figure/specs/fig-id.json --template jintia-clasico
 npx jintia visual inspect figure/manifest.json
 npx jintia state update ./curso 03 compiled ./curso/semanas/semana-03/README.md
 npx jintia context init ./curso

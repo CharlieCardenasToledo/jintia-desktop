@@ -35,7 +35,6 @@ pub use python::{
     download_portable_python,
     install_pip_packages,
 };
-pub(crate) use python::managed_python_command;
 
 // ==================== RE-EXPORTS: npm ====================
 
@@ -49,7 +48,6 @@ pub use npm::{
     install_notebooklm_mcp,
     portable_notebooklm_mcp_installed_for,
     resolve_notebooklm_mcp_bin_for,
-    NotebookLmBrowserStatus,
 };
 pub(crate) use npm::{
     portable_notebooklm_mcp_package_dir_for,
@@ -68,12 +66,7 @@ pub use skill::{
 
 // ==================== RE-EXPORTS: profile_binary ====================
 
-pub use profile_binary::{
-    BinaryPlatformSpec,
-    profile_binary_platform_spec,
-    install_profile_binary,
-    install_profile_binaries,
-};
+pub use profile_binary::install_profile_binaries;
 
 // ==================== SHARED HELPERS ====================
 
@@ -1527,10 +1520,8 @@ mod tests {
 
 #[cfg(test)]
 mod python_activation_tests {
-    use super::*;
     use super::python::{
         activate_staged_python_runtime,
-        quarantine_python_runtime,
         retry_python_runtime_validation,
     };
     #[cfg(target_os = "windows")]

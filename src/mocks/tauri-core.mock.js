@@ -10,7 +10,9 @@ import { APP_META } from "../appMeta.js";
  *
  * BYPASS: añade ?bypass=1 a la URL para saltar el onboarding directamente al
  * dashboard, útil para auditorías UX/QA visual.
- * Ejemplo: http://localhost:1421/?bypass=1
+ * ASK JINTIA: añade también &ask-jintia=1 para cargar el curso, las fuentes,
+ * las respuestas y un historial editable del escenario visual.
+ * Ejemplo: http://localhost:1421/?bypass=1&ask-jintia=1
  */
 
 function delay(ms = 250) {
@@ -20,6 +22,39 @@ function delay(ms = 250) {
 // Si la URL contiene ?bypass=1, arranca con onboarding completado y
 // todos los datos pre-configurados para acceder directo al dashboard.
 const BYPASS = new URLSearchParams(location.search).get("bypass") === "1";
+
+const chatSessions = [
+  { id: "ses_mock_001", title: "Evaluación heurística · Semana 03" },
+  { id: "ses_mock_002", title: "Actividad práctica · Semana 02" },
+  { id: "ses_mock_003", title: "Revisión del sílabo" },
+  { id: "ses_mock_004", title: "Principios Gestalt aplicados" },
+];
+
+const chatMessages = {
+  ses_mock_001: [
+    { info: { role: "user" }, parts: [{ type: "text", text: "Revisa la guía de la semana 3 con las heurísticas de Nielsen y dame mejoras concretas." }] },
+    { info: { role: "assistant" }, parts: [{ type: "text", text: `## Revisión de la guía
+
+La estructura es clara, pero conviene hacer más visible la relación entre **objetivo, actividad y evidencia**.
+
+1. Reduce la introducción a dos párrafos.
+2. Presenta los criterios de éxito antes de la actividad.
+3. Añade una comprobación breve al cerrar cada bloque.
+
+| Hallazgo | Impacto | Mejora |
+| --- | --- | --- |
+| Estado poco visible | Alto | Mostrar progreso y resultado junto a cada actividad |
+| Instrucciones extensas | Medio | Dividirlas en pasos verificables |
+
+Fuentes: [10 Usability Heuristics](https://www.nngroup.com/articles/ten-usability-heuristics/) y [WCAG 2.2](https://www.w3.org/TR/WCAG22/).` }] },
+  ],
+  ses_mock_002: [
+    { info: { role: "user" }, parts: [{ type: "text", text: "Propón una actividad práctica sobre la ley de Fitts." }] },
+    { info: { role: "assistant" }, parts: [{ type: "text", text: "Diseña una comparación de tres tamaños de objetivo, registra tiempo y errores, y cierra con una reflexión sobre distancia, tamaño y precisión." }] },
+  ],
+  ses_mock_003: [{ info: { role: "assistant" }, parts: [{ type: "text", text: "El sílabo mantiene una secuencia coherente. Recomiendo explicitar la evidencia esperada en cada resultado de aprendizaje." }] }],
+  ses_mock_004: [{ info: { role: "assistant" }, parts: [{ type: "text", text: "La proximidad y la región común pueden reforzar la agrupación de recursos, actividades y evaluaciones en cada semana." }] }],
+};
 
 const state = {
   onboarding: {
@@ -67,10 +102,11 @@ const state = {
     { id: "tesis-2026", name: "Tesis", url: "https://notebook.google.com/notebook/tesis-2026", description: "" },
   ],
   templates: [
-    { id: "elegantbook-clasico", name: "ElegantBook Clásico", description: "Portada institucional con bloques pedagógicos numerados y bibliografía APA.", tags: ["Institucional", "Formal"], previewType: "elegantbook-clasico", featured: true, documentClass: "elegantbook" },
-    { id: "kaohandt-marginal", name: "Kaohandt Marginal", description: "Diseño editorial con notas laterales para conceptos, preguntas y evidencias.", tags: ["Personal", "Marginal"], previewType: "kaohandt-marginal", featured: false, documentClass: "kaobook" },
+    { id: "jintia-clasico", name: "Jintia Clásico", description: "Guía académica de una columna con bloques de color por tipo pedagógico. Ideal para materias con alto contenido conceptual y teórico.", tags: ["Institucional", "Una columna"], featured: true },
+    { id: "jintia-cuaderno", name: "Jintia Cuaderno", description: "Cuadernillo de ejercicios A5 con espaciado para escritura manual, tipografía serif y líneas punteadas de respuesta.", tags: ["Personal", "A5"], featured: false },
+    { id: "jintia-tecnico", name: "Jintia Técnico", description: "Tema para guías con alto contenido de código, terminales y diagramas. Mayor densidad tipográfica, acentos azul-grisáceo.", tags: ["Institucional", "Técnico"], featured: true, overrides: { colors: { brand: "#1d4ed8", surface: "#f0f4ff", accent: "#0ea5e9" } } },
   ],
-  activeTemplateId: "elegantbook-clasico",
+  activeTemplateId: "jintia-clasico",
   institutionConfigured: BYPASS,
 };
 
@@ -289,26 +325,34 @@ const handlers = {
     port: 14200,
     status: "ready",
   }),
-  opencode_rename_session: () => undefined,
-  opencode_delete_session: () => undefined,
-  opencode_list_sessions: ({ coursePath } = {}) => [
-    { id: "ses_mock_001", title: "Jintia — Semana 3", directory: coursePath },
-    { id: "ses_mock_002", title: "Jintia — Semana 1", directory: coursePath },
-    { id: "ses_mock_003", title: "Jintia — Chat", directory: coursePath },
-  ],
+  opencode_rename_session: ({ sessionId, title }) => {
+    const session = chatSessions.find(entry => entry.id === sessionId);
+    if (!session) throw new Error("Conversación no encontrada (mock).");
+    session.title = title;
+  },
+  opencode_delete_session: ({ sessionId }) => {
+    const index = chatSessions.findIndex(entry => entry.id === sessionId);
+    if (index < 0) throw new Error("Conversación no encontrada (mock).");
+    chatSessions.splice(index, 1);
+    delete chatMessages[sessionId];
+  },
+  opencode_list_sessions: ({ coursePath } = {}) => chatSessions.map(session => ({ ...session, directory: coursePath })),
   opencode_list_models: () => [
     { id: "deepseek-v4-flash-free", provider_id: "opencode", name: "DeepSeek V4 Flash Free" },
     { id: "nemotron-3.5-lightning-free", provider_id: "opencode", name: "Nemotron 3.5 Lightning Free" },
   ],
-  agent_create_session: ({ coursePath, week }) => ({
-    id: `ses_mock_${Date.now()}`,
-    title: week ? `Jintia — Semana ${week}` : "Jintia — Chat",
-    course_path: coursePath,
-  }),
+  agent_create_session: ({ coursePath, week }) => {
+    const session = {
+      id: `ses_mock_${Date.now()}`,
+      title: week ? `Nueva conversación · Semana ${week}` : "Nueva conversación",
+      directory: coursePath,
+    };
+    chatSessions.unshift(session);
+    chatMessages[session.id] = [];
+    return { ...session, course_path: coursePath };
+  },
   agent_send_message: () => undefined,
-  agent_get_messages: () => [
-    { info: { role: "assistant" }, parts: [{ type: "text", text: "¡Hola! Soy Jintia. ¿En qué semana trabajamos hoy?" }] },
-  ],
+  agent_get_messages: ({ sessionId }) => (chatMessages[sessionId] || []).map(message => structuredClone(message)),
   agent_abort: () => undefined,
 
   // ── Codex app-server (ChatGPT sin API key) ──────────────────────────────
@@ -324,6 +368,8 @@ const handlers = {
   codex_start_login: () => { throw new Error("Codex no iniciado (mock)"); },
   codex_start_thread: () => { throw new Error("Codex no iniciado (mock)"); },
   codex_submit_turn: () => { throw new Error("Codex no iniciado (mock)"); },
+  codex_interrupt_turn: () => undefined,
+  open_web_source: () => undefined,
 };
 
 export async function invoke(cmd, args = {}) {

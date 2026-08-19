@@ -401,8 +401,8 @@ test('Desktop no conserva exportación manual de Skill', async () => {
 });
 test('el modo mock no anuncia plantillas que el backend no incorpora', async () => {
   const mock = await readFile(new URL('src/mocks/tauri-core.mock.js', root), 'utf8');
-  assert.match(mock, /id:\s*"elegantbook-clasico"/);
-  assert.doesNotMatch(mock, /minimal-mono|ieee-tecnico|cuaderno-taller/);
+  assert.match(mock, /id:\s*"jintia-clasico"/);
+  assert.doesNotMatch(mock, /elegantbook-clasico|kaohandt-marginal|minimal-mono|ieee-tecnico|cuaderno-taller/);
 });
 
 test('la firma SignPath solo publica artifacts verificados cuando está activada', async () => {
@@ -441,7 +441,7 @@ test('todo ícono usado con ic(name) está registrado en icons.js (si no, Lucide
   const kebabToPascal = kebab => kebab.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join('');
 
   const files = ['src/onboarding.js', 'src/main.js', 'src/pages/courses.js', 'src/pages/syllabus.js',
-    'src/pages/templates.js', 'src/pages/settings.js', 'src/pages/docs.js'];
+    'src/pages/templates.js', 'src/pages/settings.js', 'src/pages/docs.js', 'src/pages/jintia-chat.js'];
   const missing = [];
   for (const file of files) {
     const source = file === 'src/onboarding.js' ? await readOnboardingJs() : await readFile(new URL(file, root), 'utf8');
@@ -1040,14 +1040,14 @@ test('los enlaces externos de Acerca de usan opener con una lista cerrada', asyn
 });
 
 test('el crédito opcional de Jintia no sustituye la autoría académica', async () => {
-  const [settings, templates] = await Promise.all([
+  const [settings, preview] = await Promise.all([
     readFile(new URL('src/pages/settings.js', root), 'utf8'),
-    readFile(new URL('src/pages/templates.js', root), 'utf8'),
+    readFile(new URL('src/templatePreview.js', root), 'utf8'),
   ]);
   assert.match(settings, /id="cfg-include-jintia-credit"/);
   assert.match(settings, /Nunca sustituye ni modifica la autoría académica/);
-  // El crédito se pasa cuando se genera el sílabo de vista previa en Plantillas
-  assert.match(templates, /includeJintiaCredit:\s*state\.config\?\.includeJintiaCredit !== false/);
+  // La vista previa de Plantillas refleja la preferencia real de Ajustes
+  assert.match(preview, /config\.includeJintiaCredit !== false/);
 });
 
 test('Configuración muestra una sola sección y conserva navegación accesible', async () => {
@@ -1099,17 +1099,20 @@ test('Configuración ejecuta el diagnóstico de la toolchain mediante un comando
 
 test('Plantillas separa selección, vista previa y activación confirmada', async () => {
   const templates = await readFile(new URL('src/pages/templates.js', root), 'utf8');
-  // preview delega a generateSyllabus (Vivliostyle vía skill CLI)
-  assert.match(templates, /generateSyllabus/);
-  assert.match(templates, /convertFileSrc/);
-  assert.match(templates, /<iframe/);
+  // La vista previa es una aproximación HTML instantánea (sin PDF real ni
+  // iframe): generar un PDF de verdad exige un guide.json + compilación por
+  // la Skill, que la Skill no ofrece para el sílabo de muestra. El iframe con
+  // convertFileSrc cargaba en su lugar el README.md crudo, sin declarar
+  // charset, y el visor lo decodificaba como Windows-1252 (mojibake).
+  assert.match(templates, /renderTemplatePreview/);
+  assert.doesNotMatch(templates, /convertFileSrc/);
+  assert.doesNotMatch(templates, /<iframe/);
   assert.match(templates, /data-select-template/);
   assert.match(templates, /Usar esta plantilla/);
   assert.match(templates, /Plantilla activa/);
   assert.match(templates, /aria-pressed/);
   assert.match(templates, /aria-busy/);
   assert.doesNotMatch(templates, /Activa \/ Editar/);
-  assert.doesNotMatch(templates, /renderTemplatePreview/);
 });
 
 // ELIMINADO: Test "el backend compila la vista previa sin cambiar la plantilla activa"
@@ -1126,21 +1129,20 @@ test('Plantillas muestra el catálogo completo sin cortar resultados', async () 
 });
 
 test('Plantillas comparten una guía semanal de demostración realista', async () => {
-  const templates = await readFile(new URL('src/pages/templates.js', root), 'utf8');
+  const preview = await readFile(new URL('src/templatePreview.js', root), 'utf8');
   const sample = await readFile(new URL('src/sampleGuide.js', root), 'utf8');
   const course = await readCourseRs();
 
-  // onboarding ya no usa muestra sintética: delega a `jintia init` para la prueba final real
-  assert.match(templates, /buildSampleGuideData\(state\.config/);
+  // La vista previa de "Jintia Clásico" usa la guía de muestra real (no relleno)
+  assert.match(preview, /buildSampleGuideData\(config/);
   // La guía de demostración describe el flujo real de Jintia con bibliografía verídica
   assert.match(sample, /Gemini Notebook/);
   assert.match(sample, /Anderson, L\. W\./);
   assert.doesNotMatch(sample, /Apellido, [A-Z]\./);
-  // El contenido de demostración ya no se genera desde Rust LaTeX;
-  // Desktop ahora delega a `jintia init` que crea una estructura JSON pura
-  assert.match(course, /build_syllabus_md/);
-  assert.match(course, /Transferencia a cualquier profesión/);
-  assert.match(course, /Autoevaluación/);
+  // El contenido de demostración ya no se genera desde Rust LaTeX
+  // (append_demo_week fue eliminado); la única fuente de la guía de
+  // muestra es sampleGuide.js, consumida por templatePreview.js.
+  assert.doesNotMatch(course, /append_demo_week|guidesection|mintblock/);
 });
 
 test('Configuración distingue una skill instalada de una skill actualizada', async () => {
@@ -1248,7 +1250,7 @@ test('Courses muestra progreso real y protege sus operaciones', async () => {
   assert.match(courses, /_folderBusy\.has\(index\)/);
   assert.match(courses, /persistCourseList/);
   assert.match(courses, /ui\.surface\.cardGlass,\s*'relative hidden min-h-0 overflow-visible lg:block'/);
-  assert.match(courses, /top-12 z-50 min-w-\[205px\]/);
+  assert.match(courses, /top-12 z-50 min-w-\[248px\]/);
   assert.match(api, /initializeReadme = true/);
   assert.match(main, /data-create-course/);
   assert.match(main, /jintia:new-course/);
@@ -3570,7 +3572,7 @@ test('la detección de harnesses usa el runtime Jintia administrado', async () =
 test('las plantillas provienen del runtime Jintia administrado', async () => {
   const config = await readFile(new URL('src-tauri/src/config.rs', root), 'utf8');
   const themeStart = config.indexOf('pub fn theme_exists(');
-  const themeEnd = config.indexOf('\npub struct ActiveInstitution', themeStart);
+  const themeEnd = config.indexOf('\npub fn apply_institution', themeStart);
   const themeFn = config.slice(themeStart, themeEnd);
   const listStart = config.indexOf('pub fn list_templates()');
   const listEnd = config.indexOf('\npub fn get_active_template()', listStart);
@@ -5621,4 +5623,101 @@ test('un ActionResult fallido normal no activa un segundo canal de error', async
   assert.deepEqual(result, normalFailure, 'el ActionResult fallido debe preservarse sin cambios');
   assert.equal(onErrorCalls, 0, 'onError no debe activarse para un ActionResult devuelto normalmente');
   assert.equal(onSettledCalls, 1, 'onSettled debe llamarse exactamente una vez');
+});
+
+test('Ask Jintia protege el contenido generado y expone estados accesibles', async () => {
+  const [chat, markdown, api] = await Promise.all([
+    readFile(new URL('src/pages/jintia-chat.js', root), 'utf8'),
+    readFile(new URL('src/chatMarkdown.js', root), 'utf8'),
+    readFile(new URL('src/api.js', root), 'utf8'),
+  ]);
+
+  assert.match(chat, /role="log"/);
+  assert.match(chat, /aria-live="polite"/);
+  assert.match(chat, /aria-busy="false"/);
+  assert.match(chat, /renderSafeMarkdown/);
+  assert.match(chat, /openWebSource/);
+  assert.doesNotMatch(chat, /Cadena de pensamiento/);
+  assert.doesNotMatch(chat, /innerHTML\s*=\s*marked\.parse/);
+  assert.match(markdown, /ALLOWED_TAGS/);
+  assert.match(markdown, /\["https:", "http:"\]/);
+  assert.match(api, /Solo se permiten fuentes web HTTP o HTTPS/);
+});
+
+test('Ask Jintia usa el protocolo vigente de Codex y permite interrumpir turnos', async () => {
+  const [chat, codex, lib] = await Promise.all([
+    readFile(new URL('src/pages/jintia-chat.js', root), 'utf8'),
+    readFile(new URL('src-tauri/src/codex/mod.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/lib.rs', root), 'utf8'),
+  ]);
+
+  assert.match(codex, /"turn\/start"/);
+  assert.match(codex, /"turn\/interrupt"/);
+  assert.doesNotMatch(codex, /"turn\/submit"/);
+  // Tauri solo permite alfanuméricos, "-", "/", ":" y "_" en nombres de
+  // evento; "." los invalida y hace que listen() lance una excepción no
+  // capturada que corta el registro de todos los listeners siguientes.
+  assert.match(chat, /codex:item\/agentMessage\/delta/);
+  assert.match(chat, /codex:turn\/completed/);
+  assert.doesNotMatch(chat, /codex:item\.agentMessage\.delta|codex:turn\.completed/);
+  assert.doesNotMatch(codex, /method\.replace\('\/', "\."\)/);
+  assert.match(chat, /codex_interrupt_turn/);
+  assert.match(lib, /codex_interrupt_turn/);
+});
+
+test('el historial de Ask Jintia hidrata iconos y usa las rutas vigentes de OpenCode', async () => {
+  const [chat, client] = await Promise.all([
+    readFile(new URL('src/pages/jintia-chat.js', root), 'utf8'),
+    readFile(new URL('src-tauri/src/opencode/client.rs', root), 'utf8'),
+  ]);
+
+  assert.match(chat, /renderSessionsList[\s\S]*?refreshIcons\(\)/);
+  assert.match(chat, /titleBtn\.replaceWith\(editor\)/);
+  assert.match(chat, /border-teal-700 bg-teal-50 text-slate-950/);
+  assert.match(client, /\.patch\(format!\("\{\}\/session\/\{\}"/);
+  assert.doesNotMatch(client, /session\/\{\}\/rename/);
+  assert.doesNotMatch(client, /status\(\)\.as_u16\(\) == 404/);
+});
+
+test('Ask Jintia integra el historial en contexto, colapsa el menú y mantiene objetivos táctiles legibles', async () => {
+  const [chat, main, router, styles, courses, icons] = await Promise.all([
+    readFile(new URL('src/pages/jintia-chat.js', root), 'utf8'),
+    readFile(new URL('src/main.js', root), 'utf8'),
+    readFile(new URL('src/router.js', root), 'utf8'),
+    readFile(new URL('src/styles.css', root), 'utf8'),
+    readFile(new URL('src/pages/courses.js', root), 'utf8'),
+    readFile(new URL('src/icons.js', root), 'utf8'),
+  ]);
+
+  assert.match(chat, /function panelViewportMode\(\)/);
+  assert.match(chat, /function showSourcesPanel/);
+  assert.doesNotMatch(chat, /function showSessionsPanel/);
+  assert.match(chat, /syncPanelLayout\(\{ force: true \}\)/);
+  assert.match(chat, /id="jc-panel-scrim"/);
+  assert.match(chat, /aria-controls="jc-sources-panel"/);
+  assert.match(chat, /id="jc-sources-content"[\s\S]*?id="jc-history-section"/);
+  assert.match(chat, />Enlaces citados</);
+  assert.match(chat, />Conversaciones</);
+  assert.match(chat, /\.jc-icon-button \{ min-width: 44px; min-height: 44px; \}/);
+  assert.match(chat, /ic\("pencil", 16\)/);
+  assert.match(chat, /ic\("trash-2", 16\)/);
+
+  assert.match(main, /id="app-sidebar"/);
+  assert.match(main, /id="app-sidebar-toggle"/);
+  assert.match(main, /function setSidebarCollapsed/);
+  assert.match(main, /page === "jintia-chat"[\s\S]*?setSidebarCollapsed\(true\)/);
+  assert.match(router, /new CustomEvent\("jintia:page-changed"/);
+  assert.match(styles, /\.app-sidebar\[data-collapsed="true"\]\s*\{\s*width: 0;/);
+  assert.match(main, /app-topbar/);
+  assert.match(main, /app-page-stage/);
+  assert.match(styles, /#topbar-sub\s*\{\s*display: none;/);
+  assert.match(styles, /#app\s*\{\s*height: 100dvh;/);
+
+  assert.match(courses, /function renderJintiaAction/);
+  assert.match(courses, /compact \? "Jintia" : "Ask Jintia"/);
+  assert.match(courses, />Abrir con IA</);
+  assert.match(courses, />ChatGPT</);
+  assert.match(courses, />Claude Code</);
+  assert.doesNotMatch(courses, /function renderAiButtons/);
+  assert.match(icons, /jintia: \{ type: "img", src: "\/brand\/jintia-mark\.svg" \}/);
 });

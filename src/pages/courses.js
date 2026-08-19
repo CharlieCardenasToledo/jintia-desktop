@@ -319,7 +319,7 @@ function renderCourseResults() {
             <th class="${ui.table.th}">Período</th>
             <th class="${ui.table.th}">Avance</th>
             <th class="${ui.table.th}">Proyecto</th>
-            <th class="${cx(ui.table.th, 'w-[228px] text-right')}">Acciones</th>
+            <th class="${cx(ui.table.th, 'w-[280px] text-right')}">Acciones</th>
           </tr>
         </thead>
         <tbody>${rows.map(renderDesktopRow).join("")}</tbody>
@@ -368,7 +368,7 @@ function renderDesktopRow({ course, index, progress }) {
       </td>
       <td class="${ui.table.td}">
         <div class="flex justify-end gap-1.5">
-          ${renderAiButtons(index, course)}
+          ${renderJintiaAction(index, course)}
           <button type="button" class="${cx(ui.button.base, ui.button.secondary, 'min-h-11 px-3')}" data-course-action="edit" data-index="${index}">
             Editar
           </button>
@@ -399,34 +399,42 @@ function renderCourseCard({ course, index, progress }) {
       </div>
       <div class="mt-4 flex gap-1.5">
         <button type="button" class="${cx(ui.button.base, ui.button.primary, 'min-h-11 flex-1')}" data-course-action="edit" data-index="${index}">Continuar</button>
-        ${renderAiButtons(index, course)}
+        ${renderJintiaAction(index, course, { compact: true })}
         ${renderMoreMenu(index, course)}
       </div>
     </article>`;
 }
 
-function renderAiButtons(index, course) {
+function renderJintiaAction(index, course, { compact = false } = {}) {
   const prepared = Boolean(String(course.project_path || "").trim());
   return `
-    <button type="button" class="${cx(ui.button.base, ui.button.ghost, 'h-11 w-11 p-0')}" data-course-action="ai" data-ai-provider="chatgpt" data-index="${index}" aria-label="Abrir ${escapeHtml(course.name)} con ChatGPT" title="Abrir con ChatGPT">
-      ${brandIcon("openai", 18)}
-    </button>
-    <button type="button" class="${cx(ui.button.base, ui.button.ghost, 'h-11 w-11 p-0')}" data-course-action="ai" data-ai-provider="claude" data-index="${index}" aria-label="Abrir ${escapeHtml(course.name)} con Claude Code" title="${prepared ? "Abrir con Claude Code" : "Primero prepara la carpeta del proyecto"}" ${prepared ? "" : "disabled"}>
-      ${brandIcon("claude", 18)}
-    </button>
-    <button type="button" class="${cx(ui.button.base, ui.button.ghost, 'h-11 w-11 p-0')}" data-course-action="ai" data-ai-provider="jintia" data-index="${index}" aria-label="Abrir ${escapeHtml(course.name)} con Jintia (chat nativo)" title="${prepared ? "Chat nativo con Jintia + OpenCode" : "Primero prepara la carpeta del proyecto"}" ${prepared ? "" : "disabled"}>
-      ${brandIcon("jintia", 18)}
+    <button type="button" class="${cx(ui.button.base, 'min-h-11 shrink-0 whitespace-nowrap border-teal-200 bg-teal-50 px-3 text-teal-900 hover:border-teal-300 hover:bg-teal-100', compact && 'px-2.5')}" data-course-action="ai" data-ai-provider="jintia" data-index="${index}" aria-label="Preguntar a Jintia sobre ${escapeHtml(course.name)}" title="${prepared ? "Abrir Ask Jintia" : "Primero prepara la carpeta del proyecto"}" ${prepared ? "" : "disabled"}>
+      ${brandIcon("jintia", 19)}
+      <span>${compact ? "Jintia" : "Ask Jintia"}</span>
     </button>`;
 }
 
 function renderMoreMenu(index, course) {
   const busy = _folderBusy.has(index);
+  const prepared = Boolean(String(course.project_path || "").trim());
   return `
     <details class="relative">
       <summary class="${cx(ui.button.base, ui.button.ghost, 'h-11 w-11 cursor-pointer list-none p-0')}" aria-label="Más acciones para ${escapeHtml(course.name)}">
         ${ic("more-horizontal", 20)}
       </summary>
-      <div class="absolute right-0 top-12 z-50 min-w-[205px] overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+      <div class="absolute right-0 top-12 z-50 min-w-[248px] overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+        <p class="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Abrir con IA</p>
+        <button type="button" class="flex min-h-11 w-full items-center gap-2.5 rounded-lg border-transparent bg-transparent px-3 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand" data-course-action="ai" data-ai-provider="chatgpt" data-index="${index}">
+          <span class="grid h-7 w-7 place-items-center rounded-lg bg-slate-100 text-slate-800">${brandIcon("openai", 17)}</span>
+          <span class="min-w-0 flex-1"><span class="block text-slate-900">ChatGPT</span><span class="block text-[10px] font-normal text-slate-500">Aplicación externa</span></span>
+          ${ic("external-link", 14)}
+        </button>
+        <button type="button" class="flex min-h-11 w-full items-center gap-2.5 rounded-lg border-transparent bg-transparent px-3 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand" data-course-action="ai" data-ai-provider="claude" data-index="${index}" title="${prepared ? "Abrir con Claude Code" : "Primero prepara la carpeta del proyecto"}" ${prepared ? "" : "disabled"}>
+          <span class="grid h-7 w-7 place-items-center rounded-lg bg-amber-50 text-amber-900">${brandIcon("claude", 17)}</span>
+          <span class="min-w-0 flex-1"><span class="block text-slate-900">Claude Code</span><span class="block text-[10px] font-normal text-slate-500">Aplicación externa</span></span>
+          ${ic("external-link", 14)}
+        </button>
+        <div class="my-1 border-t border-slate-100"></div>
         <button type="button" class="flex min-h-11 w-full items-center gap-2 rounded-lg border-transparent bg-transparent px-3 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand" data-course-action="folders" data-index="${index}" ${busy ? "disabled aria-busy=\"true\"" : ""}>
           ${ic(busy ? "loader-2" : "folder-plus", 17)}
           ${busy ? "Preparando…" : course.project_status === "ready" ? "Recrear estructura" : "Crear carpeta del proyecto"}

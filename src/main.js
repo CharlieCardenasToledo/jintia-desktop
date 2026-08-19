@@ -39,7 +39,8 @@ function renderShell() {
   document.getElementById("app").innerHTML = `
 
     <!-- SIDEBAR -->
-    <aside class="hidden flex-col bg-brand-950 text-slate-300 sm:flex sm:w-[216px] shrink-0 xl:w-[240px]" role="navigation" aria-label="Menú principal">
+    <aside id="app-sidebar" class="app-sidebar hidden shrink-0 flex-col overflow-hidden bg-brand-950 text-slate-300 sm:flex" role="navigation" aria-label="Menú principal" data-collapsed="false">
+      <div class="app-sidebar-inner flex min-h-0 flex-1 flex-col">
       <span class="sr-only">Jintia</span>
       <span class="sr-only">Diseña el camino del aprendizaje</span>
       ${BrandLockup()}
@@ -82,16 +83,22 @@ function renderShell() {
           </span>
         </button>
       </div>
+      </div>
     </aside>
 
     <!-- MAIN -->
     <main class="${ui.layout.appMain}" role="main">
-      <header class="${cx(ui.liquid.control, 'liquid-control-topbar absolute inset-x-4 top-3 z-30 flex min-h-[52px] items-center justify-between px-5 py-2')}" data-tauri-drag-region>
-        <div class="min-w-0">
+      <header class="${cx(ui.liquid.control, 'app-topbar liquid-control-topbar absolute inset-x-4 top-3 z-30 flex min-h-[52px] items-center justify-between px-5 py-2')}" data-tauri-drag-region>
+        <div class="flex min-w-0 items-center gap-2">
+          <button type="button" id="app-sidebar-toggle" class="hidden h-11 w-11 shrink-0 place-items-center rounded-full border border-slate-200/80 bg-white/55 text-slate-700 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand sm:grid" aria-controls="app-sidebar" aria-expanded="true" aria-label="Ocultar menú principal" title="Ocultar menú principal">
+            ${ic("panel-left", 18)}
+          </button>
+          <div class="app-topbar-copy min-w-0">
           <h2 id="topbar-title" class="title-medium text-slate-800">Jintia Desktop</h2>
           <div id="topbar-sub" class="truncate text-[11px] text-slate-600"></div>
+          </div>
         </div>
-        <div class="flex items-center gap-1">
+        <div class="app-window-controls flex items-center gap-1">
           <div class="${cx(ui.liquid.group, 'flex items-center gap-0.5 p-1')}" role="group" aria-label="Controles de ventana">
             <button class="relative isolate inline-flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-transparent bg-white/10 text-slate-700 transition hover:border-white/55 hover:bg-white/55 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1" id="app-win-minimize" aria-label="Minimizar ventana (WCAG 44×44px touch target)" title="Minimizar">${ic("minus", 16)}</button>
             <button class="relative isolate inline-flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-transparent bg-white/10 text-slate-700 transition hover:border-white/55 hover:bg-white/55 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1" id="app-win-maximize" aria-label="Maximizar o restaurar ventana (WCAG 44×44px touch target)" title="Maximizar o restaurar">${ic("square", 14)}</button>
@@ -100,7 +107,7 @@ function renderShell() {
         </div>
       </header>
 
-      <div class="${cx(ui.surface.page, 'pt-[96px]')}">
+      <div class="${cx(ui.surface.page, 'app-page-stage pt-[96px]')}">
         <section class="h-full min-h-0 min-w-0" id="p-courses" hidden aria-label="Cursos"></section>
         <section class="h-full min-h-0 min-w-0" id="p-pdfs" hidden aria-label="PDFs generados"></section>
         <section class="h-full min-h-0 min-w-0" id="p-syllabus" hidden aria-label="Editor de sílabo"></section>
@@ -114,7 +121,36 @@ function renderShell() {
   `;
 }
 
+function setSidebarCollapsed(collapsed, { userInitiated = false } = {}) {
+  const sidebar = document.getElementById("app-sidebar");
+  const toggle = document.getElementById("app-sidebar-toggle");
+  if (!sidebar || !toggle) return;
+  sidebar.dataset.collapsed = String(collapsed);
+  sidebar.dataset.userExpandedInChat = String(userInitiated && !collapsed && state.page === "jintia-chat");
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  const label = collapsed ? "Mostrar menú principal" : "Ocultar menú principal";
+  toggle.setAttribute("aria-label", label);
+  toggle.title = label;
+}
+
+document.addEventListener("jintia:page-changed", event => {
+  const page = event.detail?.page;
+  const sidebar = document.getElementById("app-sidebar");
+  if (!sidebar) return;
+  if (page === "jintia-chat") {
+    if (sidebar.dataset.userExpandedInChat !== "true") setSidebarCollapsed(true);
+  } else {
+    setSidebarCollapsed(false);
+  }
+});
+
 document.addEventListener("click", event => {
+  const sidebarToggle = event.target.closest("#app-sidebar-toggle");
+  if (sidebarToggle) {
+    const sidebar = document.getElementById("app-sidebar");
+    setSidebarCollapsed(sidebar?.dataset.collapsed !== "true", { userInitiated: true });
+    return;
+  }
   const nav = event.target.closest("[data-nav-item][data-page], [data-sidebar-page][data-page], [data-create-course][data-page], [data-create-course]");
   if (nav) {
     navigate(nav.dataset.page);

@@ -3,8 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use serde::Deserialize;
-use tauri::Emitter;
-use super::{try_runtime_mutation_lock, emit_dependency_progress};
+use super::try_runtime_mutation_lock;
 use super::node::{managed_node_command, NODE_RUNTIME_MUTATION_LOCK};
 
 pub(super) static NOTEBOOKLM_RUNTIME_MUTATION_LOCK: Mutex<()> = Mutex::new(());

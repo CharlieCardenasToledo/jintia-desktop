@@ -1,6 +1,4 @@
 import {
-  generateSyllabus,
-  createCourseStructure,
   listTemplates,
   getActiveTemplate,
   setActiveTemplate,
@@ -9,10 +7,7 @@ import { toast } from "../toast.js";
 import { escapeHtml } from "../dom.js";
 import { state } from "../state.js";
 import { ui, cx } from "../uiClasses.js";
-import { appLocalDataDir } from "@tauri-apps/api/path";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { buildSampleGuideData } from "../sampleGuide.js";
+import { renderTemplatePreview } from "../templatePreview.js";
 import { ic, refreshIcons } from "../icons.js";
 
 let _templates = [];
@@ -21,10 +16,6 @@ let _selectedId = "";
 let _filter = "all";
 let _activatingId = "";
 let _activationError = "";
-let _previewCompilingId = "";
-let _previewProgress = "";
-const _pdfPreviews = new Map();
-const _previewErrors = new Map();
 
 const FILTERS = [
   { id: "all", label: "Todas" },
@@ -79,7 +70,6 @@ function bindPageEvents(el) {
     _filter = button.dataset.filter;
     updateFilterButtons();
     renderWorkspace();
-    void ensurePdfPreview(_selectedId);
   });
 
   el.querySelector("#tpl-workspace")?.addEventListener("click", event => {
@@ -88,7 +78,6 @@ function bindPageEvents(el) {
       _filter = filterButton.dataset.filter;
       updateFilterButtons();
       renderWorkspace();
-      void ensurePdfPreview(_selectedId);
       return;
     }
     const selectButton = event.target.closest("[data-select-template]");
@@ -98,18 +87,6 @@ function bindPageEvents(el) {
     }
     if (event.target.closest("#btn-activate-template")) activateSelectedTemplate();
     if (event.target.closest("#btn-retry-templates")) loadTemplates();
-    if (event.target.closest("#btn-retry-template-preview")) {
-      _previewErrors.delete(_selectedId);
-      void ensurePdfPreview(_selectedId, true);
-    }
-    if (event.target.closest("#btn-copy-template-diagnostic")) {
-      const diagnostic = _previewErrors.get(_selectedId);
-      if (diagnostic) {
-        navigator.clipboard.writeText(diagnostic)
-          .then(() => toast("Diagnóstico copiado", "success"))
-          .catch(() => toast("No se pudo copiar el diagnóstico", "error"));
-      }
-    }
   });
 }
 
@@ -128,7 +105,6 @@ async function loadTemplates() {
       : _templates[0]?.id || "";
     renderWorkspace();
     announce(`${_templates.length} ${_templates.length === 1 ? "plantilla disponible" : "plantillas disponibles"}.`);
-    void ensurePdfPreview(_selectedId);
   } catch {
     workspace.innerHTML = errorState();
     refreshIcons();
@@ -240,9 +216,6 @@ function detailPanel(template) {
   if (!template) return "";
   const active = template.id === _activeId;
   const activating = template.id === _activatingId;
-  const pdfPath = _pdfPreviews.get(template.id);
-  const previewError = _previewErrors.get(template.id);
-  const compiling = template.id === _previewCompilingId;
   return `
     <div class="${cx(ui.surface.card, "overflow-hidden")}">
       <div class="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3.5">
@@ -256,8 +229,8 @@ function detailPanel(template) {
           </p>
         </div>
       </div>
-      <div class="min-h-[420px] bg-slate-700">
-        ${pdfPath ? pdfPreviewFrame(pdfPath, template.name) : compiling ? previewLoadingState() : previewError ? previewErrorState(previewError) : previewWaitingState()}
+      <div class="min-h-[420px] overflow-auto bg-slate-700 p-4">
+        ${renderTemplatePreview(template, state.config || {}, _activeId)}
       </div>
       <div class="border-t border-slate-200 p-4">
         <p class="mb-3 text-xs leading-5 text-app-muted">${escapeHtml(template.description || "")}</p>
@@ -277,122 +250,6 @@ function selectTemplate(id) {
   renderWorkspace();
   document.getElementById("tpl-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   announce(`Vista previa de ${selectedTemplate()?.name || "la plantilla"} seleccionada.`);
-  void ensurePdfPreview(id);
-}
-
-async function ensurePdfPreview(templateId, force = false) {
-  if (!templateId || _previewCompilingId) return;
-  if (!force && _pdfPreviews.has(templateId)) return;
-  const template = _templates.find(item => item.id === templateId);
-  if (!template) return;
-
-  _previewCompilingId = templateId;
-  _previewProgress = "Preparando los datos preliminares…";
-  _previewErrors.delete(templateId);
-  renderWorkspace();
-  announce(`Compilando la vista previa PDF de ${template.name}.`);
-
-  let stopProgress = null;
-  try {
-    stopProgress = await listen("jintia://compile-progress", ({ payload }) => {
-      if (_previewCompilingId !== templateId) return;
-      _previewProgress = payload?.message || "Compilando el PDF…";
-      const progress = document.getElementById("tpl-preview-progress");
-      if (progress) progress.textContent = _previewProgress;
-    });
-
-    const rootPath = await appLocalDataDir();
-    const previewData = templatePreviewData(template);
-    const structure = await createCourseStructure({
-      rootPath,
-      courseCode: previewData.courseCode,
-      courseName: previewData.courseName,
-      weeks: previewData.weeksData.length,
-      initializeReadme: false,
-    });
-    if (!structure?.success) {
-      throw new Error(structure?.message || "No se pudo preparar la carpeta temporal.");
-    }
-
-    const result = await generateSyllabus({
-      coursePath: rootPath,
-      ...previewData,
-      includeJintiaCredit: state.config?.includeJintiaCredit !== false,
-    });
-    if (!result?.success || !result?.path) {
-      throw new Error(result?.message || "El compilador no devolvió un PDF válido.");
-    }
-    _pdfPreviews.set(templateId, result.path);
-    announce(`Vista previa PDF de ${template.name} lista.`);
-  } catch (error) {
-    _previewErrors.set(templateId, String(error));
-    announce(`No se pudo compilar la vista previa de ${template.name}.`);
-  } finally {
-    if (stopProgress) stopProgress();
-    _previewCompilingId = "";
-    _previewProgress = "";
-    renderWorkspace();
-    if (_selectedId !== templateId && !_pdfPreviews.has(_selectedId)) {
-      void ensurePdfPreview(_selectedId);
-    }
-  }
-}
-
-function templatePreviewData(template) {
-  return buildSampleGuideData(state.config || {});
-}
-
-function pdfPreviewFrame(pdfPath, templateName) {
-  const assetUrl = convertFileSrc(pdfPath);
-  return `
-    <iframe class="h-[min(62vh,680px)] min-h-[420px] w-full border-0 bg-slate-700"
-      src="${escapeHtml(assetUrl)}#view=FitH&toolbar=0"
-      title="PDF de prueba compilado con ${escapeHtml(templateName)}"></iframe>`;
-}
-
-function previewLoadingState() {
-  return `
-    <div class="grid min-h-[420px] place-items-center p-6 text-center text-white" role="status">
-      <div class="max-w-[34ch]">
-        <span class="mb-3 block animate-spin">${ic("loader-2", 38)}</span>
-        <p class="font-semibold">Compilando un PDF real…</p>
-        <p id="tpl-preview-progress" class="mt-2 text-xs leading-5 text-slate-200">${escapeHtml(_previewProgress || "Preparando el sílabo…")}</p>
-        <p class="mt-3 text-[11px] leading-5 text-slate-300">La primera generación puede tardar mientras se prepara la plantilla.</p>
-      </div>
-    </div>`;
-}
-
-function previewWaitingState() {
-  return `
-    <div class="grid min-h-[420px] place-items-center p-6 text-center text-white">
-      <div>
-        <span class="mb-3 block text-slate-300">${ic("file-text", 38)}</span>
-        <p class="text-sm font-semibold">Preparando la vista previa PDF…</p>
-      </div>
-    </div>`;
-}
-
-function previewErrorState(diagnostic) {
-  return `
-    <div class="grid min-h-[420px] place-items-center p-5 text-center text-white">
-      <div class="max-w-[48ch]">
-        <span class="mb-3 block text-red-300">${ic("circle-alert", 38)}</span>
-        <h3 class="font-bold">No pudimos compilar esta vista previa</h3>
-        <p class="mt-2 text-xs leading-5 text-slate-200">Verifica el compilador LaTeX en Configuración → Entorno y vuelve a intentarlo.</p>
-        <div class="mt-4 flex flex-wrap justify-center gap-2">
-          <button class="${cx(ui.button.base, ui.button.secondary, "min-h-11")}" id="btn-retry-template-preview" type="button">
-            ${ic("refresh-cw", 18)} Reintentar
-          </button>
-          <button class="${cx(ui.button.base, ui.button.secondary, "min-h-11")}" id="btn-copy-template-diagnostic" type="button">
-            ${ic("copy", 18)} Copiar diagnóstico
-          </button>
-        </div>
-        <details class="mt-4 text-left">
-          <summary class="cursor-pointer text-xs font-semibold text-slate-200">Detalles técnicos</summary>
-          <pre class="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-3 text-[10px] leading-5 text-slate-200">${escapeHtml(diagnostic)}</pre>
-        </details>
-      </div>
-    </div>`;
 }
 
 async function activateSelectedTemplate() {

@@ -20,7 +20,13 @@ pub struct ManagedMcpContract {
 /// Contrato completo de una release de Jintia, combinando package.json y
 /// release-config.json.  Es el único lugar del proyecto que debe leer esos
 /// archivos; el resto del código consume tipos de aquí.
+// jintia_version, minimum_desktop_version y runtime_node_requirement se parsean
+// en su totalidad porque este struct es la única lectura autorizada del
+// contrato (ver doc de arriba), aunque hoy solo `mcp` y `profile_binaries`
+// tienen consumidores. Quedan disponibles para el futuro gate de versión
+// mínima de Desktop y el chequeo de Node en `doctor`.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct JintiaReleaseContract {
     pub jintia_version: String,
     pub minimum_desktop_version: Version,
@@ -33,6 +39,7 @@ pub struct JintiaReleaseContract {
 
 #[derive(Debug, Clone)]
 pub struct ProfileBinaryContract {
+    #[allow(dead_code)]
     pub version: String,
     /// Especificación para la plataforma actual; None si no está declarada.
     pub current_platform_spec: Option<BinaryPlatformSpec>,
@@ -222,7 +229,11 @@ pub fn parse_release_contract(
     })
 }
 
-/// Mantiene la firma original para no romper consumidores existentes.
+// Solo tiene consumidores en `#[cfg(test)]` (fixtures con bytes sintéticos, sin
+// tocar el filesystem); `cargo check` sin --tests la reporta como dead_code
+// aunque `cargo test` sí la ejercita. Mantiene la firma original para no
+// romper los tests existentes que la invocan directamente.
+#[allow(dead_code)]
 pub fn parse_managed_mcp_contract(
     package_json_bytes: &[u8],
     release_config_bytes: &[u8],
@@ -312,6 +323,9 @@ mod tests {
                 .as_nanos()
         ))
     }
+    // Solo la usan los tests #[cfg(unix)] de escape por symlink de más abajo;
+    // en Windows queda sin consumidores y cargo la marca como dead_code.
+    #[allow(dead_code)]
     fn write_valid_package(root: &std::path::Path) {
         let (package, release) = fixture();
         fs::create_dir_all(root.join("release")).unwrap();

@@ -113,11 +113,11 @@ impl OpenCodeClient {
     pub fn rename_session(&self, session_id: &str, title: &str) -> Result<(), String> {
         let body = serde_json::json!({ "title": title });
         let resp = self.client
-            .post(format!("{}/session/{}/rename", self.base, session_id))
+            .patch(format!("{}/session/{}", self.base, session_id))
             .json(&body)
             .send()
             .map_err(|e| e.to_string())?;
-        if resp.status().is_success() || resp.status().as_u16() == 404 {
+        if resp.status().is_success() {
             Ok(())
         } else {
             Err(format!("Rename falló con estado {}", resp.status()))
@@ -129,7 +129,7 @@ impl OpenCodeClient {
             .delete(format!("{}/session/{}", self.base, session_id))
             .send()
             .map_err(|e| e.to_string())?;
-        if resp.status().is_success() || resp.status().as_u16() == 404 {
+        if resp.status().is_success() {
             Ok(())
         } else {
             Err(format!("Delete falló con estado {}", resp.status()))

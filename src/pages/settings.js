@@ -5,11 +5,12 @@ import {
   installSkill, installOpenAIPlugin,
   resetOnboarding, getSkillPath, extractSitePalette, runSkillTool, detectHarnesses, manageHarnesses,
   getAiPreference,
-  codexStatus, codexStart, codexStop, codexStartLogin,
+  codexStatus, codexStart, codexStop, codexStartLogin, codexReadRateLimits,
 } from "../api.js";
 import { state, saveConfig } from "../state.js";
 import { navigate } from "../router.js";
 import { escapeHtml } from "../dom.js";
+import { isRateLimited, formatUsagePercent, formatResetCountdown, primaryWindow } from "../codexUsage.js";
 import { toast } from "../toast.js";
 import { ic, refreshIcons } from "../icons.js";
 import { confirm } from "@tauri-apps/plugin-dialog";
@@ -323,6 +324,21 @@ export async function renderSettings() {
                 <button class="${cx(ui.button.base, ui.button.primary, ui.button.sm)}" id="btn-codex-login">
                   ${ic("key", 14)} Conectar ChatGPT
                 </button>
+              </div>
+            </div>
+
+            <!-- Panel de monitoreo de cuota de Codex -->
+            <div id="codex-usage-panel" hidden class="rounded-lg border border-slate-200 bg-white px-3.5 py-3">
+              <div class="mb-2 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 text-[13px] font-semibold text-app-text">${ic("gauge", 15)} Cuota de Codex</div>
+                <span id="codex-usage-plan" class="text-[11px] font-semibold uppercase tracking-wide text-slate-500"></span>
+              </div>
+              <div class="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                <div id="codex-usage-bar" class="h-full rounded-full bg-teal-600 transition-all" style="width:0%"></div>
+              </div>
+              <div class="mt-1.5 flex items-center justify-between text-xs text-app-muted">
+                <span id="codex-usage-percent">—</span>
+                <span id="codex-usage-reset">—</span>
               </div>
             </div>
           </div>
@@ -1390,13 +1406,56 @@ async function loadCodexStatus() {
     if (s.logged_in && s.account?.email) {
       label.textContent = `Conectado — ${s.account.email}${s.account.plan_type ? ` (${s.account.plan_type})` : ""}`;
       label.style.color = "var(--green)";
+      void loadCodexUsagePanel();
     } else if (s.running) {
       label.textContent = "Codex activo, sin sesión de ChatGPT.";
       label.style.color = "var(--yellow)";
+      hideCodexUsagePanel();
     }
     if (btnStop) btnStop.classList.remove("hidden");
     if (btnLogin) btnLogin.disabled = false;
   } catch {
     if (label) { label.textContent = "No disponible"; label.style.color = "var(--muted)"; }
+  }
+}
+
+function hideCodexUsagePanel() {
+  const panel = document.getElementById("codex-usage-panel");
+  if (panel) panel.hidden = true;
+}
+
+/** Panel de monitoreo: cuánto queda de la cuota de Codex y cuándo se reinicia. */
+async function loadCodexUsagePanel() {
+  const panel = document.getElementById("codex-usage-panel");
+  if (!panel) return;
+  try {
+    const result = await codexReadRateLimits();
+    const window = primaryWindow(result);
+    if (!window || typeof window.usedPercent !== "number") {
+      hideCodexUsagePanel();
+      return;
+    }
+    const limited = isRateLimited(result);
+    const bar = document.getElementById("codex-usage-bar");
+    const percentEl = document.getElementById("codex-usage-percent");
+    const resetEl = document.getElementById("codex-usage-reset");
+    const planEl = document.getElementById("codex-usage-plan");
+
+    panel.hidden = false;
+    if (bar) {
+      bar.style.width = `${Math.min(100, Math.max(0, window.usedPercent))}%`;
+      bar.className = `h-full rounded-full transition-all ${limited ? "bg-red-600" : "bg-teal-600"}`;
+    }
+    if (percentEl) {
+      percentEl.textContent = `${formatUsagePercent(window.usedPercent)} usado`;
+      percentEl.className = limited ? "font-semibold text-red-700" : "";
+    }
+    if (resetEl) {
+      const countdown = formatResetCountdown(window.resetsAt);
+      resetEl.textContent = countdown ? (limited ? `Disponible ${countdown}` : `Reinicia ${countdown}`) : "";
+    }
+    if (planEl) planEl.textContent = result?.rateLimits?.planType || "";
+  } catch {
+    hideCodexUsagePanel();
   }
 }

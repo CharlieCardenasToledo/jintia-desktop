@@ -24,7 +24,7 @@ export const ui = {
   },
   button: {
     base: "relative isolate inline-flex items-center justify-center gap-1.5 overflow-hidden rounded-full border px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
-    primary: "border-transparent bg-brand-600 text-white shadow-sm hover:bg-brand-700",
+    primary: "border-transparent bg-brand-700 text-white shadow-sm hover:bg-brand-900",
     secondary: "border-slate-300 bg-white text-brand-950 hover:bg-slate-50",
     ghost: "border-transparent bg-transparent text-slate-700 hover:bg-slate-100 hover:text-brand-950",
     danger: "border-red-200 bg-red-50 text-red-700 hover:bg-red-100",

@@ -36,6 +36,26 @@ export async function openExternal(url) {
   return openUrl(url);
 }
 
+/**
+ * Abre una cita o fuente web generada dentro de Ask Jintia sin permitir que
+ * el WebView navegue fuera de la aplicación. A diferencia de `openExternal`,
+ * aquí no existe una lista cerrada de destinos porque las fuentes académicas
+ * pueden pertenecer a cualquier dominio; el límite de confianza es el
+ * protocolo web y la apertura explícita por parte del usuario.
+ */
+export async function openWebSource(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Enlace de fuente no válido");
+  }
+  if (!['https:', 'http:'].includes(parsed.protocol)) {
+    throw new Error("Solo se permiten fuentes web HTTP o HTTPS");
+  }
+  return invoke("open_web_source", { url: parsed.href });
+}
+
 // ── Dependencias del sistema ─────────────────────────────────────────────
 export async function checkDependencies() {
   return invoke("check_dependencies");
@@ -193,7 +213,7 @@ export async function generateSyllabus(payload) {
   return invoke("generate_syllabus", payload);
 }
 
-// ── Sistema de plantillas LaTeX ───────────────────────────────────────────
+// ── Sistema de plantillas (temas HTML de la Skill) ────────────────────────
 export async function listTemplates() {
   return invoke("list_templates");
 }
@@ -284,8 +304,24 @@ export async function codexStartThread(cwd) {
   return invoke("codex_start_thread", { cwd });
 }
 
-export async function codexSubmitTurn(threadId, message) {
-  return invoke("codex_submit_turn", { threadId, message });
+export async function codexListModels() {
+  return invoke("codex_list_models");
+}
+
+export async function codexReadRateLimits() {
+  return invoke("codex_read_rate_limits");
+}
+
+export async function codexSubmitTurn(threadId, message, model = null, effort = null) {
+  return invoke("codex_submit_turn", { threadId, message, model, effort });
+}
+
+export async function codexInterruptTurn(threadId, turnId) {
+  return invoke("codex_interrupt_turn", { threadId, turnId });
+}
+
+export async function codexRespondApproval(id, decision) {
+  return invoke("codex_respond_approval", { id, decision });
 }
 
 // ── Diálogos ─────────────────────────────────────────────────────────────
