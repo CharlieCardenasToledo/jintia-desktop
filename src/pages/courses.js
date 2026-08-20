@@ -6,6 +6,7 @@ import { navigate } from "../router.js";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { ui, cx, projectColorMap } from "../uiClasses.js";
 import { ic, brandIcon, refreshIcons } from "../icons.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 import { APP_META } from "../appMeta.js";
 
 let _filter = "";
@@ -49,8 +50,8 @@ const WEEK_AI_OPERATIONS = [
   { id: "guide", label: "Revisar/actualizar guía", command: "/jintia guide" },
   { id: "assessment", label: "Diseñar evaluación", command: "/jintia assessment" },
   { id: "visual", label: "Gestionar figuras", command: "/jintia visual" },
-  { id: "validate", label: "Validar sin compilar", command: "/jintia validate" },
-  { id: "compile", label: "Compilar y revisar PDF", command: "/jintia compile" },
+  { id: "validate", label: "Validar sin generar PDF", command: "/jintia validate" },
+  { id: "compile", label: "Generar y revisar PDF", command: "/jintia compile" },
   { id: "audit", label: "Auditar calidad", command: "/jintia audit" },
   { id: "state", label: "Registrar estado editorial", command: "/jintia state" },
 ];
@@ -148,7 +149,7 @@ function nextPendingWeek(course) {
 function statusView(progress) {
   return {
     complete: { label: "Lista", icon: "check-circle-2", classes: "border-green-200 bg-green-50 text-green-700" },
-    progress: { label: "En progreso", icon: "loader-2", classes: "border-teal-200 bg-teal-50 text-teal-700" },
+    progress: { label: "En progreso", icon: null, classes: "border-teal-200 bg-teal-50 text-teal-700" },
     outdated: { label: "Desactualizado", icon: "refresh-ccw-dot", classes: "border-amber-200 bg-amber-50 text-amber-700" },
     pending: { label: "Pendiente", icon: "circle", classes: "border-slate-200 bg-slate-50 text-slate-600" },
   }[progress.status];
@@ -273,6 +274,7 @@ export function renderCourses() {
     </div>`;
 
   refreshIcons();
+  mountAllJintiaLoaders(el);
   bindPageEvents();
 }
 
@@ -357,7 +359,7 @@ function renderDesktopRow({ course, index, progress }) {
           <span class="text-xs font-semibold text-app-text">${progress.complete}/${progress.total}</span>
         </div>
         <span class="mt-1 inline-flex items-center gap-1 text-xs font-semibold ${status.classes.split(" ").at(-1)}">
-          ${ic(status.icon, 15)}${status.label}
+          ${progress.status === "progress" ? jintiaLoaderPlaceholder(15) : ic(status.icon, 15)}${status.label}
         </span>
       </td>
       <td class="${ui.table.td}">
@@ -436,7 +438,7 @@ function renderMoreMenu(index, course) {
         </button>
         <div class="my-1 border-t border-slate-100"></div>
         <button type="button" class="flex min-h-11 w-full items-center gap-2 rounded-lg border-transparent bg-transparent px-3 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand" data-course-action="folders" data-index="${index}" ${busy ? "disabled aria-busy=\"true\"" : ""}>
-          ${ic(busy ? "loader-2" : "folder-plus", 17)}
+          ${busy ? jintiaLoaderPlaceholder(17) : ic("folder-plus", 17)}
           ${busy ? "Preparando…" : course.project_status === "ready" ? "Recrear estructura" : "Crear carpeta del proyecto"}
         </button>
         <button type="button" class="flex min-h-11 w-full items-center gap-2 rounded-lg border-transparent bg-transparent px-3 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand" data-course-action="appearance" data-index="${index}">
@@ -557,6 +559,7 @@ function updateResults() {
   if (!results) return;
   results.innerHTML = renderCourseResults();
   refreshIcons();
+  mountAllJintiaLoaders(results);
   bindResultEvents();
   document.getElementById("courses-clear-filters")?.addEventListener("click", () => {
     _filter = "";
@@ -695,7 +698,7 @@ function renderAiTaskModal() {
 
   let body;
   if (_aiTaskDraft.checking) {
-    body = `<div class="mt-3 flex items-center gap-2 text-xs text-app-muted"><span class="animate-spin">${ic("loader-2", 14)}</span>Verificando si ya existe una guía para esta semana…</div>`;
+    body = `<div class="mt-3 flex items-center gap-2 text-xs text-app-muted">${jintiaLoaderPlaceholder(14)}Verificando si ya existe una guía para esta semana…</div>`;
   } else if (!_aiTaskDraft.guideExists) {
     body = `
       <div class="mt-3 rounded-lg border border-teal-200 bg-teal-50 px-3.5 py-3 text-sm text-teal-900">
@@ -735,6 +738,7 @@ function renderAiTaskModal() {
       <button type="button" class="${cx(ui.button.base, ui.button.primary, "min-h-11")}" id="ai-task-confirm" ${_aiTaskDraft.checking ? "disabled" : ""}>Abrir</button>
     </div>`;
   refreshIcons();
+  mountAllJintiaLoaders(box);
 
   box.querySelector("#ai-task-close")?.addEventListener("click", () => closeAiTaskModal());
   box.querySelector("#ai-task-cancel")?.addEventListener("click", () => closeAiTaskModal());
@@ -1054,6 +1058,7 @@ function renderNotebookConnectModal() {
       <button type="button" class="${cx(ui.button.base, ui.button.primary, "min-h-11")}" id="notebook-connect-save">Guardar</button>
     </div>`;
   refreshIcons();
+  mountAllJintiaLoaders(box);
   box.querySelector("#notebook-connect-close")?.addEventListener("click", () => closeNotebookConnectModal());
   box.querySelector("#notebook-connect-cancel")?.addEventListener("click", () => closeNotebookConnectModal());
   box.querySelector("#notebook-connect-save")?.addEventListener("click", saveNotebookConnection);
@@ -1176,8 +1181,9 @@ async function saveCourseSettingsFromModal(event) {
   }
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
-  button.innerHTML = `<span class="animate-spin">${ic("loader-2", 17)}</span>Guardando…`;
+  button.innerHTML = `${jintiaLoaderPlaceholder(17)}Guardando…`;
   refreshIcons();
+  mountAllJintiaLoaders(button);
   const rootPath = course.project_root || parentDirectory(course.project_path);
   if (rootPath) {
     try {
@@ -1223,8 +1229,9 @@ async function generateFolders(index, button) {
   _folderBusy.add(index);
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
-  button.innerHTML = `<span class="animate-spin">${ic("loader-2", 17)}</span>Preparando proyecto…`;
+  button.innerHTML = `${jintiaLoaderPlaceholder(17)}Preparando proyecto…`;
   refreshIcons();
+  mountAllJintiaLoaders(button);
   toast("Preparando carpetas y README del proyecto…", "loading", 30000);
   try {
     const result = await createCourseStructure({
@@ -1302,7 +1309,7 @@ function notebookPickerBody(draft, connected) {
   }
   const lib = _notebookLibrary;
   if (lib.status === "idle" || lib.status === "checking") {
-    return `<div class="flex items-center gap-2 text-xs text-app-muted"><span class="animate-spin">${ic("loader-2", 14)}</span>Verificando conexión con NotebookLM…</div>`;
+    return `<div class="flex items-center gap-2 text-xs text-app-muted">${jintiaLoaderPlaceholder(14)}Verificando conexión con NotebookLM…</div>`;
   }
   if (lib.status === "no-auth") {
     return `
@@ -1319,7 +1326,7 @@ function notebookPickerBody(draft, connected) {
       </div>`;
   }
   if (lib.status === "scanning-account") {
-    return `<div class="flex items-center gap-2 text-xs text-app-muted"><span class="animate-spin">${ic("loader-2", 14)}</span>Abriendo cada notebook de tu cuenta para leer su id real (puede tardar 1–2 minutos)…</div>`;
+    return `<div class="flex items-center gap-2 text-xs text-app-muted">${jintiaLoaderPlaceholder(14)}Abriendo cada notebook de tu cuenta para leer su id real (puede tardar 1–2 minutos)…</div>`;
   }
   if (lib.status === "empty") {
     return `
@@ -1483,6 +1490,7 @@ function renderModal() {
   if (!box) return;
   box.innerHTML = _modalStep === 1 ? renderCourseDetailsStep() : renderCoursePreparationStep();
   refreshIcons();
+  mountAllJintiaLoaders(box);
   bindModalEvents();
 }
 
@@ -1724,8 +1732,9 @@ async function createCourse(button) {
 
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
-  button.innerHTML = `<span class="animate-spin">${ic("loader-2", 17)}</span>Preparando proyecto…`;
+  button.innerHTML = `${jintiaLoaderPlaceholder(17)}Preparando proyecto…`;
   refreshIcons();
+  mountAllJintiaLoaders(button);
 
   const course = {
     code: _modalData.code,

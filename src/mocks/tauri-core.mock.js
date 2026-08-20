@@ -1,4 +1,5 @@
 import { APP_META } from "../appMeta.js";
+import { emitMockEvent } from "./tauri-event.mock.js";
 
 /**
  * tauri-core.mock.js — Reemplazo de "@tauri-apps/api/core" para correr la app
@@ -58,11 +59,11 @@ Fuentes: [10 Usability Heuristics](https://www.nngroup.com/articles/ten-usabilit
 
 const state = {
   onboarding: {
-    version: 3,
+    version: 4,
     completed: BYPASS,
     currentStep: BYPASS ? 5 : 1,
     maxCompletedStep: BYPASS ? 5 : 0,
-    selectedTarget: "claude-code",
+    selectedTarget: "both",
     lastUpdated: Date.now(),
     regressionReason: null,
   },
@@ -70,19 +71,29 @@ const state = {
     { name: "Node.js", installed: true, version: "v22.13.0", required: true, note: "", command: "node -v" },
     { name: "Git", installed: true, version: "2.43.0", required: false, note: "", command: "git --version" },
     { name: "Python", installed: true, version: "3.11.4", required: true, note: "", command: "python --version" },
-    { name: "Compilador LaTeX", installed: BYPASS, version: BYPASS ? "2024.1 (mock)" : null, required: true, note: "", command: "pdflatex --version" },
+    { name: "Jintia Skill", installed: BYPASS, version: BYPASS ? APP_META.skillVersion : null, required: true, note: "Motor académico administrado por Jintia.", command: "jintia --version" },
+    { name: "Vivliostyle CLI", installed: BYPASS, version: BYPASS ? "9.4.0 (mock)" : null, required: true, note: "Motor HTML→PDF administrado por Jintia.", command: "vivliostyle --version" },
+    { name: "Compilador LaTeX", installed: false, version: null, required: false, note: "Opcional para proyectos heredados; el flujo habitual usa HTML y Vivliostyle.", command: "pdflatex --version" },
   ],
   setup: {
     skill_installed: BYPASS,
     skill_current: BYPASS,
     skill_version: BYPASS ? APP_META.skillVersion : "",
     available_skill_version: APP_META.skillVersion,
+    claude_skill_current: BYPASS,
+    codex_skill_current: BYPASS,
+    opencode_skill_current: BYPASS,
+    opencode_cli_installed: BYPASS,
+    claude_skill_path: BYPASS ? "/mock/home/.claude/skills/jintia-skill" : "",
+    codex_skill_path: BYPASS ? "/mock/home/.agents/skills/jintia-skill" : "",
+    opencode_skill_path: BYPASS ? "/mock/home/.opencode/skills/jintia-skill" : "",
     openai_plugin_installed: BYPASS,
     openai_plugin_current: BYPASS,
     openai_plugin_path: BYPASS ? "/mock/home/.codex/plugins/jintia" : "",
     mcp_configured: BYPASS,
     mcp_desktop_configured: BYPASS,
     mcp_claude_code_configured: BYPASS,
+    mcp_codex_configured: BYPASS,
     institution_configured: BYPASS,
     skill_path: BYPASS ? "/mock/home/.claude/skills/jintia-skill" : "",
     mcp_config_path: BYPASS ? "/mock/home/.config/claude/claude_desktop_config.json" : "",
@@ -119,14 +130,13 @@ function onboardingResult(success, message) {
 }
 
 function targetReady(target) {
-  if (target === "claude-code") return state.setup.skill_installed && state.setup.skill_current && state.setup.mcp_claude_code_configured;
-  if (target === "openai") return state.setup.openai_plugin_current;
-  if (target === "both") {
-    return state.setup.skill_installed && state.setup.skill_current &&
-      state.setup.mcp_claude_code_configured &&
-      state.setup.openai_plugin_current;
-  }
-  return false;
+  void target;
+  return state.setup.skill_installed && state.setup.skill_current &&
+    state.setup.claude_skill_current && state.setup.codex_skill_current && state.setup.opencode_skill_current &&
+    state.setup.opencode_cli_installed &&
+    state.setup.mcp_claude_code_configured &&
+    state.setup.mcp_codex_configured &&
+    state.setup.openai_plugin_current;
 }
 
 async function advanceOnboarding({ step, selectedTarget }) {
@@ -144,9 +154,9 @@ async function advanceOnboarding({ step, selectedTarget }) {
   }
   if (step === 4) {
     if (!state.auth.authenticated) return onboardingResult(false, state.auth.message);
-    const target = selectedTarget || state.onboarding.selectedTarget;
-    if (!targetReady(target)) return onboardingResult(false, "El destino seleccionado todavía no tiene skill y MCP completamente configurados.");
-    state.onboarding.selectedTarget = target;
+    void selectedTarget;
+    if (!targetReady("both")) return onboardingResult(false, "OpenCode, Claude Code y ChatGPT (Codex) todavía no están completamente preparados.");
+    state.onboarding.selectedTarget = "both";
   }
   state.onboarding.maxCompletedStep = Math.max(state.onboarding.maxCompletedStep, step);
   state.onboarding.currentStep = Math.min(5, step + 1);
@@ -167,6 +177,49 @@ function completeOnboarding() {
   return onboardingResult(true, "Onboarding completado.");
 }
 
+// ── Claude Code (simulación de streaming vía el event bus mock) ───────────
+const claudeActiveTurns = new Map(); // requestId -> { aborted: boolean }
+
+function buildMockClaudeReply(message) {
+  return `He revisado tu mensaje: "${message}". Esta es una respuesta simulada de Claude Code (mock) para pruebas visuales, sin conexión real al CLI.`;
+}
+
+async function claudeSubmitTurn({ request, tools, permissionMode } = {}) {
+  const { requestId, sessionId, message } = request || {};
+  const turn = { aborted: false };
+  claudeActiveTurns.set(requestId, turn);
+  const effectiveSessionId = sessionId || `ses_claude_mock_${Date.now()}`;
+
+  (async () => {
+    await delay(300);
+    if (turn.aborted) return;
+    emitMockEvent("claude:session/started", {
+      requestId, sessionId: effectiveSessionId, model: "claude-sonnet-5",
+    });
+
+    const reply = buildMockClaudeReply(message);
+    const chunks = reply.match(/.{1,12}/gs) || [reply];
+    for (const chunk of chunks) {
+      if (turn.aborted) { claudeActiveTurns.delete(requestId); return; }
+      await delay(60);
+      emitMockEvent("claude:message/delta", { requestId, sessionId: effectiveSessionId, text: chunk });
+    }
+    if (turn.aborted) { claudeActiveTurns.delete(requestId); return; }
+    emitMockEvent("claude:turn/completed", {
+      requestId, sessionId: effectiveSessionId, success: true, result: reply,
+    });
+    claudeActiveTurns.delete(requestId);
+  })();
+
+  return undefined;
+}
+
+function claudeInterruptTurn({ requestId } = {}) {
+  const turn = claudeActiveTurns.get(requestId);
+  if (turn) turn.aborted = true;
+  return undefined;
+}
+
 const handlers = {
   check_dependencies: () => state.dependencies.map(d => ({ ...d })),
   get_onboarding_status: () => ({ ...state.onboarding }),
@@ -180,17 +233,24 @@ const handlers = {
   },
   reset_onboarding: () => {
     Object.assign(state.onboarding, {
-      version: 3, completed: false, currentStep: 1, maxCompletedStep: 0,
-      selectedTarget: "claude-code", lastUpdated: Date.now(), regressionReason: null,
+      version: 4, completed: false, currentStep: 1, maxCompletedStep: 0,
+      selectedTarget: "both", lastUpdated: Date.now(), regressionReason: null,
     });
     return onboardingResult(true, "Onboarding reiniciado.");
   },
   get_skill_path: () => (state.setup.skill_installed ? "/mock/home/.claude/skills/jintia-skill" : ""),
+  install_npm_packages: ({ packages }) => {
+    if (packages?.includes("opencode-ai")) state.setup.opencode_cli_installed = true;
+    return actionResult(true, "Paquetes Node instalados en el entorno privado de Jintia (mock).");
+  },
   install_skill: () => {
     state.setup.skill_installed = true;
     state.setup.skill_current = true;
     state.setup.skill_version = state.setup.available_skill_version;
-    return actionResult(true, "Skill instalado en tu proyecto local (mock).");
+    state.setup.claude_skill_current = true;
+    state.setup.codex_skill_current = true;
+    state.setup.opencode_skill_current = true;
+    return actionResult(true, "Jintia Skill instalada para Claude, Codex y OpenCode (mock).");
   },
   install_openai_plugin: () => {
     state.setup.openai_plugin_installed = true;
@@ -297,11 +357,26 @@ const handlers = {
     exitCode: 0,
     report: { tool: "jintia doctor", ok: true, checks: [] }
   }),
-  run_skill_self_test: () => ({
-    ok: true,
-    checks: { validate: "passed", render: "passed", vivliostyle: "passed", pdf: "passed" },
-    pdfPath: null,
-  }),
+  run_skill_self_test: async ({ operationId = "" } = {}) => {
+    const checks = { validate: "passed", render: "passed", vivliostyle: "passed", pdf: "passed" };
+    const events = [
+      { phase: "preparing", percent: 2, message: "Preparando la prueba del entorno administrado…" },
+      { phase: "running", percent: 10, message: "Verificando el entorno y el motor de documentos…", detail: "Comando: jintia self-test --json" },
+      { phase: "report_received", percent: 35, message: "El backend recibió el diagnóstico del entorno.", detail: JSON.stringify({ ok: true, checks }) },
+      { phase: "guide_preparing", percent: 45, message: "Creando una guía práctica para aprender a usar Jintia…", detail: "Contenido: recorrido inicial por la plataforma." },
+      { phase: "guide_report_received", percent: 80, message: "El backend recibió el resultado de la guía de uso.", detail: JSON.stringify({ ok: true, checks }) },
+      { phase: "check", percent: 84, message: "Validación del contenido: correcto.", check: "validate", status: "passed" },
+      { phase: "check", percent: 88, message: "Creación del HTML: correcto.", check: "render", status: "passed" },
+      { phase: "check", percent: 92, message: "Renderizado PDF con Vivliostyle: correcto.", check: "vivliostyle", status: "passed" },
+      { phase: "check", percent: 96, message: "Verificación del PDF: correcto.", check: "pdf", status: "passed" },
+      { phase: "completed", percent: 100, message: "La guía de uso de Jintia se generó correctamente." },
+    ];
+    for (const payload of events) {
+      await delay(180);
+      emitMockEvent("self-test-progress", { ...payload, operationId });
+    }
+    return { ok: true, checks, pdfPath: null };
+  },
   run_welcome_guide_generation: () => ({
     ok: true,
     checks: { validate: "passed", render: "passed", vivliostyle: "passed", pdf: "passed" },
@@ -369,6 +444,27 @@ const handlers = {
   codex_start_thread: () => { throw new Error("Codex no iniciado (mock)"); },
   codex_submit_turn: () => { throw new Error("Codex no iniciado (mock)"); },
   codex_interrupt_turn: () => undefined,
+
+  // ── Claude Code CLI (suscripción, sin API key) ──────────────────────────
+  claude_status: () => ({
+    installed: true,
+    authenticated: true,
+    version: "2.1.229 (mock)",
+    usingApiKey: false,
+    auth: {
+      loggedIn: true,
+      authMethod: "claude.ai",
+      apiProvider: "firstParty",
+      email: "demo@uide.edu.ec",
+      orgId: "org-mock",
+      orgName: "Jintia Demo",
+      subscriptionType: "team",
+    },
+  }),
+  claude_submit_turn: claudeSubmitTurn,
+  claude_interrupt_turn: claudeInterruptTurn,
+  claude_auth_login: () => undefined,
+
   open_web_source: () => undefined,
 };
 

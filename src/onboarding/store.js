@@ -12,6 +12,9 @@
 import {
   checkDependencies,
   checkNotebookLMAuth,
+  claudeStatus,
+  codexStart,
+  codexStatus,
   getActiveTemplate,
   getCapabilitiesProfiles,
   getSetupStatus,
@@ -26,13 +29,13 @@ import {
 } from "../onboardingDraft.js";
 import { createOperationState } from "../onboardingLongOperation.js";
 
-// Esquema de 5 pasos (v3 en el backend; ver migrate_status en onboarding.rs).
+// Esquema de 5 pasos (v4 en el backend; ver migrate_status en onboarding.rs).
 export const TOTAL_STEPS = 5;
 export const STEP_META = [
-  { title: "Bienvenida", subtitle: "Convierte tu sílabo en guías PDF y trabaja con Claude, ChatGPT o Codex.", icon: "graduation-cap" },
+  { title: "Bienvenida", subtitle: "Convierte tu sílabo en guías PDF y trabaja con Claude Code, ChatGPT (Codex) u OpenCode.", icon: "graduation-cap" },
   { title: "Herramientas", subtitle: "Revisa de una vez qué está listo y qué necesita Jintia.", icon: "terminal" },
   { title: "Tu perfil", subtitle: "Institución, autoría y plantilla de tus documentos.", icon: "building-2" },
-  { title: "Integraciones", subtitle: "Conecta tus fuentes y el asistente con el que trabajarás.", icon: "notebook" },
+  { title: "Integraciones", subtitle: "Jintia prepara tus asistentes y elige automáticamente la mejor opción disponible.", icon: "notebook" },
   { title: "Todo listo", subtitle: "Comprobamos que ya puedes crear tu primera asignatura.", icon: "check-circle-2" },
 ];
 
@@ -43,6 +46,10 @@ export const runtime = {
   dependencies: [],
   auth: null,
   setup: null,
+  assistantAccounts: {
+    claude: { installed: false, authenticated: false },
+    codex: { installed: false, logged_in: false, account: null },
+  },
   templates: [],
   activeTemplate: "",
   sitePalette: null,
@@ -128,15 +135,32 @@ export async function prepareOnboardingStep(step, { force = false } = {}) {
     await loadOnce("setup", async () => {
       runtime.setup = await getSetupStatus();
     }, force);
+    await loadOnce("assistant-accounts", async () => {
+      const claude = await claudeStatus().catch(() => ({ installed: false, authenticated: false }));
+      let codex = await codexStatus().catch(() => ({ installed: false, running: false, logged_in: false, account: null }));
+      if (codex.installed && !codex.running) {
+        const started = await codexStart().catch(() => ({ success: false }));
+        if (started?.success) {
+          codex = await codexStatus().catch(() => codex);
+        }
+      }
+      runtime.assistantAccounts = { claude, codex };
+    }, force);
   }
 }
 
 export function targetReady(target) {
   const setup = runtime.setup || {};
-  const skillReady = setup.skill_installed && setup.skill_current;
-  if (target === "claude-code") return skillReady && setup.mcp_claude_code_configured;
-  if (target === "openai") return !!setup.openai_plugin_current;
-  return skillReady && setup.mcp_claude_code_configured && setup.openai_plugin_current;
+  const allSkillsReady = setup.skill_installed && setup.skill_current;
+  void target;
+  return allSkillsReady
+    && setup.claude_skill_current
+    && setup.codex_skill_current
+    && setup.opencode_skill_current
+    && setup.opencode_cli_installed
+    && setup.mcp_claude_code_configured
+    && setup.mcp_codex_configured
+    && setup.openai_plugin_current;
 }
 
 export function warmOnboardingData(currentStep) {

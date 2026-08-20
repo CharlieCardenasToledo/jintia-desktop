@@ -1,4 +1,5 @@
 mod capabilities;
+mod claude;
 mod codex;
 mod config;
 mod course;
@@ -203,8 +204,8 @@ async fn reset_onboarding() -> models::OnboardingResult {
 #[tauri::command]
 async fn get_skill_path() -> String {
     tauri::async_runtime::spawn_blocking(|| {
-        crate::toolchain::claude_skill_status()
-            .map(|status| status.target)
+        crate::toolchain::agent_skills_status()
+            .map(|status| status.claude.target)
             .unwrap_or_default()
     })
     .await
@@ -213,7 +214,17 @@ async fn get_skill_path() -> String {
 
 #[tauri::command]
 async fn install_skill() -> ActionResult {
-    tauri::async_runtime::spawn_blocking(toolchain::install_global_claude_skill)
+    tauri::async_runtime::spawn_blocking(|| {
+        let result = toolchain::install_global_agent_skills();
+        if result.success {
+            if let Err(error) = config::sync_existing_user_config_to_installs() {
+                return ActionResult::error(format!(
+                    "Las skills se instalaron, pero no se pudo sincronizar la configuración existente: {error}"
+                ));
+            }
+        }
+        result
+    })
         .await
         .unwrap_or_else(|error| {
             ActionResult::error(format!("No se pudo instalar Jintia Skill: {error}"))
@@ -222,7 +233,17 @@ async fn install_skill() -> ActionResult {
 
 #[tauri::command]
 async fn install_openai_plugin() -> ActionResult {
-    tauri::async_runtime::spawn_blocking(toolchain::install_openai_plugin)
+    tauri::async_runtime::spawn_blocking(|| {
+        let result = toolchain::install_openai_plugin();
+        if result.success {
+            if let Err(error) = config::sync_existing_user_config_to_installs() {
+                return ActionResult::error(format!(
+                    "El plugin se instaló, pero no se pudo sincronizar la configuración existente: {error}"
+                ));
+            }
+        }
+        result
+    })
         .await
         .unwrap_or_else(|e| {
             ActionResult::error(format!("No se pudo instalar el plugin OpenAI: {e}"))
@@ -522,10 +543,165 @@ async fn run_migration(project_path: String) -> ActionResult {
 }
 
 #[tauri::command]
-async fn run_skill_self_test() -> serde_json::Value {
-    tauri::async_runtime::spawn_blocking(course::run_self_test)
-        .await
-        .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": format!("{e}") }))
+async fn run_skill_self_test(
+    app: tauri::AppHandle,
+    operation_id: String,
+) -> serde_json::Value {
+    fn emit_progress(
+        app: &tauri::AppHandle,
+        operation_id: &str,
+        phase: &str,
+        percent: f64,
+        message: &str,
+        check: Option<&str>,
+        status: Option<&str>,
+        detail: Option<String>,
+    ) {
+        let _ = app.emit(
+            "self-test-progress",
+            serde_json::json!({
+                "operationId": operation_id,
+                "phase": phase,
+                "percent": percent,
+                "message": message,
+                "check": check,
+                "status": status,
+                "detail": detail,
+            }),
+        );
+    }
+
+    emit_progress(
+        &app,
+        &operation_id,
+        "preparing",
+        2.0,
+        "Preparando la prueba del entorno administrado…",
+        None,
+        None,
+        None,
+    );
+
+    let event_app = app.clone();
+    let event_operation_id = operation_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        emit_progress(
+            &event_app,
+            &event_operation_id,
+            "running",
+            10.0,
+            "Verificando el entorno y el motor de documentos…",
+            None,
+            None,
+            Some("Comando: jintia self-test --json".to_string()),
+        );
+        let environment_report = course::run_self_test();
+        emit_progress(
+            &event_app,
+            &event_operation_id,
+            "report_received",
+            35.0,
+            "El backend recibió el diagnóstico del entorno.",
+            None,
+            None,
+            Some(environment_report.to_string()),
+        );
+
+        let environment_ready = environment_report
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        let report = if environment_ready {
+            emit_progress(
+                &event_app,
+                &event_operation_id,
+                "guide_preparing",
+                45.0,
+                "Creando una guía práctica para aprender a usar Jintia…",
+                None,
+                None,
+                Some("Contenido: recorrido inicial por la plataforma.".to_string()),
+            );
+            let guide_report = course::generate_welcome_guide_pdf();
+            emit_progress(
+                &event_app,
+                &event_operation_id,
+                "guide_report_received",
+                80.0,
+                "El backend recibió el resultado de la guía de uso.",
+                None,
+                None,
+                Some(guide_report.to_string()),
+            );
+            guide_report
+        } else {
+            environment_report
+        };
+
+        let labels = [
+            ("validate", "Validación del contenido"),
+            ("render", "Creación del HTML"),
+            ("vivliostyle", "Renderizado PDF con Vivliostyle"),
+            ("pdf", "Verificación del PDF"),
+        ];
+        for (index, (check, label)) in labels.iter().enumerate() {
+            let Some(status) = report
+                .get("checks")
+                .and_then(|checks| checks.get(*check))
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            let message = if status == "passed" {
+                format!("{label}: correcto.")
+            } else {
+                format!("{label}: {status}.")
+            };
+            emit_progress(
+                &event_app,
+                &event_operation_id,
+                "check",
+                84.0 + index as f64 * 4.0,
+                &message,
+                Some(check),
+                Some(status),
+                None,
+            );
+        }
+
+        let passed = report.get("ok").and_then(serde_json::Value::as_bool) == Some(true);
+        emit_progress(
+            &event_app,
+            &event_operation_id,
+            if passed { "completed" } else { "error" },
+            100.0,
+            if passed {
+                "La guía de uso de Jintia se generó correctamente."
+            } else {
+                "La prueba final terminó con errores."
+            },
+            None,
+            None,
+            report.get("error").map(|value| value.to_string()),
+        );
+        report
+    })
+    .await;
+
+    result.unwrap_or_else(|error| {
+        let message = format!("No se pudo completar la prueba: {error}");
+        emit_progress(
+            &app,
+            &operation_id,
+            "error",
+            100.0,
+            &message,
+            None,
+            None,
+            Some(error.to_string()),
+        );
+        serde_json::json!({ "ok": false, "error": message })
+    })
 }
 
 #[tauri::command]
@@ -760,6 +936,37 @@ fn codex_respond_approval(
     manager.respond_approval(id, &decision)
 }
 
+// ── Claude Code CLI commands ──────────────────────────────────────────────
+
+#[tauri::command]
+fn claude_status(manager: tauri::State<claude::ClaudeManager>) -> claude::ClaudeStatus {
+    manager.status()
+}
+
+#[tauri::command]
+fn claude_submit_turn(
+    app: tauri::AppHandle,
+    request: claude::ClaudeTurnRequest,
+    tools: Option<Vec<String>>,
+    permission_mode: Option<String>,
+    manager: tauri::State<claude::ClaudeManager>,
+) -> Result<(), String> {
+    manager.submit_turn(app, request, tools, permission_mode)
+}
+
+#[tauri::command]
+fn claude_interrupt_turn(
+    request_id: String,
+    manager: tauri::State<claude::ClaudeManager>,
+) -> Result<(), String> {
+    manager.interrupt_turn(&request_id)
+}
+
+#[tauri::command]
+fn claude_auth_login(manager: tauri::State<claude::ClaudeManager>) -> Result<(), String> {
+    manager.start_login()
+}
+
 // ── OpenCode runtime commands ─────────────────────────────────────────────
 
 #[tauri::command]
@@ -928,6 +1135,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(opencode::OpenCodeManager::new())
         .manage(codex::CodexManager::new())
+        .manage(claude::ClaudeManager::new())
         .invoke_handler(tauri::generate_handler![
             open_web_source,
             check_dependencies,
@@ -1009,6 +1217,10 @@ pub fn run() {
             codex_submit_turn,
             codex_interrupt_turn,
             codex_respond_approval,
+            claude_status,
+            claude_submit_turn,
+            claude_interrupt_turn,
+            claude_auth_login,
         ])
         .setup(|_app| {
             paths::migrate_app_dir_if_needed();
@@ -1018,6 +1230,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 if let Some(mgr) = window.try_state::<opencode::OpenCodeManager>() {
+                    mgr.stop_all();
+                }
+                if let Some(mgr) = window.try_state::<claude::ClaudeManager>() {
                     mgr.stop_all();
                 }
             }

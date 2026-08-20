@@ -3,6 +3,7 @@ import { escapeHtml } from "../dom.js";
 import { state } from "../state.js";
 import { toast } from "../toast.js";
 import { ic, refreshIcons } from "../icons.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { ui, cx } from "../uiClasses.js";
 
@@ -12,8 +13,8 @@ export async function renderSetup() {
   const list = document.getElementById("dep-list");
   if (!list) return;
 
-  list.innerHTML = `<div class="py-3 text-xs leading-relaxed text-app-muted">${ic("loader-2")} Verificando dependencias del sistema…</div>`;
-  refreshIcons();
+  list.innerHTML = `<div class="py-3 text-xs leading-relaxed text-app-muted">${jintiaLoaderPlaceholder(14)} Verificando dependencias del sistema…</div>`;
+  mountAllJintiaLoaders(list);
 
   try {
     state.deps = await checkDependencies();

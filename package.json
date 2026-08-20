@@ -16,7 +16,7 @@
     "licenses:generate": "node scripts/generate-third-party-notices.mjs",
     "licenses:check": "node scripts/generate-third-party-notices.mjs --check",
     "skill:verify": "node --test tests/skill-verify.test.mjs",
-    "test": "node --test tests/static-contracts.test.mjs tests/onboarding-v4.test.mjs",
+    "test": "node --test tests/static-contracts.test.mjs tests/onboarding-v4.test.mjs tests/claude-provider.test.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
@@ -27,10 +27,7 @@
     "@tauri-apps/plugin-opener": "^2.5.4",
     "lucide": "1.26.0",
     "marked": "^18.0.9",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "tailwindcss": "^4.3.3",
-    "thinking-orbs": "^0.1.1"
+    "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

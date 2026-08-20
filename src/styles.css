@@ -555,7 +555,12 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 5px; }
 /* ── Week accordion ───────────────────────────────────────────────────────── */
 /* ── Step items ───────────────────────────────────────────────────────────── */
 /* ── Info / Warn boxes ────────────────────────────────────────────────────── */
-/* ── Spinner ──────────────────────────────────────────────────────────────── */
+/* ── Loader Jintia ────────────────────────────────────────────────────────── */
+.jintia-loader-inline {
+  flex: 0 0 auto;
+  contain: layout paint;
+}
+.jintia-loader-svg { pointer-events: none; }
 /* ── Divider ──────────────────────────────────────────────────────────────── */
 hr { border: none; border-top: 1px solid var(--surface-border); margin: 14px 0; }
 
@@ -665,16 +670,6 @@ code {
   0%   { transform: translate3d(2%, -4%, 0) scale(1.05) rotate(5deg); }
   55%  { border-radius: 36% 64% 54% 46% / 60% 39% 61% 40%; }
   100% { transform: translate3d(-13%, 13%, 0) scale(0.92) rotate(-6deg); }
-}
-
-.gemini-thinking-orb {
-  position: relative;
-  width: 192px;
-  height: 192px;
-}
-.gemini-thinking-orb canvas {
-  transform-origin: center;
-  will-change: transform;
 }
 
 .onboarding-scrollbar {

@@ -9,6 +9,7 @@ import { state } from "../state.js";
 import { ui, cx } from "../uiClasses.js";
 import { renderTemplatePreview } from "../templatePreview.js";
 import { ic, refreshIcons } from "../icons.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 
 let _templates = [];
 let _activeId = "";
@@ -96,6 +97,7 @@ async function loadTemplates() {
   workspace.setAttribute("aria-busy", "true");
   workspace.innerHTML = loadingState();
   refreshIcons();
+  mountAllJintiaLoaders(workspace);
   announce("Cargando plantillas…");
 
   try {
@@ -164,6 +166,7 @@ function renderWorkspace() {
       </aside>
     </div>`;
   refreshIcons();
+  mountAllJintiaLoaders(workspace);
 }
 
 function templateCard(template) {
@@ -236,7 +239,7 @@ function detailPanel(template) {
         <p class="mb-3 text-xs leading-5 text-app-muted">${escapeHtml(template.description || "")}</p>
         <button class="${cx(ui.button.base, active ? ui.button.secondary : ui.button.primary, "min-h-11 w-full")}"
           id="btn-activate-template" type="button" ${active || activating ? "disabled" : ""} aria-busy="${activating}">
-          <span class="${activating ? "animate-spin" : ""}">${ic(activating ? "loader-2" : active ? "check-circle-2" : "check", 18)}</span>
+          <span>${activating ? jintiaLoaderPlaceholder(18) : ic(active ? "check-circle-2" : "check", 18)}</span>
           ${activating ? "Aplicando plantilla…" : active ? "Plantilla activa" : "Usar esta plantilla"}
         </button>
         <div id="tpl-activation-error" class="${_activationError ? "" : "hidden "}mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700" role="alert">${escapeHtml(_activationError)}</div>
@@ -291,7 +294,7 @@ function loadingState() {
   return `
     <div class="grid min-h-[320px] place-items-center rounded-xl border border-slate-200 bg-white p-8 text-center" role="status">
       <div>
-        <span class="mb-3 block animate-spin text-brand-600">${ic("loader-2", 34)}</span>
+        <span class="mb-3 block text-brand-600">${jintiaLoaderPlaceholder(34)}</span>
         <p class="text-sm font-semibold text-app-text">Preparando las vistas previas…</p>
         <p class="mt-1 text-xs text-app-muted">Esto puede tardar unos segundos.</p>
       </div>

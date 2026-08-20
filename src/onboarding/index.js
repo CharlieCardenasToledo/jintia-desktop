@@ -6,5 +6,5 @@
  * "./onboarding/index.js" recibe exactamente los mismos símbolos.
  */
 
-export { mountGeminiLoading } from "./ui.js";
+export { mountJintiaLoading, mountGeminiLoading } from "./ui.js";
 export { renderOnboarding } from "./controller.js";

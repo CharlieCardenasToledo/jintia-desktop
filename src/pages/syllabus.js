@@ -4,6 +4,7 @@ import { state, saveCourses } from "../state.js";
 import { toast } from "../toast.js";
 import { ui, cx } from "../uiClasses.js";
 import { ic, refreshIcons } from "../icons.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 import { PathStepper } from "../components/PathStepper.js";
 import { ProgressPath } from "../components/ProgressPath.js";
 
@@ -498,8 +499,8 @@ async function generateReadme() {
   if (button) {
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
-    button.innerHTML = `<span class="animate-spin">${ic("loader-2", 17)}</span>Generando documento…`;
-    refreshIcons();
+    button.innerHTML = `<span>${jintiaLoaderPlaceholder(17)}</span>Generando documento…`;
+    mountAllJintiaLoaders(button);
   }
   announce("Generando el documento del sílabo");
   toast("Generando el sílabo canónico…", "loading", 15000);

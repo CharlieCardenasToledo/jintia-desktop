@@ -20,64 +20,72 @@ fn stable_pdf_dir() -> PathBuf {
 fn welcome_guide_json() -> Value {
     json!({
         "metadata": {
-            "course": "Jintia — Asistente pedagógico",
+            "course": "Guía rápida de Jintia",
             "week": 1,
-            "topic": "Tu flujo de trabajo con Jintia",
-            "outcome": "Crear asignaturas y guías didácticas con IA en minutos",
+            "topic": "Cómo usar la plataforma paso a paso",
+            "outcome": "Configurar Jintia, crear una asignatura, trabajar con Ask Jintia y obtener una guía en PDF",
             "lang": "es"
         },
         "sections": [
             {
                 "type": "orientation",
                 "id": "bienvenida",
-                "title": "¿Qué hace Jintia?",
-                "content": "Jintia es tu asistente pedagógico. Combina inteligencia artificial, una biblioteca de conocimiento ({{keyterm:Gemini Notebook}}) y generación automática de PDFs tipográficos para que puedas preparar guías didácticas profesionales en minutos.\n\nEsta guía fue generada por Jintia durante su instalación — es una muestra de lo que podrás crear cada semana para tus asignaturas."
+                "title": "Bienvenido a Jintia",
+                "content": "Esta guía es tu primer recorrido por la plataforma. Fue creada durante la verificación inicial con el mismo flujo que Jintia utilizará en tus asignaturas: contenido estructurado, HTML, estilos editoriales, Vivliostyle y PDF.\n\nAl terminar sabrás dónde crear un curso, cómo preparar el sílabo, cómo pedir ayuda a {{keyterm:Ask Jintia}} y dónde encontrar los documentos generados."
             },
             {
                 "type": "table",
-                "id": "flujo-semanal",
-                "caption": "Flujo de trabajo semanal con Jintia",
-                "headers": ["Paso", "Acción en Jintia", "Resultado"],
+                "id": "mapa-plataforma",
+                "caption": "Mapa rápido de la plataforma",
+                "headers": ["Sección", "Para qué sirve", "Cuándo usarla"],
                 "rows": [
-                    ["1", "Crear asignatura", "Carpeta del curso lista"],
-                    ["2", "Vincular notebook", "Biblioteca de conocimiento conectada"],
-                    ["3", "Preguntar en el chat", "Respuestas citadas de tus fuentes"],
-                    ["4", "Generar guía semanal", "PDF listo para publicar"]
+                    ["Mis cursos", "Crear y organizar asignaturas", "Al iniciar un curso o revisar sus semanas"],
+                    ["Ask Jintia", "Trabajar con IA dentro del contexto del curso", "Para crear, revisar o validar contenido"],
+                    ["PDFs generados", "Consultar los documentos de tus proyectos", "Después de producir una guía"],
+                    ["Plantillas", "Elegir el diseño editorial", "Antes de generar documentos nuevos"],
+                    ["Configuración", "Revisar perfil, integraciones y entorno", "Cuando necesites verificar o reparar una capacidad"]
                 ]
             },
             {
                 "type": "concept",
-                "id": "ask-jintia",
-                "title": "Ask Jintia: preguntas sobre tu materia",
-                "content": "El chat de Jintia está conectado a tu {{keyterm:Gemini Notebook}}, un espacio donde subes libros, artículos y diapositivas de tu asignatura.\n\nCuando preguntas algo — «¿cómo explico la regresión logística a ingenieros?» — Jintia busca en TUS fuentes y cita de dónde vino cada respuesta. Sin inventar referencias ni datos."
-            },
-            {
-                "type": "theory",
-                "id": "guias-pdf",
-                "title": "Guías didácticas en PDF profesional",
-                "content": "Cada semana Jintia genera un documento PDF con diseño tipográfico institucional. Incluye portada, temas, resultados de aprendizaje, bibliografía formateada en APA y actividad evaluativa.\n\nPuedes elegir entre varias {{keyterm:plantillas visuales}} y personalizar colores con la identidad de tu institución."
+                "id": "integraciones",
+                "title": "1. Elige cómo conversar con Jintia",
+                "content": "Durante el onboarding, Jintia prepara OpenCode, Claude Code y ChatGPT (Codex) en el mismo equipo. Claude y ChatGPT requieren una cuenta compatible con sus funciones profesionales; OpenCode es la alternativa gratuita cuando esas sesiones no están disponibles.\n\nEn Ask Jintia puedes revisar el proveedor activo antes de enviar una solicitud. Tus archivos académicos permanecen en la carpeta del curso que elegiste."
             },
             {
                 "type": "practice",
-                "id": "primer-curso",
-                "title": "Empieza en tres pasos",
-                "content": "Desde el panel principal haz clic en {{keyterm:Nueva asignatura}}.\n\nElige la carpeta, escribe el código y nombre del curso. Jintia crea toda la estructura de archivos automáticamente.\n\nDespués ve a {{keyterm:Ask Jintia}}, vincula tu Gemini Notebook y empieza a preguntar sobre tu materia."
+                "id": "crear-asignatura",
+                "title": "2. Crea tu primera asignatura",
+                "content": "En el panel selecciona {{keyterm:Nueva asignatura}}. Indica el código, el nombre y la carpeta de trabajo; Jintia prepara el proyecto sin mezclarlo con otras materias.\n\nAbre el editor de sílabo y completa los datos de cada semana: unidad, temas, resultado de aprendizaje, bibliografía, horas y actividad. Al guardar, genera el README del curso; este archivo será la fuente de verdad que la IA consultará."
+            },
+            {
+                "type": "concept",
+                "id": "ask-jintia",
+                "title": "3. Trabaja con Ask Jintia",
+                "content": "Abre Ask Jintia desde la asignatura para conservar el contexto correcto. Selecciona la semana y pide una acción concreta, por ejemplo: «crea la guía de la semana 1», «revisa la alineación entre resultado y actividad» o «valida las referencias».\n\nSi conectaste NotebookLM, Jintia puede contrastar el contenido con tus fuentes. Revisa siempre el resultado antes de publicarlo y no incluyas datos personales de estudiantes."
+            },
+            {
+                "type": "theory",
+                "id": "generar-pdf",
+                "title": "4. Genera y revisa la guía",
+                "content": "Jintia crea primero el contenido estructurado de la guía, genera el HTML, aplica el CSS de la plantilla activa y renderiza el PDF con Vivliostyle. No necesitas instalar LaTeX para el flujo habitual.\n\nCuando termine, abre {{keyterm:PDFs generados}} para revisar el documento. Si algo falla, consulta Actividad del sistema: allí verás la etapa, el tiempo transcurrido y el diagnóstico que puedes copiar."
             },
             {
                 "type": "scenario",
-                "id": "caso-uso",
-                "title": "Caso real: preparar una clase en 10 minutos",
-                "content": "Una docente de Estadística abre Jintia el lunes por la mañana. En el chat pregunta: «Resume los supuestos de la regresión lineal con un ejemplo de datos de salud». Jintia responde con una síntesis citada de los capítulos que ella subió a su notebook.\n\nCopia la respuesta, ajusta el tono, y genera la guía de la semana 5. El PDF queda listo para sus estudiantes antes del almuerzo."
+                "id": "primer-recorrido",
+                "title": "Ejemplo de primer recorrido",
+                "content": "Una docente crea la asignatura «Interacción Humano-Computador», completa la semana 1 del sílabo y abre Ask Jintia desde ese curso. Solicita una guía introductoria con una actividad breve y criterios de éxito.\n\nDespués revisa las fuentes, genera el PDF con la plantilla institucional y lo abre desde PDFs generados. Si necesita modificar algo, vuelve a Ask Jintia dentro de la misma semana para conservar el contexto."
             },
             {
                 "type": "assessment",
-                "id": "primeros-pasos",
-                "title": "Tu lista de inicio",
+                "id": "lista-inicio",
+                "title": "Comprueba que estás listo",
                 "items": [
-                    "Crea tu primera asignatura desde el panel principal",
-                    "Vincula un notebook de Gemini Notebook al curso",
-                    "Haz tu primera pregunta en Ask Jintia",
-                    "Genera la guía de la semana 1 de tu asignatura"
+                    "Identifica las secciones Mis cursos, Ask Jintia, PDFs generados, Plantillas y Configuración",
+                    "Crea una asignatura y completa al menos una semana del sílabo",
+                    "Abre Ask Jintia desde el curso y confirma la semana y el proveedor activos",
+                    "Genera una guía, revisa el PDF y corrige cualquier observación antes de publicarlo",
+                    "Usa Ayuda o copia el diagnóstico de Actividad del sistema si una operación falla"
                 ]
             }
         ]
@@ -189,14 +197,14 @@ pub fn generate_welcome_guide_pdf() -> Value {
 
         // pdf
         if pdf_file.is_file() {
-            checks.insert("pdf".into(), json!("passed"));
             let dest_dir = stable_pdf_dir();
-            if fs::create_dir_all(&dest_dir).is_ok() {
-                let dest = dest_dir.join("guide.pdf");
-                if fs::copy(&pdf_file, &dest).is_ok() {
-                    stable_pdf = Some(dest);
-                }
-            }
+            fs::create_dir_all(&dest_dir)
+                .map_err(|e| format!("No se pudo preparar la carpeta de la guía: {e}"))?;
+            let dest = dest_dir.join("guide.pdf");
+            fs::copy(&pdf_file, &dest)
+                .map_err(|e| format!("No se pudo conservar la guía generada: {e}"))?;
+            stable_pdf = Some(dest);
+            checks.insert("pdf".into(), json!("passed"));
         } else {
             ok = false;
             checks.insert("pdf".into(), json!("failed"));

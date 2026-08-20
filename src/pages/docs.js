@@ -19,13 +19,13 @@ const QUICK_ACTIONS = [
   {
     icon: "file-text",
     title: "Probar una plantilla",
-    description: "Compila un PDF real antes de activar el formato.",
+    description: "Genera un PDF real antes de activar el formato.",
     page: "templates",
   },
   {
     icon: "construction",
     title: "Revisar herramientas",
-    description: "Comprueba Node.js, Python y el compilador LaTeX.",
+    description: "Comprueba Node.js, Python, Jintia y Vivliostyle.",
     page: "settings",
     section: "environment",
   },
@@ -34,23 +34,23 @@ const QUICK_ACTIONS = [
 const FAQS = [
   {
     question: "¿Qué diferencia hay entre Jintia Desktop y jintia-skill?",
-    answer: "Jintia Desktop configura el entorno, administra asignaturas, estructura el sílabo y prepara archivos. La skill es el motor de diseño instruccional que Claude, ChatGPT y Codex pueden utilizar para redactar, validar y compilar guías académicas completas.",
+    answer: "Jintia Desktop configura el entorno, administra asignaturas, estructura el sílabo y prepara archivos. La skill es el motor de diseño instruccional que Claude, ChatGPT y OpenCode pueden utilizar para redactar, validar y generar guías académicas completas.",
   },
   {
     question: "¿Qué herramientas son obligatorias?",
     answer: "El flujo completo usa los runtimes privados de Node.js y Python, Jintia Skill, Vivliostyle y NotebookLM MCP. Git, LaTeX y las herramientas visuales son opcionales. Jintia muestra el motivo y el alcance de cada capacidad en Configuración → Entorno.",
   },
   {
-    question: "¿Jintia instala automáticamente los componentes LaTeX que falten?",
-    answer: "En Windows, la compilación nativa con MiKTeX intenta localizar e instalar automáticamente los paquetes LaTeX faltantes. La instalación inicial de herramientas siempre solicita confirmación. En macOS y Linux, Jintia muestra las instrucciones correspondientes al sistema.",
+    question: "¿Necesito instalar LaTeX para generar PDF?",
+    answer: "No. El flujo principal usa HTML y Vivliostyle dentro del entorno administrado por Jintia. LaTeX queda como una capacidad opcional para proyectos heredados o plantillas especializadas.",
   },
   {
     question: "¿Por qué la primera vista previa de una plantilla puede tardar?",
-    answer: "La vista previa no es una imagen simulada: Jintia construye una guía de muestra y ejecuta una compilación LaTeX real. La primera ejecución puede preparar clases, estilos o paquetes; las siguientes pueden reutilizar un PDF validado si nada cambió.",
+    answer: "La vista previa no es una imagen simulada: Jintia construye una guía HTML de muestra y la renderiza con Vivliostyle. La primera ejecución puede preparar el motor, fuentes y estilos; las siguientes pueden reutilizar un PDF validado si nada cambió.",
   },
   {
     question: "¿Activar una plantilla modifica guías que ya existen?",
-    answer: "No. La plantilla activa se utilizará al generar o compilar documentos nuevos. Los archivos académicos existentes no se reescriben automáticamente.",
+    answer: "No. La plantilla activa se utilizará al generar documentos nuevos. Los archivos académicos existentes no se reescriben automáticamente.",
   },
   {
     question: "¿Necesito NotebookLM para usar Jintia?",
@@ -77,12 +77,12 @@ const FAQS = [
     answer: "Confirma que la carpeta se llame jintia-skill y que SKILL.md esté directamente en su raíz. Después reinstala desde Jintia y reinicia Claude Code si ya estaba abierto.",
   },
   {
-    question: "¿Por qué el PDF falla aunque el compilador esté instalado?",
-    answer: "Puede faltar un paquete LaTeX, una clase de la plantilla, biber o un archivo citado. Reintenta para permitir la preparación automática y copia el diagnóstico si vuelve a fallar. Los errores como “File .sty not found” identifican el componente ausente.",
+    question: "¿Por qué puede fallar la generación del PDF?",
+    answer: "Puede faltar Vivliostyle, una fuente o un recurso utilizado por el HTML; también puede existir CSS inválido o una ruta inaccesible. Abre Actividad del sistema para identificar la etapa exacta y copia el diagnóstico si necesitas reportarlo.",
   },
   {
-    question: "¿Necesito WSL para compilar?",
-    answer: "La aplicación usa el compilador LaTeX nativo para pruebas y vistas previas. En Windows la skill prefiere pdflatex y biber nativos y recurre a WSL solo cuando no están disponibles; en macOS y Linux utiliza la instalación local.",
+    question: "¿Necesito WSL para generar documentos?",
+    answer: "No. Jintia utiliza su entorno autocontenido y el motor Vivliostyle administrado. WSL y una distribución LaTeX no son requisitos del flujo habitual.",
   },
   {
     question: "¿Qué ocurre si vuelvo a mostrar el onboarding?",
@@ -204,7 +204,7 @@ function workflowsSection() {
           [
             "Selecciona una plantilla del catálogo.",
             "Jintia construye una guía de muestra con tu información preliminar.",
-            "El compilador LaTeX genera un PDF real sin cambiar todavía la plantilla activa.",
+            "Vivliostyle convierte el HTML en un PDF real sin cambiar todavía la plantilla activa.",
             "Pulsa “Usar esta plantilla” solo después de revisar el resultado.",
           ],
           "Comparar plantillas",
@@ -299,12 +299,12 @@ function workflowCard(title, steps, icon) {
 function troubleshootingSection() {
   return `
     <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5" id="help-troubleshooting"
-      data-help-section data-help-searchable data-search="resolver problemas error pdf latex sty biber notebooklm autenticar claude skill diagnóstico">
+      data-help-section data-help-searchable data-search="resolver problemas error pdf html vivliostyle renderizado notebooklm autenticar claude skill diagnóstico">
       ${sectionHeading("Resolver problemas", "Diagnóstico", "Empieza por el síntoma. Conserva el diagnóstico técnico si necesitas reportarlo.")}
       <div class="overflow-hidden rounded-lg border border-slate-200 divide-y divide-slate-200">
         ${troubleRow(
           "No se genera el PDF",
-          "Comprueba el compilador en Configuración → Entorno. Reintenta una vez para permitir que MiKTeX prepare paquetes faltantes. Si vuelve a fallar, copia el diagnóstico; “File .sty not found” indica el componente ausente.",
+          "Comprueba Node.js, Jintia Skill y Vivliostyle en Configuración → Entorno. Reintenta y abre Actividad del sistema para ver si falló el HTML, un recurso, una fuente o el renderizado. Si persiste, copia el diagnóstico.",
           "environment"
         )}
         ${troubleRow(
@@ -318,14 +318,14 @@ function troubleshootingSection() {
           "app-prefs"
         )}
         ${troubleRow(
-          "Una plantilla no compila",
-          "Cada vista previa usa la clase y los estilos reales de la plantilla. Abre los detalles técnicos, copia el diagnóstico y confirma que las herramientas necesarias estén listas antes de reintentar.",
+          "Una plantilla no genera el PDF",
+          "Cada vista previa usa el HTML y CSS reales de la plantilla. Abre Actividad del sistema, copia el diagnóstico y confirma que las herramientas necesarias estén listas antes de reintentar.",
           "environment"
         )}
       </div>
       <div class="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-[13px] leading-5 text-slate-700">
         <strong class="text-app-text">Validación rápida y validación final no son lo mismo.</strong>
-        Jintia Desktop usa el compilador nativo para pruebas y vistas previas. La skill ejecuta además linter, biber y varias pasadas de LaTeX antes de entregar una guía final.
+        Jintia Desktop y la skill comparten el mismo flujo: validan el contenido estructurado, generan HTML, aplican el CSS de la plantilla y renderizan el PDF con Vivliostyle. La validación final añade comprobaciones editoriales y de integridad del archivo.
       </div>
     </section>`;
 }

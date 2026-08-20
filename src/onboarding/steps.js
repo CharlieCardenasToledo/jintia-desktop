@@ -10,7 +10,8 @@ import notebookLmWordmark from "../assets/notebooklm-wordmark.svg";
 import googleGLogo from "../assets/google-g.svg";
 import { escapeHtml } from "../dom.js";
 import { state } from "../state.js";
-import { ic } from "../icons.js";
+import { brandIcon, ic } from "../icons.js";
+import { jintiaLoaderPlaceholder } from "../components/JintiaLoader.js";
 import { elapsedLabel } from "../onboardingLongOperation.js";
 import { capabilityStatusLabel, installableBlockingCapabilities, isOnboardingBlocking } from "../onboardingCapabilities.js";
 import { profileDraftFromConfig } from "../onboardingDraft.js";
@@ -22,7 +23,6 @@ import {
   INLINE_ERROR,
   setFooter,
   actionButton,
-  openaiPluginLabel,
 } from "./ui.js";
 
 // ── Constantes de layout del perfil ──
@@ -93,10 +93,11 @@ export function capabilityCard(dep) {
   const badgeTone = status === "ready" ? "bg-green-100 text-green-800"
     : status === "working" ? "bg-teal-100 text-teal-800"
     : status === "error" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800";
-  const icon = status === "ready" ? "check-circle-2" : status === "working" ? "loader-2" : status === "error" ? "circle-alert" : "download";
+  const icon = status === "ready" ? "check-circle-2" : status === "error" ? "circle-alert" : "download";
+  const statusIconHtml = status === "working" ? jintiaLoaderPlaceholder(19) : ic(icon, 19);
   return `<article class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm" data-dep-row data-dep-id="${escapeHtml(dep.id)}" data-dep-name="${escapeHtml(dep.name)}">
     <div class="flex items-start gap-3">
-      <span class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${badgeTone}" data-dep-status>${ic(icon, 19)}</span>
+      <span class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${badgeTone}" data-dep-status>${statusIconHtml}</span>
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <strong class="text-sm font-bold text-gray-900">${escapeHtml(dep.label)}</strong>
@@ -119,8 +120,8 @@ export function dependenciesStep() {
 
   if (runtime.dependencies.length === 0) {
     setFooter("Continuar", "advance", true);
-    return `<section class="flex items-center justify-center py-10" aria-live="polite">
-      <span class="text-gray-700 animate-spin">${ic("loader-2", 26)}</span>
+    return `<section class="flex items-center justify-center py-10 text-gray-700" role="status" aria-live="polite">
+      ${jintiaLoaderPlaceholder(26)}
     </section>`;
   }
 
@@ -261,38 +262,46 @@ export function profileStep() {
 export function connectStep() {
   const authenticated = runtime.auth?.authenticated === true;
 
-  const setup    = runtime.setup || {};
-  const skillReady = !!(setup.skill_installed && setup.skill_current);
-  const selected = runtime.status.selectedTarget || state.config.onboardingTarget || "claude-code";
-
-  const targets = [
-    { id: "claude-code",    title: "Usar con Claude Code",          icon: "terminal",       desc: "Instala y conecta Jintia para Claude Code." },
-    { id: "openai",         title: "Usar con ChatGPT y Codex",      icon: "sparkles",       desc: "Instala el plugin universal para ChatGPT desktop, Codex CLI y Codex en la app." },
-    { id: "both",           title: "Usar en todos",                 icon: "laptop",         desc: "Prepara Jintia para Claude Code, ChatGPT y Codex en el mismo equipo." },
+  const setup = runtime.setup || {};
+  const accounts = runtime.assistantAccounts || {};
+  const claudeSession = accounts.claude?.authenticated === true;
+  const codexSession = accounts.codex?.logged_in === true;
+  const allReady = targetReady("both");
+  const assistants = [
+    {
+      title: "OpenCode",
+      brand: "opencode",
+      iconTone: "bg-[#F7F6F2]",
+      ready: !!(setup.opencode_cli_installed && setup.opencode_skill_current),
+      detail: "Opción gratuita y respaldo automático; no requiere una cuenta Pro.",
+      status: setup.opencode_cli_installed ? "Disponible gratis" : "Jintia lo preparará",
+    },
+    {
+      title: "Claude Code",
+      brand: "claude",
+      iconTone: "bg-[#F8E8E3] text-[#D97757]",
+      ready: claudeSession,
+      detail: "Requiere una cuenta Claude Pro o un plan compatible.",
+      status: claudeSession ? "Sesión detectada" : "Sin sesión Pro detectada",
+    },
+    {
+      title: "ChatGPT (Codex)",
+      brand: "openai",
+      iconTone: "bg-gray-950 text-white",
+      ready: codexSession,
+      detail: "Requiere una cuenta ChatGPT Pro/Plus o un plan compatible.",
+      status: codexSession ? "Sesión detectada" : "Sin sesión de pago detectada",
+    },
   ];
-
-  let allReady = false;
-  let actions  = "";
-
-  if (selected === "claude-code") {
-    allReady = !!(skillReady && setup.mcp_claude_code_configured);
-    actions  = actionButton(setup.skill_installed ? "Actualizar skill" : "Instalar skill", "install-local", skillReady, true) +
-               actionButton(setup.mcp_claude_code_configured ? "Verificar conexión MCP" : "Conectar con Claude Code", "configure-code", !skillReady, true);
-
-  } else if (selected === "openai") {
-    allReady = !!setup.openai_plugin_current;
-    actions  = actionButton(
-      openaiPluginLabel(setup),
-      "install-openai",
-      setup.openai_plugin_current,
-      true
-    );
-  } else { // all
-    allReady = !!(skillReady && setup.mcp_claude_code_configured && setup.openai_plugin_current);
-    actions  = actionButton(setup.skill_installed ? "Actualizar (proyecto local)" : "Instalar (proyecto local)", "install-local", skillReady, true) +
-               actionButton(openaiPluginLabel(setup), "install-openai", setup.openai_plugin_current, true) +
-               actionButton(setup.mcp_claude_code_configured ? "Verificar conexión MCP" : "Conectar con Claude Code", "configure-code", !setup.skill_installed, true);
-  }
+  const fallbackMessage = !claudeSession && !codexSession
+    ? "No detectamos una sesión compatible de Claude ni ChatGPT. Jintia usará OpenCode automáticamente como alternativa gratuita."
+    : `Sesión disponible: ${[claudeSession ? "Claude" : "", codexSession ? "ChatGPT" : ""].filter(Boolean).join(" y ")}. OpenCode seguirá disponible como respaldo gratuito.`;
+  const action = actionButton(
+    allReady ? "Integraciones preparadas" : "Preparar todas las integraciones",
+    "prepare-integrations",
+    allReady,
+    true
+  );
 
   setFooter("Continuar al paso final", "advance-target", !authenticated || !allReady);
   return `<section class="grid w-full gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] xl:items-start">
@@ -325,20 +334,22 @@ export function connectStep() {
     </div>
 
     <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <h3 class="text-[11.5px] font-bold uppercase tracking-wide text-gray-400 mb-3">Dónde trabajarás</h3>
+      <h3 class="mb-2 text-[11.5px] font-bold uppercase tracking-wide text-gray-400">Tus asistentes</h3>
+      <p class="mb-4 text-xs leading-relaxed text-gray-600">Jintia funcionará con Claude Code, ChatGPT (Codex) y OpenCode. Verificamos las sesiones disponibles y elegimos automáticamente; no necesitas seleccionar dónde instalar.</p>
       <div class="grid gap-2">
-        ${targets.map(t => `
-          <label class="flex items-start sm:items-center gap-3 p-3.5 rounded-xl border cursor-pointer ${t.id === selected ? "border-gray-900 bg-gray-50" : "border-gray-200 bg-white"}">
-            <input type="radio" class="accent-gray-900 flex-shrink-0 mt-1 sm:mt-0" name="onboarding-target" value="${t.id}" ${t.id === selected ? "checked" : ""}>
-            <span class="flex-shrink-0 text-gray-500">${ic(t.icon, 18)}</span>
-            <span class="flex-1 min-w-0 flex flex-col gap-0.5"><strong class="text-gray-900 text-sm">${t.title}</strong><small class="text-gray-500 text-xs leading-snug">${t.desc}</small></span>
-            <span class="flex-shrink-0 ${targetReady(t.id) ? "text-green-600" : "text-gray-300"}">${ic(targetReady(t.id) ? "check-circle-2" : "circle", 18)}</span>
-          </label>`).join("")}
+        ${assistants.map(assistant => `
+          <div class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3.5">
+            <span class="grid h-9 w-9 flex-shrink-0 place-items-center overflow-hidden rounded-lg ${assistant.iconTone}" title="${escapeHtml(assistant.title)}">${brandIcon(assistant.brand, 22)}</span>
+            <span class="flex min-w-0 flex-1 flex-col gap-0.5"><strong class="text-sm text-gray-900">${assistant.title}</strong><small class="text-xs leading-snug text-gray-500">${assistant.detail}</small></span>
+            <span class="flex max-w-36 flex-shrink-0 items-center gap-1 text-right text-[11px] font-semibold ${assistant.ready ? "text-green-700" : "text-amber-700"}">${ic(assistant.ready ? "check-circle-2" : "circle-alert", 15)} ${assistant.status}</span>
+          </div>`).join("")}
       </div>
 
-      <div class="mt-4 flex justify-center flex-wrap gap-2">${actions}</div>
+      <div class="mt-3 rounded-xl border ${!claudeSession && !codexSession ? "border-teal-200 bg-teal-50 text-teal-900" : "border-green-200 bg-green-50 text-green-900"} p-3 text-xs leading-relaxed" role="status">${escapeHtml(fallbackMessage)}</div>
+
+      <div class="mt-4 flex justify-center">${action}</div>
       ${operationPanelMarkup(runtime.targetOperation, "assistant-target")}
-      ${selected === "openai" || selected === "both" ? `<p class="mt-3 text-xs leading-relaxed text-gray-500"><strong>ChatGPT y Codex:</strong> reinicia ChatGPT después de instalar y activa Jintia desde Plugins. Su disponibilidad puede depender del plan y la política del workspace.</p>` : ""}
+      <p class="mt-3 text-xs leading-relaxed text-gray-500"><strong>Una sola preparación:</strong> Jintia usa su entorno administrado para preparar las herramientas y registra la misma skill en OpenCode, Claude Code y Codex; ChatGPT recibe su plugin.</p>
       <div class="${INLINE_ERROR}" id="onb-target-message" hidden></div>
     </div>
   </section>`;
@@ -349,30 +360,14 @@ export function connectStep() {
 export function finalStep() {
   const config = state.config || {};
   const setup  = runtime.setup || {};
-  const target = runtime.status?.selectedTarget || config.onboardingTarget || "claude-code";
-  const targetLabel = { "claude-code": "Usar con Claude Code", "openai": "Usar con ChatGPT y Codex", "both": "Usar en todos" }[target] || target;
-  const skillReady = !!(setup.skill_installed && setup.skill_current);
-
-  const connectionChecks = {
-    "claude-code": [
-      { label: "Skill local actualizada", ok: skillReady },
-      { label: "Proyecto local conectado", ok: setup.mcp_claude_code_configured },
-    ],
-    openai: [
-      { label: "Plugin ChatGPT/Codex preparado", ok: setup.openai_plugin_current },
-    ],
-    both: [
-      { label: "Skill local actualizada", ok: skillReady },
-      { label: "Proyecto local conectado", ok: setup.mcp_claude_code_configured },
-      { label: "Plugin ChatGPT/Codex preparado", ok: setup.openai_plugin_current },
-    ],
-  };
   const checks = [
     { label: "Dependencias",        ok: runtime.dependencies.filter(d => d.required).every(d => d.installed) },
     { label: "Perfil institucional", ok: !!(config.author && config.institution) },
     { label: "Plantilla activa",     ok: !!runtime.activeTemplate },
     { label: "Sesión de Google",     ok: runtime.auth?.authenticated === true },
-    ...(connectionChecks[target] || connectionChecks["claude-code"]),
+    { label: "OpenCode gratuito disponible", ok: setup.opencode_cli_installed && setup.opencode_skill_current },
+    { label: "Claude Code preparado", ok: setup.claude_skill_current && setup.mcp_claude_code_configured },
+    { label: "ChatGPT (Codex) preparado", ok: setup.codex_skill_current && setup.mcp_codex_configured && setup.openai_plugin_current },
   ];
 
   setFooter("Crear mi primera asignatura", "complete-create", true);
@@ -382,31 +377,24 @@ export function finalStep() {
       <!-- Carga (visible al inicio) -->
       <div id="final-loading" class="flex flex-col items-center gap-4 py-6">
 
-        <!-- Spinner concéntrico animado -->
-        <div class="relative w-[72px] h-[72px]">
-          <div class="absolute inset-0 rounded-full border-[3px] border-transparent border-t-gray-900 animate-spin"></div>
-          <div class="absolute inset-[9px] rounded-full border-[3px] border-transparent border-t-gray-400 [animation:spin_0.85s_linear_infinite_reverse]"></div>
-          <div class="absolute inset-[18px] rounded-full bg-gray-100 flex items-center justify-center">
-            <span id="gen-center-icon" class="text-gray-900">${ic("sparkles", 18)}</span>
-          </div>
-        </div>
+        <div id="final-ring-loader" class="h-[72px] w-[72px] text-gray-900" aria-hidden="true"></div>
 
-        <div id="final-loading-msg" role="status" aria-live="polite" class="text-[15px] font-bold text-gray-800 text-center">Preparando la prueba…</div>
-        <p class="text-xs text-gray-500 text-center -mt-2">Puedes seguir el avance sin abrir los detalles técnicos.</p>
+        <div id="final-loading-msg" role="status" aria-live="polite" class="text-center text-[15px] font-bold text-gray-800">Preparando la verificación…</div>
+        <p class="-mt-2 max-w-lg text-center text-xs leading-relaxed text-gray-500">Jintia comprobará el entorno y generará una guía práctica sobre cómo usar la plataforma, mediante HTML, Vivliostyle y PDF.</p>
 
         <!-- Barra de progreso -->
-        <div class="w-full max-w-xs h-[3px] rounded-full bg-gray-200 overflow-hidden">
+        <div id="gen-progress-track" role="progressbar" aria-labelledby="final-loading-msg" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" class="h-[3px] w-full max-w-sm overflow-hidden rounded-full bg-gray-200">
           <div id="gen-progress-fill" class="h-full w-0 rounded-full bg-gray-900 transition-[width] duration-500"></div>
         </div>
 
         <div id="final-loading-steps" class="grid w-full max-w-sm grid-cols-5 gap-1" aria-label="Progreso de la prueba">
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="0">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Validar</span>
+            <span>Contenido</span>
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="1">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Renderizar</span>
+            <span>HTML</span>
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="2">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
@@ -418,24 +406,24 @@ export function finalStep() {
           </div>
           <div class="final-check-row flex min-w-0 flex-col items-center gap-1 text-center text-xs font-medium text-gray-500 opacity-30" data-check="4">
             <span class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white" data-check-icon>${ic("hourglass", 15)}</span>
-            <span>Listo</span>
+            <span>Resultado</span>
           </div>
         </div>
 
-        <details id="compile-monitor" class="w-full max-w-sm overflow-hidden rounded-xl border border-gray-200 bg-white text-left">
+        <details id="compile-monitor" open class="w-full max-w-xl overflow-hidden rounded-xl border border-gray-200 bg-white text-left shadow-sm">
           <summary class="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-xs font-semibold text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900">
             <span class="flex items-center gap-2">
               <span class="text-gray-500">${ic("terminal", 15)}</span>
-              Ver detalles técnicos
+              Actividad del sistema
             </span>
             <span id="compile-elapsed" class="font-mono text-xs tabular-nums text-gray-500">00:00</span>
           </summary>
           <div class="border-t border-gray-100 px-3 pb-3 pt-2.5">
-            <div id="compile-current" class="mb-2 text-xs font-medium text-gray-600">Esperando al compilador…</div>
-            <pre id="compile-live-log" aria-live="polite" class="m-0 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 px-3 py-2.5 font-mono text-xs leading-relaxed text-gray-200">La actividad aparecerá aquí.</pre>
+            <div id="compile-current" role="status" aria-live="polite" aria-atomic="true" class="mb-2 text-xs font-medium text-gray-600">Conectando con la prueba del sistema…</div>
+            <pre id="compile-live-log" data-empty="true" class="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 px-3 py-2.5 font-mono text-xs leading-relaxed text-gray-200">Esperando el primer evento del backend…</pre>
             <button type="button" id="btn-copy-live-diagnostic" class="mt-2 inline-flex min-h-11 items-center gap-1.5 border-0 bg-transparent p-0 text-xs font-semibold text-gray-500 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900">
               ${ic("copy", 14)}
-              Copiar actividad
+              Copiar diagnóstico
             </button>
           </div>
         </details>

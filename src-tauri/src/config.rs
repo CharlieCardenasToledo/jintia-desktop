@@ -1,7 +1,8 @@
 use crate::models::{ActionResult, InstitutionConfig, NotebookEntry, SetupStatus, TemplateMeta};
 use crate::paths::{
     app_config_dir, atomic_write, atomic_write_if_changed, claude_code_config_path,
-    claude_desktop_config_path, installed_skill_dir, openai_plugin_dir, path_text, portable_skill_source_dir,
+    claude_desktop_config_path, codex_skill_dir, installed_skill_dir, openai_plugin_dir,
+    opencode_skill_dir, path_text, portable_skill_source_dir,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -13,13 +14,29 @@ fn config_file_path(name: &str) -> Result<PathBuf, String> {
 }
 
 fn sync_user_config_to_install(name: &str, bytes: &[u8]) -> Result<(), String> {
-    let target = installed_skill_dir()?.join("config").join(name);
-    if target.parent().is_some_and(std::path::Path::exists) {
-        atomic_write_if_changed(&target, bytes)?;
+    for skill_root in [installed_skill_dir()?, codex_skill_dir()?, opencode_skill_dir()?] {
+        let target = skill_root.join("config").join(name);
+        if target.parent().is_some_and(std::path::Path::exists) {
+            atomic_write_if_changed(&target, bytes)?;
+        }
     }
     let openai_target = openai_plugin_dir()?.join("skills").join("jintia-skill").join("config").join(name);
     if openai_target.parent().is_some_and(std::path::Path::exists) {
         atomic_write_if_changed(&openai_target, bytes)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn sync_existing_user_config_to_installs() -> Result<(), String> {
+    for name in ["institution.json", "notebooks.json"] {
+        let source = config_file_path(name)?;
+        if !source.is_file() {
+            continue;
+        }
+        let bytes = fs::read(&source).map_err(|error| {
+            format!("No se pudo leer {} para sincronizarlo: {error}", source.display())
+        })?;
+        sync_user_config_to_install(name, &bytes)?;
     }
     Ok(())
 }
@@ -184,7 +201,7 @@ pub fn apply_institution(config: InstitutionConfig) -> ActionResult {
     };
     if let Err(error) = sync_user_config_to_install("institution.json", &bytes) {
         return ActionResult::error(format!(
-            "La configuración principal se guardó, pero no pudo sincronizarse con Claude Code: {error}"
+            "La configuración principal se guardó, pero no pudo sincronizarse con Claude, Codex y OpenCode: {error}"
         ));
     }
 
@@ -250,7 +267,7 @@ pub fn save_notebooks(entries: Vec<NotebookEntry>) -> ActionResult {
     }
     if let Err(error) = sync_user_config_to_install("notebooks.json", &bytes) {
         return ActionResult::error(format!(
-            "El registro principal se guardó, pero no pudo sincronizarse con Claude Code: {error}"
+            "El registro principal se guardó, pero no pudo sincronizarse con Claude, Codex y OpenCode: {error}"
         ));
     }
 
@@ -397,7 +414,9 @@ fn server_configured(path: Result<std::path::PathBuf, String>) -> bool {
 
 pub fn setup_status() -> SetupStatus {
     let openai = crate::toolchain::openai_plugin_status().unwrap_or_default();
-    let claude = crate::toolchain::claude_skill_status().unwrap_or_default();
+    let skills = crate::toolchain::agent_skills_status().unwrap_or_default();
+    let all_skills_installed = skills.claude.installed && skills.codex.installed && skills.opencode.installed;
+    let all_skills_current = skills.claude.current && skills.codex.current && skills.opencode.current;
     let desktop_config = claude_desktop_config_path();
     let desktop_path_text = desktop_config
         .as_ref()
@@ -408,10 +427,17 @@ pub fn setup_status() -> SetupStatus {
     let institution = institution_is_configured();
 
     SetupStatus {
-        skill_installed: claude.installed,
-        skill_current: claude.current,
-        skill_version: claude.version,
-        available_skill_version: claude.available_version,
+        skill_installed: all_skills_installed,
+        skill_current: all_skills_current,
+        skill_version: skills.claude.version.clone(),
+        available_skill_version: skills.claude.available_version.clone(),
+        claude_skill_current: skills.claude.current,
+        codex_skill_current: skills.codex.current,
+        opencode_skill_current: skills.opencode.current,
+        opencode_cli_installed: crate::opencode::OpenCodeManager::is_installed(),
+        claude_skill_path: skills.claude.target.clone(),
+        codex_skill_path: skills.codex.target.clone(),
+        opencode_skill_path: skills.opencode.target.clone(),
         openai_plugin_installed: openai.installed,
         openai_plugin_current: openai.current,
         openai_plugin_path: openai.target,
@@ -419,8 +445,9 @@ pub fn setup_status() -> SetupStatus {
         mcp_configured: desktop || code,
         mcp_desktop_configured: desktop,
         mcp_claude_code_configured: code,
+        mcp_codex_configured: crate::mcp::codex_mcp_configured(),
         institution_configured: institution,
-        skill_path: claude.target,
+        skill_path: skills.claude.target,
         mcp_config_path: desktop_path_text,
     }
 }

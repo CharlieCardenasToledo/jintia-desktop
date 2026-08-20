@@ -54,11 +54,18 @@ impl OpenCodeClient {
                 "modelID": model_id
             });
         }
-        self.client
+        let response = self.client
             .post(format!("{}/session/{}/prompt_async", self.base, session_id))
             .json(&body)
             .send()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("OpenCode no aceptó el mensaje: {e}"))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            eprintln!("[opencode] prompt_async failed status={} session={} body={}", status, session_id, body);
+            return Err(format!("OpenCode rechazó el mensaje ({status}): {body}"));
+        }
+        eprintln!("[opencode] prompt_async accepted session={}", session_id);
         Ok(())
     }
 

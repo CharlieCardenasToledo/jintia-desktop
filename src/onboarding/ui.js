@@ -6,11 +6,9 @@
  * constantes de clases CSS compartidas.
  */
 
-import { createElement } from "react";
-import { createRoot } from "react-dom/client";
-import { ThinkingOrb } from "thinking-orbs";
 import { escapeHtml } from "../dom.js";
 import { ic } from "../icons.js";
+import { jintiaLoaderPlaceholder, mountJintiaLoader } from "../components/JintiaLoader.js";
 import { ui, cx } from "../uiClasses.js";
 import { runtime, STEP_META, TOTAL_STEPS } from "./store.js";
 
@@ -26,13 +24,6 @@ export const DEP_ROW_READY = "border-gray-900 bg-gray-50";
 export const DEP_ROW_MISSING = "border-red-300 bg-red-50";
 export const DEP_CARD_BASE = "relative isolate flex flex-col gap-2.5 overflow-hidden p-4 rounded-xl border backdrop-blur-xl backdrop-saturate-125 shadow-sm transition-colors min-w-0 will-change-[backdrop-filter]";
 export const DEP_CARD_STATUS_BASE = "w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center";
-
-export const LOADING_PALETTE = [
-  { hex: "#4893FC", rgb: [72, 147, 252] },
-  { hex: "#749BFF", rgb: [116, 155, 255] },
-  { hex: "#969DFF", rgb: [150, 157, 255] },
-  { hex: "#BD99FE", rgb: [189, 153, 254] },
-];
 
 const ONBOARDING_AMBIENT_PALETTE = [
   { hex: "#0fa3a3" },
@@ -53,91 +44,42 @@ export function setFooter(label, action = "advance", disabled = false) {
 }
 export function getFooterConfig() { return footerConfig; }
 
-let geminiOrbSequence = 0;
-
 export function onboardingAmbientBackground() {
   return `<div class="onboarding-ambient" aria-hidden="true">
     ${ONBOARDING_AMBIENT_PALETTE.map(({ hex }, index) => `<span class="onboarding-blob onboarding-blob--${index + 1}" style="--blob-color:${hex}"></span>`).join("")}
   </div>`;
 }
 
-export function geminiThinkingOrb(label) {
-  const instanceId = `gemini-thinking-orb-${geminiOrbSequence += 1}`;
-  const layers = [
-    ["inset(0 50% 50% 0)", LOADING_PALETTE[0].hex],
-    ["inset(0 0 50% 50%)", LOADING_PALETTE[1].hex],
-    ["inset(50% 50% 0 0)", LOADING_PALETTE[2].hex],
-    ["inset(50% 0 0 50%)", LOADING_PALETTE[3].hex],
-  ];
-  return createElement(
-    "div",
-    { className: "gemini-thinking-orb", role: "img", "aria-label": label },
-    createElement(
-      "svg",
-      { width: 0, height: 0, "aria-hidden": "true", focusable: "false" },
-      createElement(
-        "defs",
-        null,
-        ...layers.map(([, color], index) => createElement(
-          "filter",
-          { id: `${instanceId}-color-${index}`, key: color, colorInterpolationFilters: "sRGB" },
-          createElement("feFlood", { floodColor: color, result: "geminiColor" }),
-          createElement("feComposite", {
-            in: "geminiColor",
-            in2: "SourceGraphic",
-            operator: "in",
-          }),
-        )),
-      ),
-    ),
-    ...layers.map(([clipPath], index) => createElement(ThinkingOrb, {
-      key: `${instanceId}-layer-${index}`,
-      state: "working",
-      size: 64,
-      theme: "light",
-      "aria-hidden": "true",
-      className: "gemini-thinking-orb__layer",
-      style: {
-        position: "absolute",
-        inset: 0,
-        width: 192,
-        height: 192,
-        clipPath,
-        filter: `url(#${instanceId}-color-${index})`,
-      },
-      tabIndex: -1,
-      paused: false,
-      speed: 1,
-      "data-orb-layer": index,
-    })),
-  );
+export function mountLoadingMark(host) {
+  if (!host) return () => {};
+  const controller = mountJintiaLoader(host);
+  return () => {
+    controller.destroy();
+    host.replaceChildren();
+  };
 }
 
-export function mountGeminiOrb(host, label) {
-  const orbRoot = createRoot(host);
-  orbRoot.render(geminiThinkingOrb(label));
-  return () => orbRoot.unmount();
-}
-
-export function mountGeminiLoading(root, message = "Preparando tu espacio de trabajo…") {
+export function mountJintiaLoading(root, message = "Preparando tu espacio de trabajo…") {
   if (!root) return () => {};
   root.className = "fixed inset-0 z-[10000] flex items-center justify-center overflow-hidden bg-gray-50";
   root.innerHTML = `${onboardingAmbientBackground()}
-    <div class="relative z-[1] flex h-full w-full max-w-3xl flex-col items-center justify-center gap-4 p-6">
-      <div data-gemini-loading-orb role="status" aria-live="polite"></div>
+    <div class="relative z-[1] flex h-full w-full max-w-3xl flex-col items-center justify-center gap-4 p-6 text-slate-800" role="status" aria-live="polite">
+      <div class="h-48 w-48" data-jintia-loading-mark aria-hidden="true"></div>
       <p class="text-sm font-semibold text-slate-700">${escapeHtml(message)}</p>
     </div>`;
 
-  const stopOrb = mountGeminiOrb(root.querySelector("[data-gemini-loading-orb]"), message);
+  const stopLoader = mountLoadingMark(root.querySelector("[data-jintia-loading-mark]"));
   let mounted = true;
   return () => {
     if (!mounted) return;
     mounted = false;
-    stopOrb();
+    stopLoader();
     root.replaceChildren();
     root.className = "";
   };
 }
+
+export const mountGeminiLoading = mountJintiaLoading;
 
 export function progressDots(current) {
   const maxDone = Number(runtime.status.maxCompletedStep || 0);
@@ -168,7 +110,7 @@ export function renderBottomNav(current) {
   const canBack = current > 1;
   return `<div class="flex flex-shrink-0 flex-col items-center pt-2">
     <div id="onboarding-operation-status" class="mb-1 flex h-5 items-center justify-center gap-1.5 text-xs font-medium text-gray-500 transition-opacity ${onboardingActionInFlight ? "opacity-100" : "opacity-0"}" role="status" aria-live="polite" aria-atomic="true">
-      <span class="animate-spin">${ic("loader-2", 13)}</span>
+      ${jintiaLoaderPlaceholder(13)}
       <span data-operation-message>${escapeHtml(onboardingBusyMessage || "Procesando…")}</span>
     </div>
     <div class="flex items-center justify-center gap-3">
@@ -250,8 +192,8 @@ export function loadingStep(step) {
     5: "Preparando la prueba final…",
   };
   setFooter("Preparando el siguiente paso", "advance", true);
-  return `<section class="flex flex-col items-center justify-center py-10" aria-live="polite">
-    <div data-step-loading-orb></div>
+  return `<section class="flex flex-col items-center justify-center py-10 text-gray-800" role="status" aria-live="polite">
+    <div class="h-32 w-32" data-step-loading-mark aria-hidden="true"></div>
     <p class="mt-5 text-sm font-semibold text-gray-800">${messages[step] || "Preparando el siguiente paso…"}</p>
     <p class="mt-1 text-xs text-gray-500">Puedes continuar en cuanto termine esta comprobación.</p>
   </section>`;
@@ -267,8 +209,9 @@ export function actionBusyMessage(action, current) {
     "install-local": "Instalando en tu proyecto local…",
     "install-openai": "Preparando Jintia para ChatGPT y Codex…",
     "configure-code": "Conectando tu proyecto local…",
+    "prepare-integrations": "Preparando OpenCode, Claude Code y ChatGPT con el entorno administrado de Jintia…",
     "configure-desktop": "Conectando la app de Claude…",
-    "advance-target": "Comprobando el destino seleccionado…",
+    "advance-target": "Comprobando todas las integraciones…",
     complete: "Finalizando la configuración…",
   };
   if (action === "advance") {

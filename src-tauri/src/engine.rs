@@ -61,7 +61,11 @@ pub fn run_node_script(script: &Path, args: &[&str], cwd: Option<&Path>) -> Resu
     cmd_args.extend(args.iter().map(|s| s.to_string()));
 
     let mut cmd = crate::runtimes::managed_node_command(&node_bin);
-    cmd.args(&cmd_args).env("PATH", managed_path);
+    cmd.args(&cmd_args)
+        .env("PATH", managed_path)
+        // Jintia Harness 11.6.x consulta CODEX_HOME al sincronizar los agentes
+        // globales. Declararlo evita que su fallback reciba un home indefinido.
+        .env("CODEX_HOME", crate::paths::codex_home_dir()?);
 
     if let Some(vivliostyle_bin) = crate::runtimes::resolve_vivliostyle() {
         cmd.env("JINTIA_VIVLIOSTYLE_BIN", vivliostyle_bin);
@@ -95,7 +99,9 @@ pub fn run_jintia(skill_path: &Path, args: &[&str]) -> Result<EngineResult, Stri
     let managed_path = managed_runtime_path(python.as_deref())?;
 
     let mut cmd = crate::runtimes::managed_node_command(&node_bin);
-    cmd.args(&cmd_args).env("PATH", managed_path);
+    cmd.args(&cmd_args)
+        .env("PATH", managed_path)
+        .env("CODEX_HOME", crate::paths::codex_home_dir()?);
 
     // La skill no usa `where.exe` para encontrar herramientas administradas —
     // pasamos la ruta absoluta directamente para evitar dependencias de PATH.

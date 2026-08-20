@@ -333,7 +333,7 @@ test('Desktop no conserva estado release legacy de Jintia', async () => {
   assert.match(about, /APP_META\.skillName/);
 });
 
-test('la instalación Claude delega en Jintia y conserva sólo consumidores compartidos', async () => {
+test('la instalación de agentes delega en Jintia para Claude, Codex y OpenCode', async () => {
   const [toolchain, config, lib] = await Promise.all([
     readFile(new URL('src-tauri/src/toolchain.rs', root), 'utf8'),
     readFile(new URL('src-tauri/src/config.rs', root), 'utf8'),
@@ -342,12 +342,12 @@ test('la instalación Claude delega en Jintia y conserva sólo consumidores comp
   assert.doesNotMatch(`${toolchain}\n${config}`, /pub fn install_local_skill|fn portable_skill_src|fn installed_portable_matches/);
   assert.doesNotMatch(`${toolchain}\n${config}`, /\.jintia-skill\.stage-|jintia-skill\.backup-/);
   assert.match(config, /sync_user_config_to_install/);
-  assert.match(toolchain, /pub fn claude_skill_status/);
-  assert.match(toolchain, /claude_status_args/);
-  assert.match(config, /toolchain::claude_skill_status/);
+  assert.match(toolchain, /pub fn agent_skills_status/);
+  assert.match(toolchain, /agent_status_args/);
+  assert.match(config, /toolchain::agent_skills_status/);
   assert.match(lib, /spawn_blocking\(\|\|/);
   assert.doesNotMatch(lib, /payload::installed_skill_path/);
-  const helperStart = toolchain.indexOf('pub fn install_global_claude_skill()');
+  const helperStart = toolchain.indexOf('pub fn install_global_agent_skills()');
   const helperEnd = toolchain.indexOf('/// Gestiona harnesses', helperStart);
   const helper = toolchain.slice(helperStart, helperEnd);
   assert.ok(helperStart >= 0 && helperEnd > helperStart);
@@ -355,15 +355,16 @@ test('la instalación Claude delega en Jintia y conserva sólo consumidores comp
   assert.match(helper, /run_jintia/);
   assert.match(helper, /--help/);
   assert.match(helper, /--adopt-existing/);
-  assert.match(toolchain, /--providers=claude/);
+  assert.match(toolchain, /--providers=claude,codex,opencode/);
   assert.match(toolchain, /--scope=global/);
   assert.match(toolchain, /--yes/);
   assert.match(toolchain, /--json/);
   assert.match(toolchain, /results/);
   assert.match(toolchain, /target/);
   assert.match(helper, /with_path/);
-  assert.doesNotMatch(helper, /Command::new|--source|\.claude|skill_dir|\bnpx\b|\bnpm\b/);
-  assert.match(lib, /spawn_blocking\(toolchain::install_global_claude_skill\)/);
+  assert.doesNotMatch(helper, /Command::new|--source|["']\.claude|skill_dir\s*\(|\bnpx\b|\bnpm\b/);
+  assert.match(lib, /spawn_blocking\(\|\|\s*\{[\s\S]*toolchain::install_global_agent_skills\(\)/);
+  assert.match(lib, /sync_existing_user_config_to_installs/);
 });
 
 test('el plugin ChatGPT Codex delega instalación y estado a Jintia', async () => {
@@ -379,7 +380,8 @@ test('el plugin ChatGPT Codex delega instalación y estado a Jintia', async () =
   assert.match(toolchain, /plugin_command_failure_message\(&result\.stdout,\s*"plugin install"\)/);
   assert.match(config, /toolchain::openai_plugin_status/);
   assert.doesNotMatch(config, /openai_plugin_is_installed\(|openai_plugin_is_current\(|openai_plugin_path\(\)/);
-  assert.match(lib, /spawn_blocking\(toolchain::install_openai_plugin\)/);
+  assert.match(lib, /spawn_blocking\(\|\|\s*\{[\s\S]*toolchain::install_openai_plugin\(\)/);
+  assert.match(lib, /sync_existing_user_config_to_installs/);
   assert.match(lib, /spawn_blocking\(config::setup_status\)/);
 });
 
@@ -505,11 +507,11 @@ test('institución, perfil académico y plantilla viven en un solo paso fusionad
 
 test('el onboarding presenta el flujo de producción editorial aprobado', async () => {
   const source = await readOnboardingJs();
-  assert.match(source, /Validar[\s\S]*Renderizar[\s\S]*Vivliostyle[\s\S]*PDF[\s\S]*Listo/);
+  assert.match(source, /Contenido[\s\S]*HTML[\s\S]*Vivliostyle[\s\S]*PDF[\s\S]*Resultado/);
   assert.match(source, /Convierte tu sílabo en guías PDF/);
-  assert.match(source, /Preparando la prueba/);
+  assert.match(source, /Preparando la verificación/);
   // Labels del mini-stepper del self-test delegado a jintia self-test --json
-  assert.match(source, /Validar[\s\S]*Renderizar[\s\S]*Vivliostyle[\s\S]*PDF[\s\S]*Listo/);
+  assert.match(source, /Contenido[\s\S]*HTML[\s\S]*Vivliostyle[\s\S]*PDF[\s\S]*Resultado/);
 });
 
 test('el copy del onboarding no repite jerga técnica ni referencias obsoletas al esquema de 10 pasos', async () => {
@@ -778,7 +780,7 @@ test('el onboarding delega la prueba final a jintia self-test --json', async () 
   // La prueba editorial pertenece a Jintia Skill.
   assert.match(
     source,
-    /runSkillSelfTest\(\)/
+    /runSkillSelfTest\(operationId\)/
   );
 
   // Desktop interpreta los checks devueltos por la Skill.
@@ -837,18 +839,28 @@ test('el onboarding muestra todas las capacidades, incluido Git opcional', async
   assert.match(source, /runtime\.dependencies\.map\(capabilityCard\)/);
 });
 
-test('los destinos distinguen Claude del plugin universal de ChatGPT y Codex', async () => {
-  const source = await readOnboardingJs();
+test('el paso de integraciones prepara todos los asistentes sin pedir un destino', async () => {
+  const [source, actions, store, main] = await Promise.all([
+    readFile(new URL('src/onboarding/steps.js', root), 'utf8'),
+    readFile(new URL('src/onboarding/actions.js', root), 'utf8'),
+    readFile(new URL('src/onboarding/store.js', root), 'utf8'),
+    readFile(new URL('src/main.js', root), 'utf8'),
+  ]);
   const start = source.indexOf('function connectStep()');
   const end = source.indexOf('function finalStep()', start);
   assert.ok(start >= 0 && end > start);
   const connect = source.slice(start, end);
-  assert.match(connect, /id: "claude-code"/); assert.match(connect, /id: "openai"/); assert.match(connect, /id: "both"/);
-  assert.match(connect, /skill_installed && setup\.skill_current/);
-  assert.match(connect, /skillReady && setup\.mcp_claude_code_configured/);
-  assert.match(connect, /setup\.openai_plugin_current/);
-  assert.match(connect, /skillReady && setup\.mcp_claude_code_configured && setup\.openai_plugin_current/);
-  assert.doesNotMatch(connect, /claude-cowork|lastSkillZip|mcp_desktop_configured/);
+  for (const label of ['OpenCode', 'Claude Code', 'ChatGPT (Codex)', 'cuenta Claude Pro', 'cuenta ChatGPT Pro/Plus', 'alternativa gratuita']) assert.match(connect, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const brand of ['opencode', 'claude', 'openai']) assert.match(connect, new RegExp(`brand:\\s*"${brand}"`));
+  assert.match(connect, /brandIcon\(assistant\.brand,\s*22\)/);
+  assert.match(connect, /no necesitas (?:elegir un destino|seleccionar dónde instalar)/i);
+  assert.match(connect, /prepare-integrations/);
+  assert.doesNotMatch(connect, /name="onboarding-target"|type="radio"|Usar con Claude|Usar en todos/);
+  assert.match(actions, /installNpmPackages\(\["opencode-ai"\]\)/);
+  assert.match(actions, /installSkill\(\)[\s\S]*installOpenAIPlugin\(\)[\s\S]*configureCodexMcp\(\)[\s\S]*configureMcp\("claude-code"\)/);
+  assert.match(store, /claudeStatus\(\)/);
+  assert.match(store, /codexStatus\(\)/);
+  assert.match(main, /\.\/onboarding\/index\.js/);
 });
 test('Entorno detecta motores visuales opcionales sin instalarlos silenciosamente', async () => {
   const [course, models, setup, settings] = await Promise.all([
@@ -881,21 +893,27 @@ test('Entorno ofrece perfiles visuales desde el runtime npm sin instalación aut
   assert.match(settings, /Capacidades deshabilitadas/);
 });
 
-test('cambiar el destino mantiene sincronizada la selección visible del onboarding', async () => {
-  const source = await readOnboardingJs();
-  const start = source.indexOf('input[name=onboarding-target]');
-  const end = source.indexOf('root.querySelectorAll("[data-onboarding-action]"', start);
-  const handler = source.slice(start, end);
-  assert.match(handler, /const selectedTarget = event\.currentTarget\.value/);
-  assert.match(handler, /runtime\.status = \{[\s\S]*selectedTarget/);
+test('el onboarding conserva only both como destino interno de compatibilidad', async () => {
+  const [actions, backend, models] = await Promise.all([
+    readFile(new URL('src/onboarding/actions.js', root), 'utf8'),
+    readFile(new URL('src-tauri/src/onboarding.rs', root), 'utf8'),
+    readFile(new URL('src-tauri/src/models.rs', root), 'utf8'),
+  ]);
+  assert.doesNotMatch(actions, /input\[name=onboarding-target\]/);
+  assert.match(actions, /advance\(current, "both"\)/);
+  assert.match(backend, /status\.selected_target = "both"\.to_string\(\)/);
+  assert.match(models, /version:\s*4/);
 });
 
-test('el checklist final depende del destino elegido (no asume Skill instalada siempre)', async () => {
-  const source = await readOnboardingJs();
+test('el checklist final valida las tres integraciones preparadas', async () => {
+  const source = await readFile(new URL('src/onboarding/steps.js', root), 'utf8');
   const start = source.indexOf('function finalStep');
   const end = source.indexOf('function animateFinalStep', start);
   const final = source.slice(start, end);
-  assert.match(final, /const connectionChecks = \{/);
+  assert.match(final, /OpenCode gratuito disponible/);
+  assert.match(final, /Claude Code preparado/);
+  assert.match(final, /ChatGPT \(Codex\) preparado/);
+  assert.doesNotMatch(final, /connectionChecks|selectedTarget|onboardingTarget/);
   assert.doesNotMatch(final, /claude-cowork|lastSkillZip|export-zip/);
   assert.doesNotMatch(final, /Archivo exportado|Paquete listo|Claude\/Cowork/);
 });
@@ -1015,7 +1033,7 @@ test('Acerca de Jintia está conectado al pie, Ayuda y metadatos de ejecución',
   assert.match(about, /about-origin/);
   assert.match(about, /Aarma jintia/);
   assert.match(about, /originDisclaimer/);
-  assert.match(about, /Tauri[\s\S]*Rust[\s\S]*React[\s\S]*ElegantBook/);
+  assert.match(about, /Tauri[\s\S]*Rust[\s\S]*React[\s\S]*HTML[\s\S]*Vivliostyle/);
   assert.match(api, /Promise\.all\(\[[\s\S]*getName\(\)[\s\S]*getVersion\(\)/);
   assert.match(appMeta, /creator:\s*"Charlie Cárdenas Toledo"/);
   assert.match(appMeta, /originName: brand\.linguisticForm/);
@@ -1148,10 +1166,11 @@ test('Plantillas comparten una guía semanal de demostración realista', async (
 test('Configuración distingue una skill instalada de una skill actualizada', async () => {
   const [currentModels, currentConfig, currentToolchain] = await Promise.all(['src-tauri/src/models.rs','src-tauri/src/config.rs','src-tauri/src/toolchain.rs'].map(path => readFile(new URL(path, root), 'utf8')));
   assert.match(currentModels, /skill_installed[\s\S]*skill_current[\s\S]*skill_version[\s\S]*available_skill_version/);
-  assert.match(currentConfig, /claude_skill_status/); assert.match(currentToolchain, /ClaudeSkillStatus[\s\S]*installed[\s\S]*current[\s\S]*version[\s\S]*available_version[\s\S]*target/);
+  assert.match(currentConfig, /agent_skills_status/); assert.match(currentToolchain, /AgentSkillsStatus[\s\S]*claude[\s\S]*codex[\s\S]*opencode/);
   const setup = currentConfig.slice(currentConfig.indexOf('pub fn setup_status'), currentConfig.indexOf('\n}', currentConfig.indexOf('pub fn setup_status')) + 2);
-  assert.match(setup, /skill_installed:\s*claude\.installed/); assert.match(setup, /skill_current:\s*claude\.current/);
-  assert.match(setup, /skill_version:\s*claude\.version/); assert.match(setup, /available_skill_version:\s*claude\.available_version/); assert.match(setup, /skill_path:\s*claude\.target/);
+  assert.match(setup, /all_skills_installed/); assert.match(setup, /all_skills_current/);
+  for (const provider of ['claude', 'codex', 'opencode']) assert.match(setup, new RegExp(`${provider}_skill_current:\\s*skills\\.${provider}\\.current`));
+  assert.match(setup, /skill_version:\s*skills\.claude\.version/); assert.match(setup, /available_skill_version:\s*skills\.claude\.available_version/); assert.match(setup, /skill_path:\s*skills\.claude\.target/);
 });
 test('Jintia se gestiona como plugin universal para ChatGPT y Codex', async () => {
   const [pluginToolchain, pluginOnboarding, pluginApi, pluginLib] = await Promise.all([
@@ -1184,7 +1203,9 @@ test('Ayuda cubre el flujo real del producto y ofrece FAQ local buscable', async
   assert.match(docs, /filterHelp/);
   assert.match(docs, /Jintia Desktop y jintia-skill/);
   assert.match(docs, /NotebookLM/);
-  assert.match(docs, /¿Necesito WSL para compilar\?/);
+  assert.match(docs, /¿Necesito WSL para generar documentos\?/);
+  assert.match(docs, /HTML y Vivliostyle/);
+  assert.doesNotMatch(docs, /MiKTeX|File \.sty not found|varias pasadas de LaTeX/);
   assert.match(docs, /no tiene telemetría ni un backend propio/i);
   assert.match(docs, /No se eliminan el perfil, las asignaturas, los notebooks ni los archivos generados/);
 });
@@ -3633,15 +3654,15 @@ test('paths.rs resuelve Jintia exclusivamente desde el layout npm administrado',
   assert.doesNotMatch(binFn, /portable_runtimes_dir\(\)\.join\("jintia"\)/);
 });
 
-test('el estado Claude se resuelve mediante el contrato status de Jintia', async () => {
+test('el estado de Claude, Codex y OpenCode se resuelve en una sola consulta Jintia', async () => {
   const [statusToolchain, statusConfig, statusLib] = await Promise.all(['src-tauri/src/toolchain.rs','src-tauri/src/config.rs','src-tauri/src/lib.rs'].map(path => readFile(new URL(path, root), 'utf8')));
-  assert.match(statusToolchain, /claude_skill_status[\s\S]*parse_claude_skill_status[\s\S]*resolve_skill[\s\S]*run_jintia/);
-  assert.match(statusToolchain, /"status"[\s\S]*"--providers=claude"[\s\S]*"--scope=global"[\s\S]*"--json"/); assert.match(statusConfig, /crate::toolchain::claude_skill_status/); assert.match(statusLib, /claude_skill_status/);
+  assert.match(statusToolchain, /agent_skills_status[\s\S]*parse_provider_skill_status[\s\S]*resolve_skill[\s\S]*run_jintia/);
+  assert.match(statusToolchain, /"status"[\s\S]*"--providers=claude,codex,opencode"[\s\S]*"--scope=global"[\s\S]*"--json"/); assert.match(statusConfig, /toolchain::agent_skills_status/); assert.match(statusLib, /agent_skills_status/);
   assert.doesNotMatch(`${statusToolchain}\n${statusConfig}\n${statusLib}`, /payload::installed_skill_path|pub fn installed_skill_path|pub fn skill_is_installed|pub fn installed_skill_version|pub fn portable_skill_version|pub fn skill_is_current/);
   const pathStart = statusLib.indexOf('async fn get_skill_path');
   const pathEnd = statusLib.indexOf('#[tauri::command]', pathStart + 1);
   const pathBody = statusLib.slice(pathStart, pathEnd > pathStart ? pathEnd : statusLib.length);
-  assert.ok(pathStart >= 0); assert.match(pathBody, /spawn_blocking/); assert.match(pathBody, /claude_skill_status/);
+  assert.ok(pathStart >= 0); assert.match(pathBody, /spawn_blocking/); assert.match(pathBody, /agent_skills_status/); assert.match(pathBody, /status\.claude\.target/);
 });
 test('la UI presenta las fases actuales de instalación npm de Jintia', async () => {
   const [settings, progress] = await Promise.all([
@@ -3866,6 +3887,7 @@ test('engine entrega a Jintia un PATH compuesto sólo por runtimes administrados
   assert.match(helper, /portable_node_bin_dir/); assert.match(`${helper}\n${run}`, /resolve_python/);
   assert.match(helper, /join_paths/);
   assert.match(run, /managed_entrypoint/); assert.match(run, /resolve_node/); assert.match(run, /managed_node_command\(&node_bin\)/); assert.match(run, /\.env\("PATH", managed_path\)/);
+  assert.match(run, /\.env\("CODEX_HOME", crate::paths::codex_home_dir\(\)\?\)/);
   // Los runtimes administrados van primero; el PATH del sistema puede agregarse al final para accesibilidad
   assert.ok(helper.indexOf('portable_node_bin_dir') < helper.indexOf('join_paths'), 'managed paths deben preceder al join_paths');
   assert.doesNotMatch(`${helper}\n${run}`, /base_path/);
@@ -5563,6 +5585,25 @@ test('operationFailureResult usa fallback para rechazos arbitrarios', () => {
     assert.equal(result.message, FALLBACK,
       `debe usar el fallback para: ${JSON.stringify(arbitrary)}`);
     assert.doesNotMatch(result.message, /\[object Object\]/);
+  }
+});
+
+test('todos los estados de espera usan el loader Jintia con contraste y limpieza', async () => {
+  const [loader, onboarding, modularUi, modularSteps, modularActions] = await Promise.all([
+    readFile(new URL('src/components/JintiaLoader.js', root), 'utf8'),
+    readFile(new URL('src/onboarding.js', root), 'utf8'),
+    readFile(new URL('src/onboarding/ui.js', root), 'utf8'),
+    readFile(new URL('src/onboarding/steps.js', root), 'utf8'),
+    readFile(new URL('src/onboarding/actions.js', root), 'utf8'),
+  ]);
+
+  assert.match(loader, /CONTRAST_PALETTES/);
+  assert.match(loader, /prefers-reduced-motion:\s*reduce/);
+  assert.match(loader, /cancelAnimationFrame/);
+  assert.match(loader, /--jintia-loader-body-start/);
+
+  for (const source of [onboarding, modularUi, modularSteps, modularActions]) {
+    assert.doesNotMatch(source, /animate-spin|ThinkingOrb|ic\(["']loader-2/);
   }
 });
 

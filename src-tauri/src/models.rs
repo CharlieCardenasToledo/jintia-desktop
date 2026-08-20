@@ -249,6 +249,13 @@ pub struct SetupStatus {
     pub skill_current: bool,
     pub skill_version: String,
     pub available_skill_version: String,
+    pub claude_skill_current: bool,
+    pub codex_skill_current: bool,
+    pub opencode_skill_current: bool,
+    pub opencode_cli_installed: bool,
+    pub claude_skill_path: String,
+    pub codex_skill_path: String,
+    pub opencode_skill_path: String,
     pub openai_plugin_installed: bool,
     pub openai_plugin_current: bool,
     pub openai_plugin_path: String,
@@ -258,6 +265,7 @@ pub struct SetupStatus {
     pub mcp_configured: bool,
     pub mcp_desktop_configured: bool,
     pub mcp_claude_code_configured: bool,
+    pub mcp_codex_configured: bool,
     pub institution_configured: bool,
     pub skill_path: String,
     pub mcp_config_path: String,
@@ -289,7 +297,7 @@ pub struct SelfTestRecord {
     /// Perfil/disciplina seleccionada al momento de la prueba.
     #[serde(default)]
     pub profile_id: String,
-    /// Destino de integración seleccionado ("claude-code" | "openai" | "both").
+    /// Compatibilidad histórica. Desde onboarding v4 siempre contiene "both".
     #[serde(default)]
     pub selected_target: String,
     /// `true` solo cuando todos los checks de `jintia self-test` pasaron.
@@ -321,11 +329,11 @@ pub struct OnboardingStatus {
 impl Default for OnboardingStatus {
     fn default() -> Self {
         Self {
-            version: 3,
+            version: 4,
             completed: false,
             current_step: 1,
             max_completed_step: 0,
-            selected_target: String::new(),
+            selected_target: "both".to_string(),
             last_updated: 0,
             regression_reason: None,
             last_self_test: None,

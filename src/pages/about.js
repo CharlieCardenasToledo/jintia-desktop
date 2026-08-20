@@ -14,7 +14,7 @@ const technologyGroups = [
   {
     title: "Documentos académicos",
     icon: "file-text",
-    items: ["LaTeX", "ElegantBook", "Jintia Skill"],
+    items: ["HTML", "Vivliostyle", "Jintia Skill"],
   },
   {
     title: "Interfaz y tipografía",

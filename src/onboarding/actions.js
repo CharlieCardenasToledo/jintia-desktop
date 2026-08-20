@@ -12,6 +12,7 @@ import {
   cancelNotebookLMAuth,
   checkDependencies,
   configureMcp,
+  configureCodexMcp,
   extractSitePalette,
   getCapabilitiesProfiles,
   getDefaultCourseRoot,
@@ -40,6 +41,7 @@ import { escapeHtml } from "../dom.js";
 import { state, saveConfig } from "../state.js";
 import { toast } from "../toast.js";
 import { ic, refreshIcons } from "../icons.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import googleGLogo from "../assets/google-g.svg";
@@ -58,6 +60,9 @@ import { runCompletionHandoff } from "../onboardingCompletion.js";
 import { APP_META } from "../appMeta.js";
 import { runtime, loadOnce, rememberSuccessfulLoad, prepareOnboardingStep, targetReady as _targetReady } from "./store.js";
 export { targetReady } from "./store.js";
+
+let finalRunSequence = 0;
+let activeFinalRunId = null;
 import {
   BTN_PRIMARY,
   BTN_SECONDARY,
@@ -90,7 +95,8 @@ const COMPLETION_FALLBACK = "Configuración completada. Abriendo el dashboard…
 export function beginDependencyInstallProgress(row, statusEl, detailEl, installButton) {
   if (statusEl) {
     statusEl.className = `${DEP_CARD_STATUS_BASE} bg-neutral-100 text-neutral-400`;
-    statusEl.innerHTML = `<span class="animate-spin flex">${ic("loader-2", 18)}</span>`;
+    statusEl.innerHTML = `<span class="flex">${jintiaLoaderPlaceholder(18)}</span>`;
+    mountAllJintiaLoaders(statusEl);
   }
   if (detailEl) detailEl.textContent = "Instalando…";
   installButton?.remove();
@@ -520,7 +526,8 @@ async function analyzeInstitutionWebsite() {
   button.dataset.originalLabel = button.querySelector("span")?.textContent || "Analizar";
   setBusyState(button, true, "Analizando…");
   if (area) {
-    area.innerHTML = `<div class="flex items-center gap-2 p-3 rounded-lg bg-gray-100 text-gray-500 text-xs">${ic("loader-2", 14)} Analizando el sitio y sus hojas de estilo…</div>`;
+    area.innerHTML = `<div class="flex items-center gap-2 p-3 rounded-lg bg-gray-100 text-gray-500 text-xs">${jintiaLoaderPlaceholder(14)} Analizando el sitio y sus hojas de estilo…</div>`;
+    mountAllJintiaLoaders(area);
   }
   try {
     const result = await extractSitePalette(url);
@@ -738,12 +745,35 @@ async function jumpToDependencyTool(fromStep, toolIndex) {
 }
 
 export async function animateFinalStep() {
+  const operationId = `onboarding-final-${Date.now()}-${++finalRunSequence}`;
+  activeFinalRunId = operationId;
+  const isActiveRun = () => activeFinalRunId === operationId;
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const checkRows = document.querySelectorAll(".final-check-row");
   const msgEl     = document.getElementById("final-loading-msg");
+  const trackEl   = document.getElementById("gen-progress-track");
   const fillEl    = document.getElementById("gen-progress-fill");
+  const currentEl = document.getElementById("compile-current");
+  const logEl     = document.getElementById("compile-live-log");
+  const elapsedEl = document.getElementById("compile-elapsed");
   const compileDiagnostics = [];
   const compileStartedAt = Date.now();
+  const rowMap = { validate: 0, render: 1, vivliostyle: 2, pdf: 3 };
+  let unlistenSelfTest = null;
+  let elapsedTimer = null;
+  let telemetryStopped = false;
+  let receivedBackendEvents = false;
+  const phaseLabels = {
+    preparing: "Preparación",
+    running: "Verificación",
+    report_received: "Informe",
+    guide_preparing: "Guía de uso",
+    guide_report_received: "Resultado de la guía",
+    check: "Comprobación",
+    completed: "Completado",
+    error: "Error",
+    listener_unavailable: "Conexión",
+  };
 
   function formatElapsed(milliseconds) {
     const seconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -752,7 +782,7 @@ export async function animateFinalStep() {
 
   function diagnosticText(error = "") {
     return [
-      `${APP_META.desktopName} — diagnóstico de compilación`,
+      `${APP_META.desktopName} — diagnóstico de verificación`,
       `Fecha: ${new Date().toISOString()}`,
       `Skill: ${APP_META.skillVersion}`,
       `Plantilla: ${runtime.activeTemplate || "no identificada"}`,
@@ -763,12 +793,56 @@ export async function animateFinalStep() {
     ].filter(Boolean).join("\n\n");
   }
 
+  function updateElapsed() {
+    if (elapsedEl) elapsedEl.textContent = formatElapsed(Date.now() - compileStartedAt);
+  }
+
+  function appendBackendEvent(payload = {}) {
+    const message = String(payload.message || payload.phase || "Evento recibido");
+    const stamp = formatElapsed(Date.now() - compileStartedAt);
+    const phase = payload.phase ? ` · ${phaseLabels[payload.phase] || payload.phase}` : "";
+    const detail = payload.detail ? `\n  ${String(payload.detail)}` : "";
+    const line = `[${stamp}${phase}] ${message}${detail}`;
+    compileDiagnostics.push(line);
+    if (currentEl) currentEl.textContent = message;
+    if (logEl) {
+      if (logEl.dataset.empty !== "false") {
+        logEl.textContent = "";
+        logEl.dataset.empty = "false";
+      }
+      logEl.textContent += `${logEl.textContent ? "\n" : ""}${line}`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    if (Number.isFinite(payload.percent)) setProgress(payload.percent);
+    if (payload.check && rowMap[payload.check] !== undefined) {
+      setRow(rowMap[payload.check], payload.status === "passed" ? "done" : "error");
+    }
+    if (payload.phase === "running") setRow(0, "active");
+    setMsg(message);
+  }
+
+  function stopTelemetry() {
+    if (telemetryStopped) return;
+    telemetryStopped = true;
+    if (elapsedTimer !== null) window.clearInterval(elapsedTimer);
+    elapsedTimer = null;
+    unlistenSelfTest?.();
+    unlistenSelfTest = null;
+    updateElapsed();
+    if (activeFinalRunId === operationId) activeFinalRunId = null;
+  }
+
+  updateElapsed();
+  elapsedTimer = window.setInterval(updateElapsed, 250);
+
   document.getElementById("btn-copy-live-diagnostic")?.addEventListener("click", () => {
     navigator.clipboard.writeText(diagnosticText()).then(() => toast("Actividad copiada", "success", 3000));
   });
 
   function setProgress(pct) {
-    if (fillEl) fillEl.style.width = `${pct}%`;
+    const normalized = Math.max(0, Math.min(100, Number(pct) || 0));
+    if (fillEl) fillEl.style.width = `${normalized}%`;
+    trackEl?.setAttribute("aria-valuenow", String(normalized));
   }
 
   function setRow(i, rowState) {
@@ -779,11 +853,12 @@ export async function animateFinalStep() {
     row.style.transition = reduceMotion ? "none" : "opacity .3s, color .3s";
     if (rowState === "active") {
       row.style.color  = "#111827";
-      icon.innerHTML = ic("loader-2", 15);
-      icon.style.animation = reduceMotion ? "none" : "spin .7s linear infinite";
+      icon.innerHTML = jintiaLoaderPlaceholder(15, "light");
+      icon.style.animation = "none";
       icon.style.background = "#111827";
       icon.style.borderColor = "#111827";
       icon.style.color = "#ffffff";
+      mountAllJintiaLoaders(icon);
     } else if (rowState === "done") {
       row.style.color  = "#16a34a";
       icon.innerHTML = ic("check-circle-2", 15);
@@ -813,6 +888,7 @@ export async function animateFinalStep() {
   }
 
   function showError(title, detail, errStr) {
+    stopTelemetry();
     const loadingEl = document.getElementById("final-loading");
     const wrapEl    = document.getElementById("final-result-wrap");
     const contentEl = document.getElementById("final-result-content");
@@ -825,7 +901,7 @@ export async function animateFinalStep() {
         ${errStr ? `
           <details class="mb-3.5 overflow-hidden rounded-lg border border-red-200 bg-white/70 text-left">
             <summary class="cursor-pointer px-3 py-2 text-[11px] font-semibold text-gray-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500">Ver detalles técnicos</summary>
-            <pre class="m-0 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words border-t border-red-100 bg-gray-950 px-3 py-2.5 font-mono text-[10px] leading-relaxed text-gray-200">${escapeHtml(errStr)}</pre>
+            <pre class="m-0 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words border-t border-red-100 bg-gray-950 px-3 py-2.5 font-mono text-[10px] leading-relaxed text-gray-200">${escapeHtml(diagnosticText(errStr))}</pre>
           </details>` : ""}
         <div class="flex justify-center gap-2 flex-wrap">
           <button class="${BTN_SECONDARY} text-[12.5px]" id="btn-retry-gen">
@@ -892,6 +968,7 @@ export async function animateFinalStep() {
   }
 
   function showSuccess(basePath, message, pdfPath) {
+    stopTelemetry();
     const loadingEl = document.getElementById("final-loading");
     const wrapEl    = document.getElementById("final-result-wrap");
     const contentEl = document.getElementById("final-result-content");
@@ -921,7 +998,7 @@ export async function animateFinalStep() {
         <div class="flex items-start gap-3 p-4 rounded-xl bg-green-50 border border-green-200">
           <span class="text-green-600 flex-shrink-0">${ic("check-circle-2", 24)}</span>
           <div>
-            <div class="font-bold text-green-600 mb-1">Documento compilado exitosamente</div>
+        <div class="font-bold text-green-600 mb-1">PDF generado correctamente</div>
             <div class="text-[12.5px] text-gray-700">${escapeHtml(message)}</div>
           </div>
         </div>
@@ -936,6 +1013,10 @@ export async function animateFinalStep() {
             ${ic("copy", 15)} Copiar ruta
           </button>
         </div>
+        <details class="overflow-hidden rounded-lg border border-gray-200 bg-white text-left">
+          <summary class="min-h-11 cursor-pointer px-3 py-3 text-xs font-semibold text-gray-700">Actividad técnica · ${formatElapsed(Date.now() - compileStartedAt)}</summary>
+          <pre class="m-0 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words border-t border-gray-100 bg-gray-950 px-3 py-2.5 font-mono text-[10px] leading-relaxed text-gray-200">${escapeHtml(compileDiagnostics.join("\n") || "Sin actividad registrada.")}</pre>
+        </details>
         <div class="text-[11px] text-gray-400 p-3 bg-black/[0.03] rounded-lg break-all">
           <strong>Archivo:</strong> ${escapeHtml(pdfPath)}
         </div>
@@ -944,12 +1025,12 @@ export async function animateFinalStep() {
   }
 
   function showReadySuccess(syllabusPath) {
+    stopTelemetry();
     const loadingEl = document.getElementById("final-loading");
     const wrapEl    = document.getElementById("final-result-wrap");
     const contentEl = document.getElementById("final-result-content");
     if (loadingEl) loadingEl.style.display = "none";
-    const target = runtime.status?.selectedTarget || state.config.onboardingTarget || "claude-code";
-    const integrationLabel = ({ "claude-code": "Claude Code", openai: "ChatGPT y Codex", both: "Claude Code, ChatGPT y Codex" })[target] || target;
+    const integrationLabel = "OpenCode, Claude Code y ChatGPT (Codex)";
     if (contentEl) contentEl.innerHTML = `
       <div class="border-[1.5px] border-green-300/60 rounded-xl p-6 text-center bg-green-50/60">
         <span class="text-green-600 block mb-2.5">${ic("check-circle-2", 36)}</span>
@@ -958,7 +1039,7 @@ export async function animateFinalStep() {
         <ul class="mx-auto mb-3 max-w-sm space-y-2 text-left text-xs text-gray-700">
           ${["Entorno privado de Jintia", "Renderizado de la guía", "Generación de PDF", `Integraciones: ${integrationLabel}`].map(label => `<li class="flex items-center gap-2">${ic("check", 14)}<span>${escapeHtml(label)}</span></li>`).join("")}
         </ul>
-        <details class="mx-auto max-w-sm rounded-lg border border-green-200 bg-white/70 text-left"><summary class="min-h-11 cursor-pointer px-3 py-3 text-xs font-semibold text-gray-700">Detalles técnicos</summary><pre class="m-0 whitespace-pre-wrap break-words border-t border-green-100 p-3 text-xs text-gray-600">${escapeHtml(JSON.stringify(selfTest?.checks || {}, null, 2))}</pre></details>
+        <details class="mx-auto max-w-sm overflow-hidden rounded-lg border border-green-200 bg-white/70 text-left"><summary class="min-h-11 cursor-pointer px-3 py-3 text-xs font-semibold text-gray-700">Actividad técnica · ${formatElapsed(Date.now() - compileStartedAt)}</summary><pre class="m-0 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words border-t border-green-100 bg-gray-950 px-3 py-2.5 font-mono text-[10px] leading-relaxed text-gray-200">${escapeHtml(compileDiagnostics.join("\n") || JSON.stringify(selfTest?.checks || {}, null, 2))}</pre></details>
         ${syllabusPath ? `<div class="text-[11px] text-gray-400 p-3 bg-black/[0.03] rounded-lg break-all text-left"><strong>Sílabo generado:</strong> ${escapeHtml(syllabusPath)}</div>` : ""}
         <button type="button" class="${BTN_SECONDARY} mt-3" data-onboarding-action="complete-dashboard">Ir al panel</button>
       </div>`;
@@ -976,21 +1057,39 @@ export async function animateFinalStep() {
 
   // ── self-test unificado via jintia self-test --json ───────────────────
   setRow(0, "active");
-  setMsg("Ejecutando prueba de entorno Jintia…");
-  setProgress(10);
+  setMsg("Verificando el entorno de Jintia…");
+  setProgress(0);
+
+  try {
+    unlistenSelfTest = await listen("self-test-progress", ({ payload }) => {
+      if (!isActiveRun() || payload?.operationId !== operationId) return;
+      receivedBackendEvents = true;
+      appendBackendEvent(payload);
+    });
+  } catch (error) {
+    appendBackendEvent({
+      phase: "listener_unavailable",
+      message: "No se pudo abrir el canal de actividad; la prueba continuará.",
+      detail: String(error),
+    });
+  }
 
   let selfTest;
   try {
-    selfTest = await runSkillSelfTest();
+    selfTest = await runSkillSelfTest(operationId);
   } catch (err) {
     selfTest = { ok: false, error: String(err) };
+  }
+
+  if (!isActiveRun()) {
+    stopTelemetry();
+    return;
   }
 
   compileDiagnostics.push(`self-test: ${JSON.stringify(selfTest)}`);
 
   const checks = selfTest?.checks ?? {};
   const checkNames = ["validate", "render", "vivliostyle", "pdf"];
-  const rowMap = { validate: 0, render: 1, vivliostyle: 2, pdf: 3 };
 
   for (const key of checkNames) {
     const rowIdx = rowMap[key];
@@ -1001,7 +1100,7 @@ export async function animateFinalStep() {
       setRow(rowIdx, "error");
     }
   }
-  setProgress(90);
+  if (!receivedBackendEvents) setProgress(90);
 
   if (!selfTest?.ok) {
     const vivliostyleMsg = checks.vivliostyle === "not_installed"
@@ -1016,7 +1115,7 @@ export async function animateFinalStep() {
   }
 
   setRow(4, "active");
-  setProgress(96);
+  if (!receivedBackendEvents) setProgress(96);
   await new Promise(r => setTimeout(r, 300));
 
   try {
@@ -1040,7 +1139,7 @@ export async function animateFinalStep() {
   setMsg("¡Listo!");
   const pdfPath = selfTest?.pdfPath;
   if (pdfPath) {
-    showSuccess(null, "Jintia generó tu guía de verificación correctamente.", pdfPath);
+    showSuccess(null, "Jintia generó una guía práctica para aprender a usar la plataforma.", pdfPath);
   } else {
     showReadySuccess(null);
   }
@@ -1141,17 +1240,6 @@ export function bindStepEvents(current) {
     });
     import("./controller.js").then(({ renderCurrentStep }) => renderCurrentStep());
   }));
-  root.querySelectorAll("input[name=onboarding-target]").forEach(input => input.addEventListener("change", event => {
-    if (onboardingActionInFlight) return;
-    const selectedTarget = event.currentTarget.value;
-    state.config.onboardingTarget = selectedTarget;
-    runtime.status = {
-      ...(runtime.status || {}),
-      selectedTarget,
-    };
-    saveConfig();
-    import("./controller.js").then(({ renderCurrentStep }) => renderCurrentStep());
-  }));
   root.querySelectorAll("[data-onboarding-action]").forEach(button => button.addEventListener("click", () => handleAction(button.dataset.onboardingAction, current)));
 }
 
@@ -1245,14 +1333,61 @@ async function performAction(action, current) {
   }
   if (action === "install-all-needed") return installAllNeeded();
   if (action === "prepare-profile-tools") return prepareProfileTools();
+  if (action === "prepare-integrations") {
+    const setup = runtime.setup || {};
+    const fail = async (phase, result) => {
+      const failure = { success: false, message: `${phase}: ${result.message}` };
+      targetOperationResult("Preparar todas las integraciones", failure);
+      toast(failure.message, "error", 11000);
+      await refreshTarget();
+      renderCurrentStep();
+    };
+
+    if (!setup.opencode_cli_installed) {
+      const result = await installNpmPackages(["opencode-ai"]);
+      if (!result.success) return fail("No se pudo preparar OpenCode en el entorno privado de Jintia", result);
+    }
+    if (!(setup.skill_installed && setup.skill_current)) {
+      const result = await installSkill();
+      if (!result.success) return fail("No se pudieron instalar las skills de los asistentes", result);
+    }
+    if (!setup.openai_plugin_current) {
+      const result = await installOpenAIPlugin();
+      if (!result.success) return fail("No se pudo preparar el plugin de ChatGPT", result);
+    }
+    if (!setup.mcp_codex_configured) {
+      const result = await configureCodexMcp();
+      if (!result.success) return fail("No se pudo conectar Codex con NotebookLM", result);
+    }
+    if (!setup.mcp_claude_code_configured) {
+      const result = await configureMcp("claude-code");
+      if (!result.success) return fail("No se pudo conectar Claude Code con NotebookLM", result);
+    }
+
+    const result = {
+      success: true,
+      message: "Jintia quedó preparada para OpenCode, Claude Code y ChatGPT (Codex).",
+    };
+    targetOperationResult("Preparar todas las integraciones", result);
+    toast(result.message, "success", 8000);
+    await refreshTarget();
+    renderCurrentStep();
+    return;
+  }
   if (action === "install-local") {
     const result = await installSkill();
-    targetOperationResult("Preparar Jintia para Claude Code", result);
+    targetOperationResult("Instalar Jintia en Claude, Codex y OpenCode", result);
     toast(result.message, result.success ? "success" : "error", 9000);
     await refreshTarget(); renderCurrentStep(); return;
   }
   if (action === "install-openai") {
-    const result = await installOpenAIPlugin();
+    let result = await installOpenAIPlugin();
+    if (result.success) {
+      const mcpResult = await configureCodexMcp();
+      result = mcpResult.success
+        ? { ...result, message: `${result.message}\n${mcpResult.message}` }
+        : mcpResult;
+    }
     targetOperationResult("Preparar Jintia para ChatGPT y Codex", result);
     toast(result.message, result.success ? "success" : "error", 10000);
     await refreshTarget(); renderCurrentStep(); return;
@@ -1270,11 +1405,8 @@ async function performAction(action, current) {
       return;
     }
     await refreshTarget();
-    const target = document.querySelector("input[name=onboarding-target]:checked")?.value;
-    if (!target) return toast("Selecciona un destino", "error");
-    const ready = _targetReady(target);
-    if (!ready) { document.getElementById("onb-target-message").hidden = false; document.getElementById("onb-target-message").textContent = "Completa las acciones del destino y vuelve a verificar."; return; }
-    return advance(current, target);
+    if (!_targetReady("both")) { document.getElementById("onb-target-message").hidden = false; document.getElementById("onb-target-message").textContent = "Prepara todas las integraciones y vuelve a verificar."; return; }
+    return advance(current, "both");
   }
   if (action === "complete-create" || action === "complete-dashboard") {
     const result = await completeOnboarding();

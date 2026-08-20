@@ -12,6 +12,10 @@ struct OpenCodeProcess {
     port: u16,
 }
 
+const JINTIA_AGENTS_START: &str = "<!-- jintia:ask-context:start -->";
+const JINTIA_AGENTS_END: &str = "<!-- jintia:ask-context:end -->";
+const JINTIA_AGENTS_CONTEXT: &str = "<!-- jintia:ask-context:start -->\n## Ask Jintia\n\nUsa la skill instalada `jintia-skill` para tareas académicas de Jintia. El flujo editorial vigente es `guide.json` → HTML → Vivliostyle. No crees guías LaTeX ni ejecutes `pdflatex`. Responde siempre en español con tono profesional y cercano.\n<!-- jintia:ask-context:end -->";
+
 pub struct OpenCodeManager {
     processes: Mutex<HashMap<String, OpenCodeProcess>>,
 }
@@ -23,7 +27,16 @@ impl OpenCodeManager {
         }
     }
 
-    fn find_opencode() -> Option<PathBuf> {
+    pub(crate) fn find_opencode() -> Option<PathBuf> {
+        let portable = crate::paths::portable_node_bin_dir().join(if cfg!(target_os = "windows") {
+            "opencode.cmd"
+        } else {
+            "opencode"
+        });
+        if portable.is_file() {
+            return Some(portable);
+        }
+
         #[cfg(target_os = "windows")]
         {
             // npm global en APPDATA\npm
@@ -51,6 +64,10 @@ impl OpenCodeManager {
             }
         }
         None
+    }
+
+    pub(crate) fn is_installed() -> bool {
+        Self::find_opencode().is_some()
     }
 
     /// Escribe (o actualiza) `opencode.json` en el directorio del curso con la
@@ -113,25 +130,34 @@ impl OpenCodeManager {
             .unwrap_or(14200)
     }
 
+    fn ensure_jintia_agents_context(course_path: &Path) -> Result<(), String> {
+        let path = course_path.join("AGENTS.md");
+        let previous = std::fs::read_to_string(&path).unwrap_or_default();
+        let next = if let Some(start) = previous.find(JINTIA_AGENTS_START) {
+            if let Some(relative_end) = previous[start..].find(JINTIA_AGENTS_END) {
+                let end = start + relative_end + JINTIA_AGENTS_END.len();
+                format!("{}{}{}", &previous[..start], JINTIA_AGENTS_CONTEXT, &previous[end..])
+            } else {
+                format!("{}\n\n{JINTIA_AGENTS_CONTEXT}\n", previous.trim_end())
+            }
+        } else if previous.trim().is_empty() {
+            format!("# Instrucciones de la asignatura\n\n{JINTIA_AGENTS_CONTEXT}\n")
+        } else {
+            format!("{}\n\n{JINTIA_AGENTS_CONTEXT}\n", previous.trim_end())
+        };
+        if next != previous {
+            crate::paths::atomic_write(&path, next.as_bytes())?;
+        }
+        Ok(())
+    }
+
     pub fn start(&self, course_path: &str) -> Result<RuntimeInfo, String> {
         let key = course_path.to_string();
         let work_dir = Path::new(course_path);
 
-        // Crear AGENTS.md con contexto de Jintia si aún no existe.
-        // OpenCode lo lee al iniciar para usarlo como contexto del sistema.
-        let agents_file = work_dir.join("AGENTS.md");
-        if !agents_file.exists() {
-            let _ = std::fs::write(
-                &agents_file,
-                "# Jintia — Asistente Pedagógico\n\
-                 \n\
-                 Eres Jintia, un asistente pedagógico especializado en diseño instruccional\n\
-                 universitario para docentes hispanohablantes.\n\
-                 \n\
-                 Responde **siempre en español**, sin excepción, independientemente del idioma\n\
-                 en que te escriban. Usa un tono profesional pero cercano.\n",
-            );
-        }
+        // OpenCode lee AGENTS.md al arrancar. El bloque administrado conserva
+        // instrucciones del usuario y se actualiza cuando cambia el contrato.
+        Self::ensure_jintia_agents_context(work_dir)?;
 
         // Inyecta opencode.json con el servidor MCP de NotebookLM para que la
         // Skill de Jintia pueda llamar ask_question directamente, sin caer en
@@ -164,6 +190,7 @@ impl OpenCodeManager {
             .ok_or_else(|| "OpenCode no encontrado. Instálalo con: npm install -g opencode-ai".to_string())?;
 
         let port = Self::free_port();
+        eprintln!("[opencode] starting course={} binary={} port={}", work_dir.display(), bin.display(), port);
 
         #[cfg(target_os = "windows")]
         let child = Command::new("cmd")
@@ -200,6 +227,7 @@ impl OpenCodeManager {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             if Instant::now() > deadline {
+                eprintln!("[opencode] startup timeout course={} port={}", work_dir.display(), port);
                 return Err("OpenCode tardó demasiado en arrancar (>20s).".to_string());
             }
             if client.health().map(|h| h.healthy).unwrap_or(false) {
@@ -212,6 +240,8 @@ impl OpenCodeManager {
             .lock()
             .unwrap()
             .insert(key.clone(), OpenCodeProcess { child, port });
+
+        eprintln!("[opencode] ready course={} port={}", work_dir.display(), port);
 
         Ok(RuntimeInfo {
             course_path: key,

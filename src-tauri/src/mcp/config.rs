@@ -336,3 +336,32 @@ pub fn configure_codex_mcp() -> ActionResult {
         result
     }
 }
+
+/// Comprueba el servidor NotebookLM de Codex sin modificar `config.toml`.
+/// Se aplica la misma identidad administrada sobre una copia en memoria y se
+/// considera listo únicamente cuando el documento no cambiaría.
+pub fn codex_mcp_configured() -> bool {
+    let managed = match super::managed_mcp() {
+        Ok(managed) => managed,
+        Err(_) => return false,
+    };
+    let managed_path = match super::managed_node_runtime_path_text() {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let path = match crate::paths::codex_config_path() {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(_) => return false,
+    };
+    let mut doc = match text.parse::<toml_edit::DocumentMut>() {
+        Ok(doc) => doc,
+        Err(_) => return false,
+    };
+    let previous = doc.to_string();
+    apply_managed_codex_mcp_server(&mut doc, &managed.node, &managed.bin, &managed_path).is_ok()
+        && doc.to_string() == previous
+}

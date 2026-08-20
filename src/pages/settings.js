@@ -6,6 +6,8 @@ import {
   resetOnboarding, getSkillPath, extractSitePalette, runSkillTool, detectHarnesses, manageHarnesses,
   getAiPreference,
   codexStatus, codexStart, codexStop, codexStartLogin, codexReadRateLimits,
+  claudeStatus,
+  claudeAuthLogin,
 } from "../api.js";
 import { state, saveConfig } from "../state.js";
 import { navigate } from "../router.js";
@@ -17,6 +19,7 @@ import { confirm } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { ui, cx, liquidForBackground } from "../uiClasses.js";
 import { withDependencyProgress } from "../onboardingProgress.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 
 // "Instalar herramientas necesarias" solo cubre los runtimes portables necesarios
 // para ejecutar la Skill; Git queda fuera aunque aparezca en la lista de abajo.
@@ -36,8 +39,8 @@ async function runSettingsOperation(button, key, busyLabel, operation) {
   if (button) {
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
-    button.innerHTML = `<span class="animate-spin">${ic("loader-2", 17)}</span>${escapeHtml(busyLabel)}`;
-    refreshIcons();
+    button.innerHTML = `${jintiaLoaderPlaceholder(17)}${escapeHtml(busyLabel)}`;
+    mountAllJintiaLoaders(button);
   }
   try {
     return await operation();
@@ -341,6 +344,24 @@ export async function renderSettings() {
                 <span id="codex-usage-reset">—</span>
               </div>
             </div>
+
+            <!-- Claude Code row -->
+            <div class="flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 text-[13px] font-semibold text-app-text">
+                  ${ic("terminal", 15)} Claude Code (tu suscripción, sin API key)
+                </div>
+                <div id="claude-status-label" class="mt-0.5 text-xs text-app-muted" role="status" aria-live="polite">Verificando…</div>
+              </div>
+              <div class="flex gap-2">
+                <button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" id="btn-claude-refresh">
+                  ${ic("refresh-cw", 14)} Estado
+                </button>
+                <button class="${cx(ui.button.base, ui.button.primary, ui.button.sm)}" id="btn-claude-login">
+                  ${ic("key", 14)} Conectar Claude
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -575,7 +596,7 @@ export async function renderSettings() {
   });
   el.querySelector("#btn-codex-login")?.addEventListener("click", async () => {
     const btn = document.getElementById("btn-codex-login");
-    if (btn) { btn.disabled = true; btn.innerHTML = `<span class="animate-spin">${ic("loader-2", 14)}</span> Iniciando…`; refreshIcons(); }
+    if (btn) { btn.disabled = true; btn.innerHTML = `${jintiaLoaderPlaceholder(14)} Iniciando…`; mountAllJintiaLoaders(btn); }
     try {
       const status = await codexStatus();
       if (!status.running) {
@@ -600,9 +621,24 @@ export async function renderSettings() {
       }
     }
   });
+  el.querySelector("#btn-claude-refresh")?.addEventListener("click", loadClaudeStatus);
+  el.querySelector("#btn-claude-login")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btn-claude-login");
+    if (btn) { btn.disabled = true; btn.innerHTML = `${jintiaLoaderPlaceholder(14)} Abriendo…`; mountAllJintiaLoaders(btn); }
+    try {
+      await claudeAuthLogin();
+      toast("Se abrió el navegador para iniciar sesión con Claude. Vuelve aquí y pulsa Estado cuando termines.", "info", 15000);
+      setTimeout(loadClaudeStatus, 8000);
+    } catch (e) {
+      toast(`No se pudo iniciar sesión con Claude Code: ${e}`, "error", 8000);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = `${ic("key", 14)} Conectar Claude`; refreshIcons(); }
+    }
+  });
   verifyNlmAuth();
   loadMcpStatus();
   loadCodexStatus();
+  loadClaudeStatus();
 
   // ── Notebooks ─────────────────────────────────────────────────────────────
   renderNotebookList();
@@ -798,8 +834,8 @@ async function loadInstitutionPalette() {
 
   button.disabled = true;
   container.classList.remove("hidden");
-  container.innerHTML = `<div class="flex items-center gap-1.5 text-xs text-app-muted">${ic("loader-2", 16)} Analizando sitio y hojas de estilo…</div>`;
-  refreshIcons();
+  container.innerHTML = `<div class="flex items-center gap-1.5 text-xs text-app-muted">${jintiaLoaderPlaceholder(16)} Analizando sitio y hojas de estilo…</div>`;
+  mountAllJintiaLoaders(container);
   try {
     const result = await extractSitePalette(url);
     if (!state.config) state.config = {};
@@ -1416,6 +1452,41 @@ async function loadCodexStatus() {
     if (btnLogin) btnLogin.disabled = false;
   } catch {
     if (label) { label.textContent = "No disponible"; label.style.color = "var(--muted)"; }
+  }
+}
+
+/**
+ * `claude_auth_login` no se probó en vivo contra una sesión real (arrancarlo
+ * con una sesión ya activa podría reiniciar su flujo de login sin aviso),
+ * así que el botón "Conectar Claude" solo se habilita cuando `authenticated`
+ * es `false` — el único caso en que realmente hace falta pulsarlo.
+ */
+async function loadClaudeStatus() {
+  const label = document.getElementById("claude-status-label");
+  const btnLogin = document.getElementById("btn-claude-login");
+  if (!label) return;
+  try {
+    const s = await claudeStatus();
+    if (!s.installed) {
+      label.textContent = "Claude Code CLI no instalado. Ejecuta: npm install -g @anthropic-ai/claude-code";
+      label.style.color = "var(--red)";
+      if (btnLogin) btnLogin.disabled = true;
+      return;
+    }
+    if (!s.authenticated) {
+      label.textContent = `Instalado${s.version ? ` (${s.version})` : ""}, sin sesión activa.`;
+      label.style.color = "var(--yellow)";
+      if (btnLogin) btnLogin.disabled = false;
+      return;
+    }
+    if (btnLogin) btnLogin.disabled = true;
+    const auth = s.auth || {};
+    const account = [auth.email, auth.subscriptionType].filter(Boolean).join(" · ");
+    label.textContent = `Conectado${account ? ` — ${account}` : ""}${s.usingApiKey ? " (usando ANTHROPIC_API_KEY, no tu suscripción)" : ""}`;
+    label.style.color = s.usingApiKey ? "var(--yellow)" : "var(--green)";
+  } catch {
+    label.textContent = "No disponible";
+    label.style.color = "var(--muted)";
   }
 }
 

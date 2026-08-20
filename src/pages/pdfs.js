@@ -5,6 +5,7 @@ import { toast } from "../toast.js";
 import { navigate } from "../router.js";
 import { ui, cx, projectColorMap } from "../uiClasses.js";
 import { ic, refreshIcons } from "../icons.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 
 // Project colors are now centralized in styles.css as CSS custom properties.
 // Reference them via projectColorMap from uiClasses for maintenance.
@@ -175,7 +176,7 @@ function pdfRow(pdf) {
 function loadingMarkup() {
   return `
     <div class="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm" role="status">
-      <span class="animate-spin text-brand-600">${ic("loader-2", 36)}</span>
+      <span class="text-brand-600">${jintiaLoaderPlaceholder(36)}</span>
       <strong class="mt-3 text-sm text-app-text">Buscando PDFs en tus proyectos…</strong>
       <span class="mt-1 text-xs text-app-muted">Las carpetas se revisan sin modificar sus archivos.</span>
     </div>`;
@@ -226,6 +227,7 @@ function updateResults() {
   const results = document.getElementById("pdf-results");
   if (results) results.innerHTML = resultsMarkup();
   refreshIcons();
+  if (results) mountAllJintiaLoaders(results);
   const total = document.getElementById("pdf-total");
   if (total) total.textContent = String(_pdfs.length);
   bindResultEvents();

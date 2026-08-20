@@ -24,12 +24,37 @@ import {
   opencodeRenameSession,
   opencodeDeleteSession,
   openWebSource,
+  claudeStatus,
+  claudeSubmitTurn,
+  claudeInterruptTurn,
 } from "../api.js";
 import { saveCourses, saveConfig } from "../state.js";
 import { isRateLimited, usageSummary, primaryWindow } from "../codexUsage.js";
+import { registerClaudeListeners, CLAUDE_MODELS } from "../ai/claudeRuntime.js";
+import {
+  approvalPresentation,
+  changedFilesFromCodexDiff,
+  commandFromCodexParams,
+  isLegacyLatexCommand,
+  summarizeCodexOutput,
+  trimCodexTechnicalOutput,
+} from "../ai/codexActivity.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 
 // Configurar marked: sin modo pedantic, con saltos de línea = <br>
 marked.use({ breaks: true, gfm: true });
+
+// Ask Jintia con Claude puede leer Y editar/crear archivos del curso (Edit,
+// Write), pero NO ejecutar comandos de terminal (Bash queda fuera a
+// propósito: editar archivos del curso es un riesgo acotado, ejecutar
+// comandos arbitrarios no). Es una allowlist cerrada SIN diálogo de
+// aprobación por acción (decisión explícita: el broker de permisos con
+// confirmación como el de Codex no es viable vía subproceso del CLI, ver
+// cabecera de src-tauri/src/claude/mod.rs).
+// IMPORTANTE: esto se pasa como `--tools` (no `--allowedTools`), confirmado
+// contra el CLI real que es la única forma que de verdad restringe qué
+// herramientas están disponibles en modo headless.
+const CLAUDE_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "Edit", "Write"];
 
 // ── Estado de la página ────────────────────────────────────────────────────
 let _course          = null;
@@ -39,6 +64,7 @@ let _sse             = null;   // EventSource activo
 let _assistantEl     = null;   // <div> que recibe deltas de respuesta
 let _assistantRaw    = "";     // texto acumulado en bruto para convertir a MD al final
 let _currentPartType = null;   // "reasoning" | "text" | null — part activo según SSE
+let _currentPartId   = null;   // cada part de texto se renderiza como un bloque independiente
 let _runtimeReady    = false;
 let _busy            = false;
 let _composerReady   = false;
@@ -47,7 +73,7 @@ let _selectedWeek    = "";
 let _selectedModel   = null;
 // Historial de sesiones del curso activo
 let _sessionsLoaded  = false;
-// Proveedor de IA: "opencode" | "codex"
+// Proveedor de IA: "opencode" | "codex" | "claude"
 let _provider        = "opencode";
 // Thread activo de Codex (por curso)
 let _codexThreadId   = null;
@@ -62,11 +88,98 @@ let _codexWatchdogTimers = [];
 let _codexRateLimits = null;
 // Refresca la cuenta regresiva del badge de cuota cada minuto sin repreguntar al servidor.
 let _codexRateLimitTickTimer = null;
+let _codexCommandOutput = new Map();
+let _codexLegacyWarningShown = false;
+// Sesión activa de Claude Code (por curso) y request_id del turno en curso.
+// A diferencia de Codex no hay un "thread" persistente: la continuidad la da
+// el session_id que Claude devuelve y que se reenvía con --resume.
+let _claudeSessionId  = null;
+let _claudeRequestId  = null;
+// Función de cancelación de los listeners Tauri de Claude Code (registrar/detach en bloque)
+let _claudeDetach     = null;
+// Promesa de la conexión Claude en curso (evita iniciar dos veces en paralelo)
+let _claudeConnecting = null;
+// Temporizadores de vigilancia mientras se espera respuesta de un turno Claude
+let _claudeWatchdogTimers = [];
 // Flag para no mostrar el picker de notebook dos veces en la misma sesión de conexión
 let _notebookChecked = false;
 let _sourceLinks     = new Map();
 let _panelViewport   = null;
 let _panelResizeHandler = null;
+let _openCodeTurnStartedAt = 0;
+let _openCodeProgressTimer = null;
+let _lastRuntimeActivity = "";
+let _runtimeActivityEl = null;
+
+// Diagnóstico común de proveedores. Codex ya deja una traza detallada; estos
+// registros hacen que Claude y OpenCode sean igual de observables durante una
+// sesión real (y conservan las últimas entradas para soporte).
+const _providerLogs = [];
+function providerLog(provider, phase, detail = null) {
+  const entry = { at: new Date().toISOString(), provider, phase, detail };
+  _providerLogs.push(entry);
+  if (_providerLogs.length > 200) _providerLogs.shift();
+  globalThis.__jintiaProviderLogs = _providerLogs;
+  console.info(`[jintia:${provider}] ${phase}`, detail ?? "");
+}
+
+function stopOpenCodeProgressTimer() {
+  if (_openCodeProgressTimer) clearInterval(_openCodeProgressTimer);
+  _openCodeProgressTimer = null;
+  _openCodeTurnStartedAt = 0;
+}
+
+function appendRuntimeActivity(text, kind = "info") {
+  if (!text) return;
+  const feed = el("jc-activity-feed");
+  if (!feed) return;
+  // Aunque el texto no cambie, mover la actividad al final garantiza que
+  // siempre quede debajo de la respuesta más reciente.
+  _lastRuntimeActivity = text;
+  const palette = kind === "error"
+    ? "border-red-200 bg-red-50 text-red-800"
+    : kind === "warning"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-slate-200 bg-slate-50 text-slate-600";
+  let wrap = _runtimeActivityEl;
+  if (!wrap || !wrap.isConnected) {
+    wrap = document.createElement("div");
+    wrap.id = "jc-runtime-activity";
+    wrap.className = "jc-route-step mb-4 jc-msg-in";
+    wrap.innerHTML = `<span class="jc-route-node grid place-items-center border-slate-200 bg-white text-slate-500" aria-hidden="true">${ic("activity", 15)}</span><div class="jc-runtime-activity-body max-w-[72ch] rounded-xl border px-3 py-2 text-xs" role="status" aria-live="polite"><span class="font-semibold">Actividad del sistema</span><span class="mx-1" aria-hidden="true">·</span><span class="jc-runtime-activity-text"></span></div>`;
+    feed.appendChild(wrap);
+    _runtimeActivityEl = wrap;
+    refreshIcons();
+  }
+  if (_runtimeActivityEl?.isConnected) {
+    feed.appendChild(_runtimeActivityEl);
+  }
+  const body = wrap.querySelector(".jc-runtime-activity-body");
+  const message = wrap.querySelector(".jc-runtime-activity-text");
+  if (body) body.className = `jc-runtime-activity-body max-w-[72ch] rounded-xl border px-3 py-2 text-xs ${palette}`;
+  if (message) message.textContent = text;
+  scrollFeed();
+}
+
+// Formatea segundos transcurridos de forma legible ("45s", "3 min",
+// "3 min 20s") en vez de mostrar siempre segundos crudos en turnos largos.
+function formatElapsed(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `${minutes} min ${rest}s` : `${minutes} min`;
+}
+
+function startOpenCodeProgressTimer() {
+  stopOpenCodeProgressTimer();
+  _openCodeTurnStartedAt = Date.now();
+  _openCodeProgressTimer = setInterval(() => {
+    if (_provider !== "opencode" || !_busy || !_openCodeTurnStartedAt) return;
+    const seconds = Math.floor((Date.now() - _openCodeTurnStartedAt) / 1000);
+    if (seconds >= 15) setStatus(`Jintia Chat trabajando… ${formatElapsed(seconds)}`, "working");
+    providerLog("opencode", "turn.waiting", { elapsedSeconds: seconds, sessionId: _sessionId });
+  }, 15000);
+}
 
 // ── Helpers DOM ────────────────────────────────────────────────────────────
 const el = id => document.getElementById(id);
@@ -135,14 +248,6 @@ function ensureChatStyles() {
       --jc-canvas: #f8fafc;
       --jc-ink: #172033;
     }
-    @keyframes jc-dot-bounce {
-      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-      30% { transform: translateY(-4px); opacity: 1; }
-    }
-    .jc-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--jc-teal); animation: jc-dot-bounce 1.3s ease-in-out infinite; }
-    .jc-dot:nth-child(1) { animation-delay: 0s; }
-    .jc-dot:nth-child(2) { animation-delay: 0.18s; }
-    .jc-dot:nth-child(3) { animation-delay: 0.36s; }
     @keyframes jc-msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .jc-msg-in { animation: jc-msg-in 0.2s ease-out forwards; }
 
@@ -151,6 +256,11 @@ function ensureChatStyles() {
     .jc-route-step:last-child::before { display: none; }
     .jc-route-node { position: absolute; left: .25rem; top: .1rem; z-index: 1; display: grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid var(--jc-line); border-radius: .65rem; background: var(--jc-surface); box-shadow: 0 4px 12px rgba(13,27,42,.08); }
     .jc-route-node img { width: 1.05rem; height: 1.2rem; object-fit: contain; }
+    /* Variante para el indicador de "pensando": usa JintiaLoader (morph +
+       giro) en vez de la marca estática, así que sustituye al ícono normal
+       en vez de sumarse a él. Fondo suave para que no quede sobre blanco
+       plano. */
+    .jc-route-node--thinking { background: var(--jc-teal-soft); }
     .jc-message-card { width: min(100%, 72ch); border: 1px solid #e2e8f0; border-radius: 1rem; background: #fff; box-shadow: 0 3px 12px rgba(13,27,42,.045); }
     .jc-message-actions { opacity: .88; transition: opacity .15s ease; }
     .jc-message-card:hover .jc-message-actions,
@@ -199,7 +309,7 @@ function ensureChatStyles() {
     .jc-md th { background: var(--surface-hover, #f8fafc); font-weight: 600; }
 
     @media (prefers-reduced-motion: reduce) {
-      .jc-dot, .jc-msg-in { animation: none; }
+      .jc-msg-in { animation: none; }
       .jc-message-actions { transition: none; }
     }
   `;
@@ -230,6 +340,12 @@ function appendMessage(html) {
 
 function assistantNode() {
   return `<span class="jc-route-node" aria-hidden="true"><img src="/brand/jintia-mark.svg" alt=""></span>`;
+}
+
+// Variante animada de assistantNode() solo para el indicador de "pensando":
+// respeta prefers-reduced-motion por sí sola (animación definida dentro del SVG).
+function thinkingNode() {
+  return `<span class="jc-route-node jc-route-node--thinking" aria-hidden="true">${jintiaLoaderPlaceholder(22)}</span>`;
 }
 
 function restorePrompt(text) {
@@ -296,7 +412,7 @@ function addAssistantActions(card, body, raw) {
   card.appendChild(actions);
 }
 
-function finalizeAssistantBubble(body, raw) {
+function finalizeAssistantBubble(body, raw, { actions = true } = {}) {
   if (!body) return;
   body.innerHTML = renderSafeMarkdown(raw, marked);
   body.querySelectorAll("table").forEach(table => {
@@ -309,7 +425,10 @@ function finalizeAssistantBubble(body, raw) {
   collectMarkdownSources(body).forEach(source => _sourceLinks.set(source.url, source));
   renderSourcesPanel();
   const card = body.closest(".jc-message-card");
-  if (card && !card.querySelector(".jc-message-actions")) addAssistantActions(card, body, raw);
+  // Los saludos generados localmente (no son una respuesta real de la IA) no
+  // llevan "Copiar / Ver fuentes / Usar como base": no hay nada que copiar
+  // como respuesta ni fuentes que mostrar, y ofrecerlo confunde al usuario.
+  if (actions && card && !card.querySelector(".jc-message-actions")) addAssistantActions(card, body, raw);
 }
 
 // Indicador textual de trabajo: comprensible sin depender de la animación.
@@ -322,12 +441,38 @@ function showThinkingBubble() {
   wrap.className = "jc-route-step mb-5 jc-msg-in";
   wrap.setAttribute("role", "status");
   wrap.innerHTML = `
-    ${assistantNode()}
-    <div class="jc-message-card flex items-center gap-3 px-4 py-3 text-sm text-slate-600">
-      <span>Jintia está consultando el contexto…</span>
-      <span class="inline-flex gap-1" aria-hidden="true"><span class="jc-dot"></span><span class="jc-dot"></span><span class="jc-dot"></span></span>
+    ${thinkingNode()}
+    <div class="jc-message-card min-w-0 flex-1 px-4 py-3 text-sm text-slate-600">
+      <div id="jc-thinking-message" class="font-medium">Jintia está consultando el contexto…</div>
+      <div id="jc-thinking-detail" class="mt-1 hidden text-xs text-slate-500"></div>
+      <details id="jc-thinking-technical-wrap" class="mt-2 hidden">
+        <summary class="cursor-pointer text-xs font-semibold text-slate-500">Ver detalle técnico</summary>
+        <pre id="jc-thinking-technical" class="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950 p-2 text-[11px] text-slate-100"></pre>
+      </details>
     </div>`;
   feed.appendChild(wrap);
+  mountAllJintiaLoaders(wrap);
+  scrollFeed();
+}
+
+function updateThinkingActivity({ message, detail = "", technical = "", tone = "working" }) {
+  if (!el("jc-thinking")) showThinkingBubble();
+  const messageEl = el("jc-thinking-message");
+  const detailEl = el("jc-thinking-detail");
+  const technicalWrap = el("jc-thinking-technical-wrap");
+  const technicalEl = el("jc-thinking-technical");
+  if (messageEl) {
+    messageEl.textContent = message;
+    messageEl.className = `font-medium ${tone === "warning" ? "text-amber-700" : tone === "error" ? "text-red-700" : "text-slate-700"}`;
+  }
+  if (detailEl) {
+    detailEl.textContent = detail;
+    detailEl.classList.toggle("hidden", !detail);
+  }
+  if (technicalWrap && technicalEl) {
+    technicalEl.textContent = technical;
+    technicalWrap.classList.toggle("hidden", !technical);
+  }
   scrollFeed();
 }
 
@@ -349,6 +494,9 @@ function createAssistantBubble() {
       <div class="jc-md px-4 py-3 text-sm leading-relaxed text-slate-800"></div>
     </article>`;
   feed.appendChild(wrap);
+  // La actividad es un estado vivo del turno: debe permanecer debajo del
+  // último bloque de respuesta, incluso cuando OpenCode abre otro part.
+  if (_runtimeActivityEl?.isConnected) feed.appendChild(_runtimeActivityEl);
   scrollFeed();
   return wrap.querySelector(".jc-md");
 }
@@ -370,7 +518,7 @@ function messageHtml(msg) {
 function updateComposerState() {
   const btn = el("jc-btn-send");
   const inp = el("jc-input");
-  const ready = _provider === "codex" ? _composerReady : _runtimeReady && _composerReady;
+  const ready = (_provider === "codex" || _provider === "claude") ? _composerReady : _runtimeReady && _composerReady;
   if (inp) inp.disabled = !ready;
   if (btn) btn.disabled = !ready || _busy || !(inp?.value || "").trim();
   el("jc-activity-feed")?.setAttribute("aria-busy", String(_busy));
@@ -389,17 +537,38 @@ function setAbortVisible(visible) {
 // ── SSE streaming ──────────────────────────────────────────────────────────
 function connectSSE(port) {
   disconnectSSE();
+  providerLog("opencode", "sse.connect", { port });
   try {
     _sse = new EventSource(`http://127.0.0.1:${port}/event`);
     _sse.onmessage = (ev) => {
-      try { handleSSE(JSON.parse(ev.data)); } catch {}
+      try {
+        const event = JSON.parse(ev.data);
+        const props = event.properties || {};
+        providerLog("opencode", "sse.event", {
+          type: event.type,
+          sessionId: props.sessionID,
+          keys: Object.keys(props),
+          partType: props.part?.type,
+          delta: typeof props.delta === "string" ? props.delta.slice(0, 160) : undefined,
+          status: props.status?.type,
+          message: props.status?.message || props.error?.message,
+        });
+        handleSSE(event);
+      } catch (error) {
+        providerLog("opencode", "sse.parse_error", { error: String(error), data: ev.data?.slice?.(0, 500) });
+      }
     };
-    _sse.onerror = () => {}; // EventSource reintenta solo; silenciar en mock
-  } catch {}
+    _sse.onerror = (error) => {
+      providerLog("opencode", "sse.error", { readyState: _sse?.readyState, error: String(error) });
+    };
+  } catch (error) {
+    providerLog("opencode", "sse.connect_error", { error: String(error), port });
+  }
 }
 
 function disconnectSSE() {
   if (_sse) { _sse.close(); _sse = null; }
+  stopOpenCodeProgressTimer();
   _assistantEl     = null;
   _assistantRaw    = "";
   _currentPartType = null;
@@ -730,14 +899,21 @@ async function switchToSession(sessionId, coursePath) {
   }
 
   setSendEnabled(true);
-  setStatus("OpenCode listo", "ready");
+  setStatus("Jintia Chat listo", "ready");
 }
 
 // Burbuja de respuesta completa (para historial cargado, no streaming)
-function appendAssistantMessage(text) {
+function appendAssistantMessage(text, { actions = true } = {}) {
   const body = createAssistantBubble();
-  finalizeAssistantBubble(body, text);
+  finalizeAssistantBubble(body, text, { actions });
   scrollFeed();
+}
+
+// Saludo local (no proviene de la IA): mismo tratamiento visual que una
+// respuesta, pero sin las acciones de respuesta (Copiar/Ver fuentes/Usar
+// como base no aplican a un texto que Jintia no generó).
+function appendGreetingMessage(text) {
+  appendAssistantMessage(text, { actions: false });
 }
 
 // Muestra el error tal como lo reporta Codex directamente en la conversación
@@ -758,6 +934,21 @@ function appendErrorMessage(text) {
   scrollFeed();
 }
 
+// Cierra el turno de la burbuja de asistente en curso: si tiene contenido
+// real lo renderiza, y si quedó vacía (p. ej. un part sin deltas visibles)
+// la retira del hilo en vez de dejar una tarjeta "Jintia:" fantasma.
+function settleAssistantBubble() {
+  if (_assistantEl) {
+    if (_assistantRaw.trim()) {
+      finalizeAssistantBubble(_assistantEl, _assistantRaw);
+    } else {
+      _assistantEl.closest(".jc-route-step")?.remove();
+    }
+  }
+  _assistantEl = null;
+  _assistantRaw = "";
+}
+
 function handleSSE(event) {
   const props = event.properties || {};
 
@@ -765,9 +956,25 @@ function handleSSE(event) {
   if (event.type === "message.part.updated") {
     const part = props.part || {};
     if (part.sessionID !== _sessionId) return;
+    const nextPartId = part.id || null;
+    // OpenCode puede abrir varios bloques de texto durante un mismo turno
+    // (por ejemplo, antes y después de una consulta MCP). No los concatenamos:
+    // cada bloque representa un mensaje independiente en el hilo.
+    if (part.type === "text" && nextPartId && _currentPartId && nextPartId !== _currentPartId) {
+      settleAssistantBubble();
+    }
+    if (nextPartId) _currentPartId = nextPartId;
     if (!part.time?.end) {
       // Part abierto: marcar tipo activo
       _currentPartType = part.type; // "reasoning", "text", "step-start", etc.
+      // "step-start"/"step-finish" y otros tipos internos de OpenCode son
+      // marcadores de control sin contenido legible: no deben mostrarse
+      // como actividad (evita filtrar nombres técnicos crudos al usuario).
+      if (part.type === "reasoning" || part.type === "tool") {
+        const label = part.type === "reasoning" ? "Jintia Chat está razonando…" : `Jintia Chat está usando una herramienta${part.tool ? ` (${part.tool})` : ""}…`;
+        setStatus(label.replaceAll("OpenCode", "Jintia Chat"), "working");
+        appendRuntimeActivity(label);
+      }
     } else {
       // Part cerrado
       _currentPartType = null;
@@ -780,6 +987,7 @@ function handleSSE(event) {
   if (event.type === "message.part.delta") {
     if (props.sessionID !== _sessionId) return;
     if (props.field !== "text") return;
+    if (typeof props.delta !== "string" || !props.delta) return;
 
     if (_currentPartType === "text") {
       // Respuesta real → burbuja principal (texto plano durante el stream)
@@ -803,17 +1011,16 @@ function handleSSE(event) {
     if (props.sessionID !== _sessionId) return;
     const st = props.status?.type;
     if (st === "idle") {
-      if (_assistantEl && _assistantRaw) {
-        finalizeAssistantBubble(_assistantEl, _assistantRaw);
-      }
-      _assistantEl     = null;
-      _assistantRaw    = "";
+      providerLog("opencode", "turn.completed", { sessionId: _sessionId, elapsedSeconds: _openCodeTurnStartedAt ? Math.floor((Date.now() - _openCodeTurnStartedAt) / 1000) : null });
+      stopOpenCodeProgressTimer();
+      appendRuntimeActivity("Jintia Chat completó la respuesta.");
+      settleAssistantBubble();
       _currentPartType = null;
       _busy = false;
       hideThinkingBubble();
       setSendEnabled(true);
       setAbortVisible(false);
-      setStatus("OpenCode listo", "ready");
+      setStatus("Jintia Chat listo", "ready");
     }
     if (st === "retry") {
       // Forma confirmada en el propio código fuente de OpenCode
@@ -822,12 +1029,14 @@ function handleSSE(event) {
       // "next" es el timestamp (ms) del próximo reintento automático.
       const status = props.status || {};
       const waitSecs = typeof status.next === "number" ? Math.max(0, Math.round((status.next - Date.now()) / 1000)) : null;
-      const base = status.action?.message || status.message || "OpenCode está reintentando…";
+      const base = status.action?.message || status.message || "Jintia Chat está reintentando…";
+      providerLog("opencode", "turn.retry", { attempt: status.attempt, message: base, next: status.next });
+      appendRuntimeActivity(`${base}${status.attempt ? ` (intento ${status.attempt})` : ""}`, "warning");
       setStatus(waitSecs !== null ? `${base} (reintenta en ${waitSecs}s)` : base, "working");
       // Solo avisar con un toast la primera vez, para no bombardear en cada
       // reintento del backoff exponencial (hasta 5 intentos automáticos).
       if (status.attempt === 1) {
-        toast(status.action?.title ? `${status.action.title}: ${base}` : `OpenCode: ${base}`, "warning", 6000);
+        toast(status.action?.title ? `${status.action.title}: ${base}` : `Jintia Chat: ${base}`, "warning", 6000);
       }
     }
     return;
@@ -835,19 +1044,19 @@ function handleSSE(event) {
 
   // ── Error fatal de sesión ─────────────────────────────────────────────
   if (event.type === "session.error") {
+    providerLog("opencode", "turn.error_event", props);
+    appendRuntimeActivity(props.error?.message || props.message || "Jintia Chat reportó un error.", "error");
+    stopOpenCodeProgressTimer();
     if (props.sessionID !== _sessionId) return;
-    if (_assistantEl && _assistantRaw) {
-      finalizeAssistantBubble(_assistantEl, _assistantRaw);
-    }
-    _assistantEl     = null;
-    _assistantRaw    = "";
+    settleAssistantBubble();
     _currentPartType = null;
+    _currentPartId = null;
     _busy = false;
     hideThinkingBubble();
     setSendEnabled(true);
     setAbortVisible(false);
     setStatus("Error", "error");
-    const msg = props.error?.message || props.message || "Error desconocido de OpenCode";
+    const msg = props.error?.message || props.message || "Error desconocido de Jintia Chat";
     appendErrorMessage(msg);
   }
 }
@@ -1032,7 +1241,7 @@ async function connectAndGreet(coursePath) {
     if (newBtn) newBtn.disabled = false;
     clearFeed();
     const course = (state.courses || []).find(c => c.project_path === coursePath) || _course;
-    appendAssistantMessage(`Hola, soy Jintia. Estoy lista para trabajar contigo en **${course?.name || course?.code || "tu asignatura"}**, dentro de **${weekLabel()}**. Puedo ayudarte a preguntar, crear, revisar o validar materiales usando el contexto disponible.`);
+    appendGreetingMessage(`Hola, soy Jintia. Estoy lista para trabajar contigo en **${course?.name || course?.code || "tu asignatura"}**, dentro de **${weekLabel()}**. Puedo ayudarte a preguntar, crear, revisar o validar materiales usando el contexto disponible.`);
     renderSourcesPanel();
     autoConnectNotebook();
     el("jc-input")?.focus();
@@ -1041,11 +1250,13 @@ async function connectAndGreet(coursePath) {
 
 // ── Iniciar runtime OpenCode ───────────────────────────────────────────────
 async function startRuntime(coursePath) {
-  setStatus("Iniciando OpenCode…", "working");
+  providerLog("opencode", "runtime.start", { coursePath });
+  setStatus("Iniciando Jintia Chat…", "working");
   const connectBtn = el("jc-btn-connect");
   if (connectBtn) connectBtn.disabled = true;
   try {
     const info = await invoke("opencode_start_course", { coursePath });
+    providerLog("opencode", "runtime.result", info);
     _runtimeReady = info.status === "ready";
     _port = info.port;
     if (_runtimeReady) {
@@ -1054,13 +1265,14 @@ async function startRuntime(coursePath) {
       syncPanelLayout({ force: true });
       loadSessions(coursePath);    // sin await — paralelo
     }
-    setStatus(_runtimeReady ? "OpenCode listo" : "Offline", _runtimeReady ? "ready" : "error");
+    setStatus(_runtimeReady ? "Jintia Chat listo" : "Offline", _runtimeReady ? "ready" : "error");
     if (!_runtimeReady) {
       console.error("[jintia-chat] opencode_start_course no retornó ready:", info);
       if (connectBtn) connectBtn.disabled = false;
     }
     return _runtimeReady;
   } catch (err) {
+    providerLog("opencode", "runtime.error", { error: String(err), coursePath });
     setStatus("Error al iniciar", "error");
     console.error("[jintia-chat] opencode_start_course error:", err);
     toast(String(err), "error", 9000);
@@ -1074,15 +1286,18 @@ async function createSession() {
   const weekEl = el("jc-week-select");
   const week = weekEl?.value || null;
   try {
+    providerLog("opencode", "session.create", { coursePath: _course.project_path, week });
     const session = await invoke("agent_create_session", {
       coursePath: _course.project_path,
       week,
     });
     _sessionId = session.id;
+    providerLog("opencode", "session.created", { sessionId: _sessionId });
     // Refrescar historial con la nueva sesión
     loadSessions(_course.project_path);
     return true;
   } catch (err) {
+    providerLog("opencode", "session.create_error", { error: String(err) });
     console.error("[jintia-chat] agent_create_session error:", err);
     toast("No se pudo crear la sesión: " + String(err), "error", 6000);
     return false;
@@ -1093,23 +1308,50 @@ async function createSession() {
 
 function updateProviderUI() {
   const isCodex = _provider === "codex";
+  const isClaude = _provider === "claude";
   const modelSel = el("jc-model-select");
   if (modelSel) {
-    // Para Codex, loadCodexModels() habilita el select en cuanto llega el catálogo real.
-    modelSel.disabled = isCodex ? true : !_runtimeReady;
-    modelSel.title = isCodex ? "Modelo de Codex (ChatGPT)" : "Modelo de IA (solo OpenCode)";
+    if (isClaude) {
+      populateClaudeModels();
+      modelSel.title = "Modelo de Claude Code";
+    } else {
+      // Para Codex, loadCodexModels() habilita el select en cuanto llega el catálogo real.
+      modelSel.disabled = isCodex ? true : !_runtimeReady;
+      modelSel.title = isCodex ? "Modelo de Codex (ChatGPT)" : "Modelo de IA (Jintia Chat)";
+    }
   }
   const effortField = el("jc-effort-field");
   if (effortField) effortField.hidden = !isCodex;
   const detail = el("jc-engine-detail");
-  if (detail) detail.textContent = isCodex
-    ? "Motor: Codex con tu sesión de ChatGPT"
-    : "Motor: OpenCode con Jintia Skill";
+  if (detail) detail.textContent = isClaude
+    ? "Motor: Claude Code con tu sesión de Claude. Puede leer y editar archivos de la asignatura sin pedir confirmación por cada acción."
+    : isCodex
+      ? "Motor: Codex con tu sesión de ChatGPT"
+      : "Jintia Chat con motor OpenCode y Jintia Skill";
   const historySection = el("jc-history-section");
-  if (historySection) historySection.hidden = isCodex;
+  if (historySection) historySection.hidden = isCodex || isClaude;
   syncPanelLayout({ force: true });
-  _composerReady = isCodex || _runtimeReady;
+  _composerReady = isCodex || isClaude || _runtimeReady;
   updateComposerState();
+}
+
+// Puebla el selector de modelo con el catálogo fijo de Claude Code
+// ("sonnet"/"opus"/automático): a diferencia de Codex no hay un comando
+// model/list documentado y estable para pedirle el catálogo real al CLI.
+function populateClaudeModels() {
+  const modelSel = el("jc-model-select");
+  if (!modelSel) return;
+  modelSel.innerHTML = CLAUDE_MODELS
+    .map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`)
+    .join("");
+  const saved = state.config?.claudeModel;
+  const target = CLAUDE_MODELS.find(m => m.id === saved) || CLAUDE_MODELS[0];
+  modelSel.value = target.id;
+  modelSel.disabled = false;
+  modelSel.onchange = () => {
+    state.config = { ...state.config, claudeModel: modelSel.value };
+    saveConfig();
+  };
 }
 
 // Carga el catálogo real de modelos de Codex (model/list) y puebla el
@@ -1406,13 +1648,16 @@ async function sendMessageViaCodex(text) {
   }
 
   showThinkingBubble();
+  _codexCommandOutput = new Map();
+  _codexLegacyWarningShown = false;
   setStatus("ChatGPT está pensando…", "working");
   startCodexThinkingWatchdog();
 
   try {
     const model = el("jc-model-select")?.value || null;
     const effort = el("jc-effort-select")?.value || null;
-    const startedTurnId = await invoke("codex_submit_turn", { threadId: _codexThreadId, message: text, model, effort });
+    const jintiaMessage = `Usa explícitamente $jintia-skill para esta solicitud de Ask Jintia. Sigue su motor editorial vigente: guide.json → HTML → Vivliostyle; no crees una guía LaTeX ni uses pdflatex.\n\nSolicitud del usuario:\n${text}`;
+    const startedTurnId = await invoke("codex_submit_turn", { threadId: _codexThreadId, message: jintiaMessage, model, effort });
     if (_busy) _codexTurnId = startedTurnId;
   } catch (e) {
     _busy = false;
@@ -1470,6 +1715,7 @@ async function ensureCodexListener() {
     }
     _assistantEl = null;
     _assistantRaw = "";
+    _codexCommandOutput.clear();
     _codexTurnId = null;
     _busy = false;
     setSendEnabled(true);
@@ -1482,6 +1728,73 @@ async function ensureCodexListener() {
       void refreshCodexRateLimits();
       void fallbackToOpenCodeDueToRateLimit("Codex se quedó sin cupo. Cambiando a OpenCode automáticamente.");
     }
+  });
+
+  const itemStartedUnlisten = await listen("codex:item/started", (event) => {
+    const params = event.payload?.params || {};
+    if (params.threadId && params.threadId !== _codexThreadId) return;
+    const item = params.item || {};
+    if (item.type !== "commandExecution") return;
+    clearCodexThinkingWatchdog();
+    const command = commandFromCodexParams(params);
+    updateThinkingActivity({
+      message: isLegacyLatexCommand(command) ? "Codex intenta ejecutar una herramienta heredada." : "Codex está ejecutando una herramienta…",
+      detail: command || "Preparando el comando.",
+      technical: command,
+      tone: isLegacyLatexCommand(command) ? "warning" : "working",
+    });
+    setStatus("Codex está ejecutando una herramienta…", "working");
+  });
+
+  const commandOutputUnlisten = await listen("codex:item/commandExecution/outputDelta", (event) => {
+    const params = event.payload?.params || {};
+    if (params.threadId && params.threadId !== _codexThreadId) return;
+    const itemId = params.itemId || "current";
+    const output = `${_codexCommandOutput.get(itemId) || ""}${params.delta || ""}`;
+    _codexCommandOutput.set(itemId, output.slice(-12000));
+    const summary = summarizeCodexOutput(output);
+    updateThinkingActivity({ ...summary, technical: trimCodexTechnicalOutput(output) });
+    setStatus(summary.message, summary.tone === "warning" ? "error" : "working");
+    if (summary.legacy && !_codexLegacyWarningShown) {
+      _codexLegacyWarningShown = true;
+      toast("Codex intentó usar LaTeX. Jintia actual debe trabajar con guide.json, HTML y Vivliostyle.", "warning", 12000);
+    }
+  });
+
+  const itemCompletedUnlisten = await listen("codex:item/completed", (event) => {
+    const params = event.payload?.params || {};
+    if (params.threadId && params.threadId !== _codexThreadId) return;
+    const item = params.item || {};
+    if (item.type !== "commandExecution") return;
+    const output = item.aggregatedOutput || _codexCommandOutput.get(item.id) || "";
+    const failed = item.status === "failed" || (Number.isInteger(item.exitCode) && item.exitCode !== 0);
+    if (failed) {
+      const summary = summarizeCodexOutput(output);
+      updateThinkingActivity({
+        message: summary.message || "Una herramienta de Codex terminó con error.",
+        detail: summary.detail || "Codex puede corregir el problema o solicitar otra acción.",
+        technical: trimCodexTechnicalOutput(output),
+        tone: "warning",
+      });
+      setStatus("Una herramienta falló; Codex continúa revisando…", "working");
+    } else {
+      updateThinkingActivity({
+        message: "La herramienta terminó; Codex está revisando el resultado…",
+        detail: commandFromCodexParams(params),
+        technical: trimCodexTechnicalOutput(output),
+      });
+    }
+  });
+
+  const diffUnlisten = await listen("codex:turn/diff/updated", (event) => {
+    const params = event.payload?.params || {};
+    if (params.threadId && params.threadId !== _codexThreadId) return;
+    const files = changedFilesFromCodexDiff(params.diff);
+    if (!files.length) return;
+    updateThinkingActivity({
+      message: `Codex preparó cambios en ${files.length} ${files.length === 1 ? "archivo" : "archivos"}.`,
+      detail: files.slice(0, 4).join(" · ") + (files.length > 4 ? ` · +${files.length - 4}` : ""),
+    });
   });
 
   // Codex también envía PETICIONES servidor→cliente cuando necesita permiso
@@ -1505,6 +1818,35 @@ async function ensureCodexListener() {
       return `${params.reason ? params.reason + "\n\n" : ""}${files || "(sin detalle de archivos)"}`;
     },
   }));
+  const commandApprovalUnlisten = await listen("codex:item/commandExecution/requestApproval", (event) => {
+    const presentation = approvalPresentation(event.payload?.params || {});
+    return respondToCodexApproval(event, {
+      title: presentation.title,
+      describe: () => presentation.message,
+      allowDecision: "accept",
+      denyDecision: "cancel",
+      legacy: presentation.legacy,
+    });
+  });
+  const fileApprovalUnlisten = await listen("codex:item/fileChange/requestApproval", (event) => respondToCodexApproval(event, {
+    title: "Codex quiere modificar archivos",
+    describe: params => params.reason || "Codex solicita autorización para modificar archivos de la asignatura.",
+    allowDecision: "accept",
+    denyDecision: "cancel",
+  }));
+
+  const threadStatusUnlisten = await listen("codex:thread/status/changed", (event) => {
+    const params = event.payload?.params || {};
+    if (params.threadId && params.threadId !== _codexThreadId) return;
+    if (params.status?.activeFlags?.includes("waitingOnApproval")) {
+      updateThinkingActivity({
+        message: "Codex está esperando tu autorización.",
+        detail: "Revisa el diálogo de permiso para continuar o denegar la acción.",
+        tone: "warning",
+      });
+      setStatus("Esperando autorización…", "working");
+    }
+  });
 
   // Notificación general de error de turno (método "error" en el protocolo
   // v2). Llega prácticamente junto con turn/completed (mismo error, casi al
@@ -1535,15 +1877,30 @@ async function ensureCodexListener() {
   });
 
   _codexUnlisten = [
-    deltaUnlisten, completedUnlisten, execApprovalUnlisten, patchApprovalUnlisten,
+    deltaUnlisten, completedUnlisten, itemStartedUnlisten, commandOutputUnlisten,
+    itemCompletedUnlisten, diffUnlisten, execApprovalUnlisten, patchApprovalUnlisten,
+    commandApprovalUnlisten, fileApprovalUnlisten, threadStatusUnlisten,
     errorUnlisten, rateLimitsUnlisten,
   ];
 }
 
 /** Muestra el detalle de una petición de aprobación de Codex y le reenvía la decisión. */
-async function respondToCodexApproval(event, { title, describe }) {
+async function respondToCodexApproval(event, {
+  title,
+  describe,
+  allowDecision = "allow",
+  denyDecision = "deny",
+  legacy = false,
+}) {
   const { id, params } = event.payload || {};
+  if (params?.threadId && params.threadId !== _codexThreadId) return;
+  clearCodexThinkingWatchdog();
   setStatus("Codex pide tu autorización…", "working");
+  updateThinkingActivity({
+    message: legacy ? "Codex solicita una herramienta heredada." : "Codex necesita tu autorización.",
+    detail: legacy ? "Jintia recomienda denegar esta acción y continuar con Vivliostyle." : "Revisa el comando y la carpeta antes de decidir.",
+    tone: "warning",
+  });
   const allowed = await confirmDialog({
     title,
     message: describe(params || {}),
@@ -1552,7 +1909,7 @@ async function respondToCodexApproval(event, { title, describe }) {
     danger: true,
   });
   try {
-    await invoke("codex_respond_approval", { id, decision: allowed ? "allow" : "deny" });
+    await invoke("codex_respond_approval", { id, decision: allowed ? allowDecision : denyDecision });
     setStatus(allowed ? "Permiso concedido, continuando…" : "Permiso denegado, continuando…", "working");
   } catch (e) {
     toast(`No se pudo responder a Codex: ${e}`, "error", 6000);
@@ -1566,11 +1923,248 @@ function teardownCodexListener() {
   _codexRateLimitTickTimer = null;
 }
 
+// ── Claude Code (suscripción de Claude, sin API key) ──────────────────────
+
+/**
+ * Contexto académico corto que se pasa como `--append-system-prompt`: deja
+ * el mensaje del usuario limpio y le da a Claude la asignatura/semana activa
+ * sin depender de que el usuario la repita en cada turno.
+ */
+function buildClaudeContext() {
+  const subject = [_course?.code, _course?.name].filter(Boolean).join(" — ");
+  const scope = _selectedWeek ? `Semana ${String(_selectedWeek).padStart(2, "0")}` : "Contexto general de la asignatura";
+  return `Estás siendo usado desde Ask Jintia (Jintia Desktop).${subject ? ` Asignatura: ${subject}.` : ""} ${scope}. Usa la skill jintia-skill para las tareas académicas. Su motor vigente es guide.json → HTML → Vivliostyle; no generes guías LaTeX ni uses pdflatex.`;
+}
+
+async function startClaudeIfNeeded() {
+  try {
+    setStatus("Verificando Claude Code…", "working");
+    providerLog("claude", "status.request");
+    const s = await claudeStatus();
+    providerLog("claude", "status.result", {
+      installed: s?.installed,
+      authenticated: s?.authenticated,
+      version: s?.version,
+      usingApiKey: s?.usingApiKey,
+    });
+    if (!s.installed) {
+      setStatus("Claude Code no está instalado", "error");
+      toast("Claude Code CLI no está instalado. Instálalo con: npm install -g @anthropic-ai/claude-code", "error", 10000);
+      return false;
+    }
+    if (!s.authenticated) {
+      setStatus("Claude Code sin sesión activa", "error");
+      toast("Claude Code está instalado pero no tiene una sesión iniciada. Abre una terminal, ejecuta \"claude\" e inicia sesión con tu cuenta.", "warning", 10000);
+      return false;
+    }
+    if (s.usingApiKey) {
+      toast("Se detectó ANTHROPIC_API_KEY en el entorno: Claude Code usará esa clave de API en vez de tu sesión de suscripción.", "warning", 9000);
+    }
+    return true;
+  } catch (e) {
+    providerLog("claude", "status.error", { error: String(e) });
+    setStatus("Error al conectar con Claude Code", "error");
+    toast(`Error al verificar Claude Code: ${e}`, "error", 8000);
+    return false;
+  }
+}
+
+/**
+ * A diferencia de Codex no hay un app-server que arrancar: solo hace falta
+ * confirmar que el CLI está instalado y autenticado, y tener los listeners
+ * de eventos registrados antes de enviar el primer turno.
+ */
+async function connectClaudeEagerly() {
+  if (_claudeConnecting) return _claudeConnecting;
+
+  _claudeConnecting = (async () => {
+    providerLog("claude", "connect.start");
+    setSendEnabled(false);
+    try {
+      const ok = await startClaudeIfNeeded();
+      if (!ok) return false;
+      await ensureClaudeListener();
+      providerLog("claude", "listeners.ready");
+      setStatus("Claude Code listo", "ready");
+      return true;
+    } finally {
+      providerLog("claude", "connect.end", { ready: _composerReady });
+      setSendEnabled(true);
+      _claudeConnecting = null;
+    }
+  })();
+
+  return _claudeConnecting;
+}
+
+// Igual que el vigilante de Codex: sin esto, si el proceso `claude` se cae o
+// se cuelga sin emitir ningún evento, el usuario se queda mirando "pensando"
+// para siempre sin ningún aviso.
+function startClaudeThinkingWatchdog() {
+  clearClaudeThinkingWatchdog();
+  _claudeWatchdogTimers.push(setTimeout(() => {
+    if (!_busy || _provider !== "claude") return;
+    setStatus("Claude Code sigue trabajando (>20s)…", "working");
+  }, 20000));
+  _claudeWatchdogTimers.push(setTimeout(async () => {
+    if (!_busy || _provider !== "claude") return;
+    toast(
+      "Claude Code no respondió en más de un minuto. El proceso puede haberse caído o la sesión puede haber caducado.",
+      "warning",
+      12000,
+    );
+    try {
+      const s = await claudeStatus();
+      if (!s.installed || !s.authenticated) {
+        _busy = false;
+        _claudeRequestId = null;
+        hideThinkingBubble();
+        setSendEnabled(true);
+        setAbortVisible(false);
+        setStatus(!s.installed ? "Claude Code no está instalado" : "Sesión de Claude perdida", "error");
+      }
+    } catch {}
+  }, 60000));
+}
+
+function clearClaudeThinkingWatchdog() {
+  _claudeWatchdogTimers.forEach(clearTimeout);
+  _claudeWatchdogTimers = [];
+}
+
+async function sendMessageViaClaude(text) {
+  const cwd = _course?.project_path;
+  if (!cwd) return;
+
+  // Red de seguridad: si la conexión ansiosa al elegir el proveedor falló o
+  // no llegó a completarse, se reintenta aquí antes de enviar.
+  const ok = await connectClaudeEagerly();
+  if (!ok) {
+    _busy = false;
+    restorePrompt(text);
+    setSendEnabled(true);
+    setAbortVisible(false);
+    return;
+  }
+
+  showThinkingBubble();
+  setStatus("Claude Code está pensando…", "working");
+  startClaudeThinkingWatchdog();
+
+  _claudeRequestId = crypto.randomUUID();
+  providerLog("claude", "turn.submit", {
+    requestId: _claudeRequestId,
+    sessionId: _claudeSessionId,
+    cwd,
+    model: el("jc-model-select")?.value || null,
+    messageLength: text.length,
+  });
+  try {
+    await claudeSubmitTurn({
+      requestId: _claudeRequestId,
+      sessionId: _claudeSessionId,
+      cwd,
+      message: text,
+      model: el("jc-model-select")?.value || null,
+      context: buildClaudeContext(),
+    }, CLAUDE_TOOLS);
+    providerLog("claude", "turn.accepted", { requestId: _claudeRequestId });
+  } catch (e) {
+    providerLog("claude", "turn.error", { requestId: _claudeRequestId, error: String(e) });
+    _busy = false;
+    _claudeRequestId = null;
+    restorePrompt(text);
+    hideThinkingBubble();
+    clearClaudeThinkingWatchdog();
+    setSendEnabled(true);
+    setAbortVisible(false);
+    setStatus("Error", "error");
+    toast(`No se pudo enviar a Claude Code: ${e}`, "error", 6000);
+  }
+}
+
+async function ensureClaudeListener() {
+  if (_claudeDetach) return;
+  _claudeDetach = await registerClaudeListeners({
+    onSessionStarted: (payload) => {
+      providerLog("claude", "event.session_started", payload);
+      if (payload.requestId !== _claudeRequestId) return;
+      _claudeSessionId = payload.sessionId;
+    },
+    onDelta: (payload) => {
+      providerLog("claude", "event.delta", { requestId: payload.requestId, sessionId: payload.sessionId, textLength: payload.text?.length || 0 });
+      if (payload.requestId !== _claudeRequestId) return;
+      clearClaudeThinkingWatchdog();
+      hideThinkingBubble();
+      if (!_assistantEl) {
+        _assistantEl = createAssistantBubble();
+        _assistantRaw = "";
+      }
+      _assistantRaw += payload.text || "";
+      _assistantEl.textContent = _assistantRaw;
+      scrollFeed();
+    },
+    onRetry: (payload) => {
+      providerLog("claude", "event.api_retry", payload);
+      if (payload.requestId !== _claudeRequestId) return;
+      toast("Claude Code tuvo un problema y está reintentando la solicitud.", "warning", 5000);
+      setStatus("Reintentando…", "working");
+    },
+    onCompleted: (payload) => {
+      providerLog("claude", "event.completed", { ...payload, result: payload.result?.slice?.(0, 300) });
+      if (payload.requestId !== _claudeRequestId) return;
+      clearClaudeThinkingWatchdog();
+      hideThinkingBubble();
+      if (payload.sessionId) _claudeSessionId = payload.sessionId;
+      if (_assistantEl && _assistantRaw) {
+        finalizeAssistantBubble(_assistantEl, _assistantRaw);
+      } else if (!payload.success) {
+        appendErrorMessage(payload.result || "Claude Code no pudo completar esta respuesta.");
+      } else if (payload.result) {
+        appendAssistantMessage(payload.result);
+      }
+      _assistantEl = null;
+      _assistantRaw = "";
+      _claudeRequestId = null;
+      _busy = false;
+      setSendEnabled(true);
+      setAbortVisible(false);
+      setStatus(payload.success ? "Claude Code listo" : "Error en Claude Code", payload.success ? "ready" : "error");
+    },
+    onError: (payload) => {
+      providerLog("claude", "event.error", payload);
+      if (payload.requestId !== _claudeRequestId) return;
+      clearClaudeThinkingWatchdog();
+      hideThinkingBubble();
+      if (_assistantEl && _assistantRaw) {
+        finalizeAssistantBubble(_assistantEl, _assistantRaw);
+      } else {
+        appendErrorMessage(payload.message || "Claude Code reportó un error.");
+      }
+      _assistantEl = null;
+      _assistantRaw = "";
+      _claudeRequestId = null;
+      _busy = false;
+      setSendEnabled(true);
+      setAbortVisible(false);
+      setStatus("Error en Claude Code", "error");
+    },
+  });
+}
+
+function teardownClaudeListener() {
+  if (_claudeDetach) {
+    _claudeDetach();
+    _claudeDetach = null;
+  }
+  clearClaudeThinkingWatchdog();
+}
+
 // ── Enviar mensaje ─────────────────────────────────────────────────────────
 async function sendMessage() {
   const input = el("jc-input");
   const text = (input?.value || "").trim();
-  const ready = _provider === "codex" ? _composerReady : _runtimeReady;
+  const ready = (_provider === "codex" || _provider === "claude") ? _composerReady : _runtimeReady;
   if (!text || !ready || _busy) return;
 
   if (_provider === "opencode" && !_sessionId) {
@@ -1589,8 +2183,14 @@ async function sendMessage() {
     await sendMessageViaCodex(text);
     return;
   }
+  if (_provider === "claude") {
+    await sendMessageViaClaude(text);
+    return;
+  }
 
   try {
+    providerLog("opencode", "turn.submit", { coursePath: _course.project_path, sessionId: _sessionId, model: _selectedModel });
+    providerLog("opencode", "turn.request", { sessionId: _sessionId, model: _selectedModel, messageLength: text.length });
     await invoke("agent_send_message", {
       coursePath: _course.project_path,
       sessionId: _sessionId,
@@ -1598,9 +2198,12 @@ async function sendMessage() {
       modelProvider: _selectedModel?.providerID ?? null,
       modelId: _selectedModel?.id ?? null,
     });
+    startOpenCodeProgressTimer();
+    providerLog("opencode", "turn.accepted", { sessionId: _sessionId });
     showThinkingBubble();
     setStatus("Jintia está pensando…", "working");
   } catch (err) {
+    providerLog("opencode", "turn.error", { error: String(err), sessionId: _sessionId });
     _busy = false;
     restorePrompt(text);
     setSendEnabled(true);
@@ -1615,12 +2218,15 @@ export function setActiveCourse(course, week) {
   _course          = course;
   disconnectSSE();
   teardownCodexListener();
+  teardownClaudeListener();
   _sessionId       = null;
   _runtimeReady    = false;
   _port            = 0;
   _busy            = false;
   _codexThreadId   = null;
   _codexTurnId     = null;
+  _claudeSessionId = null;
+  _claudeRequestId = null;
   _notebookChecked = false;
   _selectedWeek    = week ? String(week) : "";
   _sourceLinks.clear();
@@ -1639,6 +2245,7 @@ export function setActiveCourse(course, week) {
     el("jc-btn-new-session") && (el("jc-btn-new-session").disabled = true);
     if (course?.project_path) {
       if (_provider === "codex") prepareCodexConversation();
+      else if (_provider === "claude") prepareClaudeConversation();
       else connectAndGreet(course.project_path);
     }
   });
@@ -1649,16 +2256,19 @@ export function renderJintiaChat() {
   ensureChatStyles();
   disconnectSSE();
   teardownCodexListener();
+  teardownClaudeListener();
   // El proveedor elegido persiste entre reinicios de la app; sin esto, cada
   // arranque vuelve a "opencode" en silencio y un mensaje enviado sin
-  // reseleccionar Codex nunca pasa por ninguno de sus flujos ni feedback.
-  _provider        = state.config?.provider === "codex" ? "codex" : "opencode";
+  // reseleccionar Codex/Claude nunca pasa por ninguno de sus flujos ni feedback.
+  _provider        = ["codex", "claude"].includes(state.config?.provider) ? state.config.provider : "opencode";
   _sessionId       = null;
   _runtimeReady    = false;
   _port            = 0;
   _busy            = false;
   _codexThreadId   = null;
   _codexTurnId     = null;
+  _claudeSessionId = null;
+  _claudeRequestId = null;
   _notebookChecked = false;
   _sourceLinks.clear();
 
@@ -1693,7 +2303,7 @@ export function renderJintiaChat() {
               <button id="jc-btn-new-session" class="jc-touch-action ${cx(ui.button.base, ui.button.ghost, ui.button.sm)}" disabled>${ic("plus", 15)} Nueva conversación</button>
             </div>
           </div>
-          <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"><span id="jc-context-course" class="font-semibold text-slate-700"></span><span aria-hidden="true">/</span><span id="jc-context-week"></span><details class="ml-auto"><summary class="cursor-pointer font-semibold text-slate-600 hover:text-slate-900">Opciones avanzadas</summary><div class="absolute right-6 z-30 mt-2 w-72 space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-xl"><div><label for="jc-provider-select" class="mb-1 block text-xs font-semibold text-slate-700">Proveedor de IA</label><select id="jc-provider-select" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"><option value="opencode" ${_provider === "opencode" ? "selected" : ""}>OpenCode</option><option value="codex" ${_provider === "codex" ? "selected" : ""}>ChatGPT (Codex)</option></select></div><div><label for="jc-model-select" class="mb-1 block text-xs font-semibold text-slate-700">Modelo</label><select id="jc-model-select" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs disabled:bg-slate-100"><option value="">Cargando modelo…</option></select></div><div id="jc-effort-field" hidden><label for="jc-effort-select" class="mb-1 block text-xs font-semibold text-slate-700">Esfuerzo de razonamiento</label><select id="jc-effort-select" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs disabled:bg-slate-100"><option value="">—</option></select></div><p id="jc-codex-usage" hidden class="text-xs font-semibold"></p><p id="jc-engine-detail" class="text-xs leading-relaxed text-slate-500"></p></div></details></div>
+          <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"><span id="jc-context-course" class="font-semibold text-slate-700"></span><span aria-hidden="true">/</span><span id="jc-context-week"></span><details class="ml-auto"><summary class="cursor-pointer font-semibold text-slate-600 hover:text-slate-900">Opciones avanzadas</summary><div class="absolute right-6 z-30 mt-2 w-72 space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-xl"><div><label for="jc-provider-select" class="mb-1 block text-xs font-semibold text-slate-700">Proveedor de IA</label><select id="jc-provider-select" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"><option value="opencode" ${_provider === "opencode" ? "selected" : ""}>OpenCode</option><option value="codex" ${_provider === "codex" ? "selected" : ""}>ChatGPT (Codex)</option><option value="claude" ${_provider === "claude" ? "selected" : ""}>Claude Code</option></select></div><div><label for="jc-model-select" class="mb-1 block text-xs font-semibold text-slate-700">Modelo</label><select id="jc-model-select" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs disabled:bg-slate-100"><option value="">Cargando modelo…</option></select></div><div id="jc-effort-field" hidden><label for="jc-effort-select" class="mb-1 block text-xs font-semibold text-slate-700">Esfuerzo de razonamiento</label><select id="jc-effort-select" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs disabled:bg-slate-100"><option value="">—</option></select></div><p id="jc-codex-usage" hidden class="text-xs font-semibold"></p><p id="jc-engine-detail" class="text-xs leading-relaxed text-slate-500"></p></div></details></div>
         </header>
 
         <div id="jc-activity-feed" role="log" aria-live="polite" aria-relevant="additions text" aria-busy="false" class="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6">
@@ -1722,7 +2332,7 @@ export function renderJintiaChat() {
             <div class="mb-3 flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-teal-50 text-teal-800" aria-hidden="true">${ic("route", 16)}</span><div><h3 id="jc-history-title" class="text-xs font-bold uppercase tracking-wider text-slate-700">Conversaciones</h3><p class="text-[10px] text-slate-500">Historial de esta asignatura</p></div></div>
             <label for="jc-history-search" class="sr-only">Buscar conversación</label>
             <div class="mb-2 flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/20">${ic("search", 14)}<input id="jc-history-search" type="search" placeholder="Buscar conversación" class="min-h-10 min-w-0 flex-1 border-0 bg-transparent py-2 text-xs text-slate-900 placeholder-slate-400 outline-none"></div>
-            <div id="jc-sessions-list" class="flex flex-col gap-0.5"><div class="px-3 py-4 text-xs leading-relaxed text-slate-500">Conecta OpenCode para ver el historial.</div></div>
+            <div id="jc-sessions-list" class="flex flex-col gap-0.5"><div class="px-3 py-4 text-xs leading-relaxed text-slate-500">Conecta Jintia Chat para ver el historial.</div></div>
           </section>
         </div>
       </aside>
@@ -1739,6 +2349,8 @@ export function renderJintiaChat() {
   if (weekSelect) weekSelect.value = _selectedWeek;
 
   bindChatEvents();
+  const jintiaChatOption = el("jc-provider-select")?.querySelector('option[value="opencode"]');
+  if (jintiaChatOption) jintiaChatOption.textContent = "Jintia Chat";
   updateContextSummary();
   renderSourcesPanel();
   updateProviderUI();
@@ -1748,21 +2360,29 @@ export function renderJintiaChat() {
   if (_course?.project_path) {
     requestAnimationFrame(() => {
       if (_provider === "codex") prepareCodexConversation();
+      else if (_provider === "claude") prepareClaudeConversation();
       else connectAndGreet(_course.project_path);
     });
   }
 }
 
 function resetConversation({ announce = false } = {}) {
+  stopOpenCodeProgressTimer();
+  _lastRuntimeActivity = "";
+  _runtimeActivityEl = null;
   _sessionId = null;
   _assistantEl = null;
   _assistantRaw = "";
   _currentPartType = null;
+  _currentPartId   = null;
   _busy = false;
   _codexThreadId = null;
   _codexTurnId = null;
+  _claudeSessionId = null;
+  _claudeRequestId = null;
   _sourceLinks.clear();
   teardownCodexListener();
+  teardownClaudeListener();
   hideThinkingBubble();
   clearFeed();
   setAbortVisible(false);
@@ -1770,11 +2390,15 @@ function resetConversation({ announce = false } = {}) {
     // No afirmar "listo" todavía: connectCodexEagerly() confirma el estado real.
     setSendEnabled(false);
     setStatus("Conectando con Codex…", "working");
+  } else if (_provider === "claude") {
+    // No afirmar "listo" todavía: connectClaudeEagerly() confirma el estado real.
+    setSendEnabled(false);
+    setStatus("Conectando con Claude Code…", "working");
   } else {
     setSendEnabled(_runtimeReady);
-    setStatus(_runtimeReady ? "OpenCode listo" : "Desconectado", _runtimeReady ? "ready" : "neutral");
+    setStatus(_runtimeReady ? "Jintia Chat listo" : "Desconectado", _runtimeReady ? "ready" : "neutral");
   }
-  if (_course) appendAssistantMessage(`Nueva conversación para **${_course.name || _course.code || "la asignatura"}** en **${weekLabel()}**. ¿Qué quieres hacer?`);
+  if (_course) appendGreetingMessage(`Nueva conversación para **${_course.name || _course.code || "la asignatura"}** en **${weekLabel()}**. ¿Qué quieres hacer?`);
   renderSourcesPanel();
   if (announce) toast("Nueva conversación iniciada", "success", 2000);
   el("jc-input")?.focus();
@@ -1787,11 +2411,18 @@ function prepareCodexConversation() {
   autoConnectNotebook();
 }
 
+function prepareClaudeConversation() {
+  el("jc-btn-new-session") && (el("jc-btn-new-session").disabled = false);
+  resetConversation();
+  void connectClaudeEagerly();
+  autoConnectNotebook();
+}
+
 function bindChatEvents() {
   el("jc-provider-select")?.addEventListener("change", async e => {
     const previous = _provider;
     const next = e.target.value;
-    if ((_sessionId || _codexThreadId) && !await confirmDialog({
+    if ((_sessionId || _codexThreadId || _claudeSessionId) && !await confirmDialog({
       title: "Cambiar proveedor",
       message: "El cambio iniciará una conversación nueva para evitar mezclar contextos.",
       confirmLabel: "Cambiar e iniciar",
@@ -1807,6 +2438,9 @@ function bindChatEvents() {
     if (_provider === "codex") {
       prepareCodexConversation();
       toast("ChatGPT activado mediante Codex.", "info", 4000);
+    } else if (_provider === "claude") {
+      prepareClaudeConversation();
+      toast("Claude Code activado con tu sesión de Claude.", "info", 4000);
     } else if (_runtimeReady) {
       syncPanelLayout({ force: true });
       loadSessions(_course?.project_path);
@@ -1820,12 +2454,15 @@ function bindChatEvents() {
     _course = (state.courses || []).find(c => c.project_path === path) || null;
     disconnectSSE();
     teardownCodexListener();
+    teardownClaudeListener();
     _sessionId       = null;
     _runtimeReady    = false;
     _port            = 0;
     _busy            = false;
     _codexThreadId   = null;
     _codexTurnId     = null;
+    _claudeSessionId = null;
+    _claudeRequestId = null;
     _notebookChecked = false;
     _sessionsLoaded  = false;
     _selectedWeek    = "";
@@ -1837,13 +2474,14 @@ function bindChatEvents() {
     renderSourcesPanel();
     if (_course?.project_path) {
       if (_provider === "codex") prepareCodexConversation();
+      else if (_provider === "claude") prepareClaudeConversation();
       else connectAndGreet(_course.project_path);
     }
   });
 
   el("jc-week-select")?.addEventListener("change", async e => {
     const next = e.target.value;
-    if ((_sessionId || _codexThreadId) && !await confirmDialog({
+    if ((_sessionId || _codexThreadId || _claudeSessionId) && !await confirmDialog({
       title: "Cambiar semana",
       message: `Se iniciará una conversación nueva para ${weekLabel(next)}.`,
       confirmLabel: "Cambiar semana",
@@ -1862,12 +2500,14 @@ function bindChatEvents() {
       return;
     }
     if (_provider === "codex") prepareCodexConversation();
+    else if (_provider === "claude") prepareClaudeConversation();
     else await connectAndGreet(_course.project_path);
   });
 
   el("jc-btn-new-session")?.addEventListener("click", () => {
     resetConversation({ announce: true });
     if (_provider === "codex") void connectCodexEagerly();
+    else if (_provider === "claude") void connectClaudeEagerly();
     else if (_course?.project_path) loadSessions(_course.project_path);
   });
 
@@ -1944,6 +2584,9 @@ function bindChatEvents() {
       if (_provider === "codex") {
         if (!_codexThreadId || !_codexTurnId) return;
         await invoke("codex_interrupt_turn", { threadId: _codexThreadId, turnId: _codexTurnId });
+      } else if (_provider === "claude") {
+        if (!_claudeRequestId) return;
+        await claudeInterruptTurn(_claudeRequestId);
       } else {
         if (!_sessionId) return;
         await invoke("agent_abort", { coursePath: _course.project_path, sessionId: _sessionId });
@@ -1953,11 +2596,14 @@ function bindChatEvents() {
         finalizeAssistantBubble(_assistantEl, _assistantRaw);
       }
       hideThinkingBubble();
+      clearClaudeThinkingWatchdog();
       _assistantEl     = null;
       _assistantRaw    = "";
-      _currentPartType = null;
+  _currentPartType = null;
+  _currentPartId   = null;
       _busy = false;
       _codexTurnId = null;
+      _claudeRequestId = null;
       setStatus("Respuesta detenida", "ready");
       setSendEnabled(true);
       setAbortVisible(false);

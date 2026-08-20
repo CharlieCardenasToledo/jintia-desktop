@@ -11,12 +11,13 @@ import { toast } from "../toast.js";
 import { ic, refreshIcons } from "../icons.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { BrandMark } from "../components/BrandMark.js";
+import { mountAllJintiaLoaders, mountJintiaLoader } from "../components/JintiaLoader.js";
 import { ui, cx } from "../uiClasses.js";
 import { runtime, STEP_META, TOTAL_STEPS, prepareOnboardingStep, warmOnboardingData } from "./store.js";
 import {
   onboardingAmbientBackground,
-  mountGeminiOrb,
-  mountGeminiLoading,
+  mountLoadingMark,
+  mountJintiaLoading,
   renderBottomNav,
   syncOnboardingBusyState,
   stepNumber,
@@ -32,14 +33,17 @@ import {
 } from "./steps.js";
 import { bindStepEvents, runOnboardingOperation } from "./actions.js";
 
-// Referencia al destructor del orbe del paso actual.
+// Referencias a los loaders montados manualmente en el paso actual.
 let stopStepOrb = null;
+let finalRingController = null;
 
 export function renderCurrentStep() {
   const root = document.getElementById("onboarding-root");
   if (!root || !runtime.status) return;
   stopStepOrb?.();
   stopStepOrb = null;
+  finalRingController?.destroy();
+  finalRingController = null;
   if (runtime.status.completed) {
     root.remove();
     return;
@@ -90,18 +94,23 @@ export function renderCurrentStep() {
   const content = document.getElementById("onboarding-step-content");
   if (runtime.loadingStep === current) {
     content.innerHTML = loadingStep(current);
-    const host = content.querySelector("[data-step-loading-orb]");
-    if (host) stopStepOrb = mountGeminiOrb(host, "Preparando el siguiente paso");
+    const host = content.querySelector("[data-step-loading-mark]");
+    if (host) stopStepOrb = mountLoadingMark(host);
   } else {
     if (current === 1) content.innerHTML = welcomeStep();
     if (current === 2) content.innerHTML = dependenciesStep();
     if (current === 3) content.innerHTML = profileStep();
     if (current === 4) content.innerHTML = connectStep();
     if (current === 5) content.innerHTML = finalStep();
+    if (current === 5) {
+      const ringHost = content.querySelector("#final-ring-loader");
+      if (ringHost) finalRingController = mountJintiaLoader(ringHost);
+    }
   }
   document.getElementById("onboarding-bottom-nav").innerHTML = renderBottomNav(current);
   bindStepEvents(current);
   refreshIcons();
+  mountAllJintiaLoaders(root);
   syncOnboardingBusyState();
   if (stepChanged) requestAnimationFrame(() => document.getElementById("onboarding-title")?.focus({ preventScroll: true }));
 }
@@ -109,7 +118,7 @@ export function renderCurrentStep() {
 export async function renderOnboarding() {
   const root = document.getElementById("onboarding-root");
   if (!root) return;
-  const stopOrbs = mountGeminiLoading(root);
+  const stopOrbs = mountJintiaLoading(root);
 
   try {
     runtime.status = await getOnboardingStatus();

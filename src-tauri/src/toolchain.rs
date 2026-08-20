@@ -33,22 +33,34 @@ pub struct ClaudeSkillStatus {
     pub target: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct AgentSkillsStatus {
+    pub claude: ClaudeSkillStatus,
+    pub codex: ClaudeSkillStatus,
+    pub opencode: ClaudeSkillStatus,
+}
+
+#[cfg(test)]
 fn claude_status_args() -> [&'static str; 4] {
     ["status", "--providers=claude", "--scope=global", "--json"]
 }
 
-fn parse_claude_skill_status(stdout: &str) -> Result<ClaudeSkillStatus, String> {
+fn agent_status_args() -> [&'static str; 4] {
+    ["status", "--providers=claude,codex,opencode", "--scope=global", "--json"]
+}
+
+fn parse_provider_skill_status(stdout: &str, provider_id: &str) -> Result<ClaudeSkillStatus, String> {
     let report: Value = serde_json::from_str(stdout).map_err(|e| format!("Reporte JSON inválido de Jintia: {e}"))?;
     if report.get("tool").and_then(Value::as_str) != Some("jintia")
         || report.get("command").and_then(Value::as_str) != Some("status")
         || report.get("status").and_then(Value::as_str) != Some("success")
         || report.get("exitCode").and_then(Value::as_i64) != Some(0)
-    { return Err("Reporte de status Claude incompatible.".into()); }
-    let data = report.get("data").ok_or("data ausente en el status Claude.")?;
-    if data.get("operation").and_then(Value::as_str) != Some("status") { return Err("operation inválida en el status Claude.".into()); }
-    let providers = data.get("providers").and_then(Value::as_array).ok_or("providers inválido en el status Claude.")?;
-    let matches: Vec<&Value> = providers.iter().filter(|p| p.get("id").and_then(Value::as_str) == Some("claude") && p.get("scope").and_then(Value::as_str) == Some("global")).collect();
-    if matches.len() != 1 { return Err("Debe existir exactamente un provider Claude global.".into()); }
+    { return Err("Reporte de status de harnesses incompatible.".into()); }
+    let data = report.get("data").ok_or("data ausente en el status de harnesses.")?;
+    if data.get("operation").and_then(Value::as_str) != Some("status") { return Err("operation inválida en el status de harnesses.".into()); }
+    let providers = data.get("providers").and_then(Value::as_array).ok_or("providers inválido en el status de harnesses.")?;
+    let matches: Vec<&Value> = providers.iter().filter(|p| p.get("id").and_then(Value::as_str) == Some(provider_id) && p.get("scope").and_then(Value::as_str) == Some("global")).collect();
+    if matches.len() != 1 { return Err(format!("Debe existir exactamente un provider {provider_id} global.")); }
     let provider = matches[0];
     let target = provider.get("target").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("target inválido en el status Claude.")?;
     let state = provider.get("state").ok_or("state ausente en el status Claude.")?;
@@ -61,11 +73,20 @@ fn parse_claude_skill_status(stdout: &str) -> Result<ClaudeSkillStatus, String> 
     Ok(ClaudeSkillStatus { installed, current: installed && managed && status == "installed" && version == available, version, available_version: available.to_owned(), target: target.to_owned() })
 }
 
-pub fn claude_skill_status() -> Result<ClaudeSkillStatus, String> {
+#[cfg(test)]
+fn parse_claude_skill_status(stdout: &str) -> Result<ClaudeSkillStatus, String> {
+    parse_provider_skill_status(stdout, "claude")
+}
+
+pub fn agent_skills_status() -> Result<AgentSkillsStatus, String> {
     let skill = crate::runtimes::resolve_skill().ok_or("Jintia administrado no está disponible. Actualízalo desde Configuración > Entorno.")?;
-    let result = engine::run_jintia(Path::new(&skill), &claude_status_args()).map_err(|e| e.to_string())?;
-    if !result.success { return Err(format!("Jintia status Claude falló: {}", result.stderr)); }
-    parse_claude_skill_status(&result.stdout)
+    let result = engine::run_jintia(Path::new(&skill), &agent_status_args()).map_err(|e| e.to_string())?;
+    if !result.success { return Err(format!("Jintia status de harnesses falló: {}", result.stderr)); }
+    Ok(AgentSkillsStatus {
+        claude: parse_provider_skill_status(&result.stdout, "claude")?,
+        codex: parse_provider_skill_status(&result.stdout, "codex")?,
+        opencode: parse_provider_skill_status(&result.stdout, "opencode")?,
+    })
 }
 
 fn report_data<'a>(report: &'a Value, command: &str, operation: &str) -> Result<&'a Value, String> {
@@ -152,10 +173,10 @@ pub fn install_openai_plugin() -> ActionResult {
     }
 }
 
-fn claude_install_args() -> [&'static str; 6] {
+fn agent_install_args() -> [&'static str; 6] {
     [
         "install",
-        "--providers=claude",
+        "--providers=claude,codex,opencode",
         "--scope=global",
         "--yes",
         "--adopt-existing",
@@ -163,19 +184,60 @@ fn claude_install_args() -> [&'static str; 6] {
     ]
 }
 
-fn installed_target(report: &Value) -> Option<String> {
-    report
-        .get("results")?
-        .as_array()?
-        .first()?
-        .get("target")?
-        .as_str()
-        .map(str::trim)
-        .filter(|target| !target.is_empty())
-        .map(str::to_owned)
+fn installed_targets(report: &Value) -> Option<Vec<(String, String)>> {
+    let data = report.get("data")?;
+    if data.get("operation").and_then(Value::as_str) != Some("install") {
+        return None;
+    }
+    let results = data.get("results")?.as_array()?;
+    let mut targets = Vec::new();
+    for provider_id in ["claude", "codex", "opencode"] {
+        let matches: Vec<&Value> = results.iter()
+            .filter(|item| item.get("id").and_then(Value::as_str) == Some(provider_id))
+            .collect();
+        if matches.len() != 1 || matches[0].get("status").and_then(Value::as_str) != Some("installed") {
+            return None;
+        }
+        let target = matches[0].get("target")?.as_str()?.trim();
+        if target.is_empty() {
+            return None;
+        }
+        targets.push((provider_id.to_owned(), target.to_owned()));
+    }
+    Some(targets)
 }
 
-pub fn install_global_claude_skill() -> ActionResult {
+fn command_report_error(stdout: &str, expected_command: &str) -> Option<String> {
+    let report: Value = serde_json::from_str(stdout).ok()?;
+    if report.get("tool").and_then(Value::as_str) != Some("jintia")
+        || report.get("command").and_then(Value::as_str) != Some(expected_command)
+        || report.get("status").and_then(Value::as_str) != Some("failed")
+        || report.get("exitCode").and_then(Value::as_i64).is_none_or(|code| code == 0)
+    {
+        return None;
+    }
+    let messages = report
+        .get("errors")?
+        .as_array()?
+        .iter()
+        .filter_map(|error| error.get("message").and_then(Value::as_str))
+        .filter(|message| !message.trim().is_empty())
+        .collect::<Vec<_>>();
+    (!messages.is_empty()).then(|| messages.join(" "))
+}
+
+fn agent_install_failure_message(stdout: &str, stderr: &str) -> String {
+    let detail = command_report_error(stdout, "install")
+        .unwrap_or_else(|| if stderr.trim().is_empty() { stdout.to_owned() } else { stderr.to_owned() });
+    if detail.contains("path\" argument must be of type string")
+        && detail.contains("Received undefined")
+    {
+        return "No se pudo resolver la carpeta de configuración de Codex. Jintia conservará lo ya instalado y podrás reintentar sin perder datos.".to_string();
+    }
+    detail
+}
+
+pub fn install_global_agent_skills() -> ActionResult {
     let skill_path = match crate::runtimes::resolve_skill() {
         Some(path) => path,
         None => return ActionResult::error("Jintia administrado no está instalado. Actualízalo desde Configuración > Entorno."),
@@ -187,12 +249,32 @@ pub fn install_global_claude_skill() -> ActionResult {
     };
     let _ = help;
 
-    let args = claude_install_args();
+    let args = agent_install_args();
     match engine::run_jintia(Path::new(&skill_path), &args) {
-        Ok(result) if !result.success => ActionResult::error(if result.stderr.trim().is_empty() { result.stdout } else { result.stderr }),
-        Ok(result) => match serde_json::from_str::<Value>(&result.stdout).ok().and_then(|report| installed_target(&report)) {
-            Some(target) => ActionResult::ok("Jintia Skill quedó instalada para Claude Code.").with_path(target),
-            None => ActionResult::error("Jintia devolvió una instalación exitosa sin un target válido."),
+        Ok(result) if !result.success => {
+            let detail = agent_install_failure_message(&result.stdout, &result.stderr);
+            ActionResult::error(format!("Jintia no pudo registrar las skills de los asistentes. {detail}"))
+        }
+        Ok(result) => match serde_json::from_str::<Value>(&result.stdout).ok().and_then(|report| installed_targets(&report)) {
+            Some(targets) => {
+                match agent_skills_status() {
+                    Ok(status) if status.claude.current && status.codex.current && status.opencode.current => {
+                        let summary = targets.iter().map(|(id, target)| format!("{id}: {target}")).collect::<Vec<_>>().join("\n");
+                        ActionResult::ok(format!("Jintia Skill quedó instalada y verificada para Claude Code, Codex y OpenCode.\n{summary}"))
+                            .with_path(targets[0].1.clone())
+                    }
+                    Ok(status) => {
+                        let pending = [
+                            (!status.claude.current).then_some("Claude Code"),
+                            (!status.codex.current).then_some("Codex"),
+                            (!status.opencode.current).then_some("OpenCode"),
+                        ].into_iter().flatten().collect::<Vec<_>>().join(", ");
+                        ActionResult::error(format!("La copia terminó, pero no se pudo verificar la instalación de: {pending}."))
+                    }
+                    Err(error) => ActionResult::error(format!("La copia terminó, pero falló la verificación final de las tres integraciones: {error}")),
+                }
+            }
+            None => ActionResult::error("Jintia devolvió una instalación exitosa sin confirmar los targets de Claude, Codex y OpenCode."),
         },
         Err(error) => ActionResult::error(error),
     }
@@ -302,7 +384,8 @@ pub fn manage_harness(
 #[cfg(test)]
 mod tests {
     use super::{
-        claude_install_args, claude_status_args, installed_target, openai_plugin_install_args,
+        agent_install_args, agent_install_failure_message, claude_status_args, command_report_error,
+        installed_targets, openai_plugin_install_args,
         openai_plugin_status_args, parse_claude_skill_status, parse_openai_plugin_install, parse_openai_plugin_status,
         plugin_command_failure_message, plugin_report_error, OPENAI_PLUGIN_CAPABILITY_ERROR,
     };
@@ -315,22 +398,42 @@ mod tests {
 
     #[test]
     fn claude_install_uses_exact_adoption_contract() {
-        assert_eq!(claude_install_args(), [
-            "install", "--providers=claude", "--scope=global", "--yes", "--adopt-existing", "--json"
+        assert_eq!(agent_install_args(), [
+            "install", "--providers=claude,codex,opencode", "--scope=global", "--yes", "--adopt-existing", "--json"
         ]);
     }
 
     #[test]
-    fn installed_target_requires_non_empty_string_result() {
-        assert_eq!(installed_target(&json!({"results": [{"target": "/managed/skill"}]})), Some("/managed/skill".to_string()));
+    fn agent_install_errors_are_extracted_and_known_codex_path_failure_is_explained() {
+        let report = json!({
+            "tool":"jintia",
+            "command":"install",
+            "status":"failed",
+            "exitCode":1,
+            "errors":[{"message":"Jintia Harness: The \"path\" argument must be of type string. Received undefined"}]
+        });
+        let text = report.to_string();
+        assert!(command_report_error(&text, "install").is_some());
+        let message = agent_install_failure_message(&text, "");
+        assert!(message.contains("carpeta de configuración de Codex"));
+        assert!(!message.contains("Received undefined"));
+    }
+
+    #[test]
+    fn installed_targets_require_the_complete_agent_matrix() {
+        let valid = json!({"data":{"operation":"install","results":[
+            {"id":"claude","status":"installed","target":"/claude/skill"},
+            {"id":"codex","status":"installed","target":"/codex/skill"},
+            {"id":"opencode","status":"installed","target":"/opencode/skill"}
+        ]}});
+        assert_eq!(installed_targets(&valid).map(|items| items.len()), Some(3));
         for report in [
             json!({}),
-            json!({"results": []}),
-            json!({"results": [{}]}),
-            json!({"results": [{"target": ""}]}),
-            json!({"results": [{"target": 42}]}),
+            json!({"data":{"operation":"install","results":[]}}),
+            json!({"data":{"operation":"install","results":[{"id":"claude","status":"installed","target":"/skill"}]}}),
+            json!({"data":{"operation":"wrong","results":[]}}),
         ] {
-            assert_eq!(installed_target(&report), None);
+            assert_eq!(installed_targets(&report), None);
         }
     }
 

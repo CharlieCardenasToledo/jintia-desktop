@@ -113,6 +113,67 @@ test("NotebookLM expone operación identificada, fases y cancelación con limpie
   assert.match(onboarding, /payload\?\.operationId !== operationId/);
 });
 
+test("la prueba final transmite la actividad del backend y mantiene un cronómetro real", async () => {
+  const [steps, actions, backend] = await Promise.all([
+    readFile(new URL("src/onboarding/steps.js", root), "utf8"),
+    readFile(new URL("src/onboarding/actions.js", root), "utf8"),
+    readFile(new URL("src-tauri/src/lib.rs", root), "utf8"),
+  ]);
+  assert.match(steps, /id="compile-current"[\s\S]*id="compile-live-log"[\s\S]*id="compile-elapsed"|id="compile-elapsed"[\s\S]*id="compile-current"[\s\S]*id="compile-live-log"/);
+  const start = actions.indexOf("export async function animateFinalStep");
+  const end = actions.indexOf("export function bindStepEvents", start);
+  const finalFlow = actions.slice(start, end);
+  const subscription = finalFlow.indexOf('listen("self-test-progress"');
+  const command = finalFlow.indexOf("runSkillSelfTest(operationId)", subscription);
+  assert.ok(subscription >= 0 && command > subscription, "la suscripción debe existir antes de iniciar el comando");
+  assert.match(finalFlow, /window\.setInterval\(updateElapsed, 250\)/);
+  assert.match(finalFlow, /window\.clearInterval\(elapsedTimer\)/);
+  assert.match(finalFlow, /unlistenSelfTest\?\.\(\)/);
+  assert.match(finalFlow, /compileDiagnostics\.push\(line\)/);
+  assert.match(finalFlow, /payload\?\.operationId !== operationId/);
+  assert.match(finalFlow, /activeFinalRunId/);
+  assert.match(backend, /"self-test-progress"/);
+  for (const phase of ["preparing", "running", "report_received", "guide_preparing", "guide_report_received", "check", "completed", "error"]) {
+    assert.match(backend, new RegExp(`"${phase}"`));
+  }
+  assert.match(backend, /course::generate_welcome_guide_pdf\(\)/);
+  assert.match(actions, /guía práctica para aprender a usar la plataforma/);
+});
+
+test("la guía inicial enseña el recorrido vigente de la plataforma", async () => {
+  const guide = await readFile(new URL("src-tauri/src/course/welcome.rs", root), "utf8");
+
+  for (const expected of [
+    "Cómo usar la plataforma paso a paso",
+    "Mis cursos",
+    "Ask Jintia",
+    "PDFs generados",
+    "Plantillas",
+    "Configuración",
+    "OpenCode",
+    "Claude Code",
+    "ChatGPT (Codex)",
+    "HTML",
+    "Vivliostyle",
+  ]) {
+    assert.match(guide, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(guide, /preparar una clase en 10 minutos|Gemini Notebook}}|generación automática de PDFs tipográficos/);
+});
+
+test("la ayuda y el entorno simulado describen Vivliostyle como motor principal", async () => {
+  const [docs, mock] = await Promise.all([
+    readFile(new URL("src/pages/docs.js", root), "utf8"),
+    readFile(new URL("src/mocks/tauri-core.mock.js", root), "utf8"),
+  ]);
+
+  assert.match(docs, /HTML y Vivliostyle/);
+  assert.match(docs, /Actividad del sistema/);
+  assert.doesNotMatch(docs, /MiKTeX|File \.sty not found|varias pasadas de LaTeX/);
+  assert.match(mock, /name: "Vivliostyle CLI"[\s\S]{0,180}required: true/);
+  assert.match(mock, /name: "Compilador LaTeX"[\s\S]{0,180}required: false/);
+});
+
 test("el onboarding elimina el falso skip y usa main, foco, live region y modal atrapado", async () => {
   const source = await readOnboardingJs();
   assert.doesNotMatch(source, /skip-onboarding|Saltar configuración/);

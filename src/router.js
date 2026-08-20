@@ -8,18 +8,18 @@ import { ui, cx } from "./uiClasses.js";
 
 /** Registro de páginas — añadir una página nueva aquí es suficiente (OCP). */
 const PAGE_REGISTRY = {
-  setup:       { title: "Dependencias del sistema",     sub: "Verifica e instala los requisitos para que el skill funcione" },
-  institution: { title: "Datos institucionales",         sub: "Configura tu institución, carrera y colores LaTeX" },
+  setup:       { title: "Dependencias del sistema",     sub: "Verifica e instala los requisitos para que Jintia funcione" },
+  institution: { title: "Datos institucionales",         sub: "Configura tu institución, carrera e identidad visual" },
   courses:     { title: "Mis cursos",                    sub: "Administra asignaturas y genera la estructura de carpetas" },
   pdfs:        { title: "PDFs generados",                 sub: "Consulta los documentos creados dentro de tus proyectos" },
   syllabus:    { title: "Editor de sílabo",              sub: "Define el contenido semanal y genera el README.md del curso" },
   notebooklm:  { title: "NotebookLM",                    sub: "Gestiona notebooks y la sesión de autenticación Google" },
-  templates:   { title: "Plantillas LaTeX",              sub: "Elige el diseño visual para tus guías de clase" },
-  activate:    { title: "Activar en Claude Desktop",     sub: "Instala el skill y configura el servidor MCP con un clic" },
+  templates:   { title: "Plantillas de publicación",     sub: "Elige el diseño visual para tus guías de clase" },
+  activate:    { title: "Integraciones de IA",           sub: "Prepara Claude, ChatGPT y OpenCode con Jintia" },
   settings:    { title: "Configuración",                 sub: "Institución, conexiones, entorno y preferencias" },
   docs:        { title: "Ayuda",                          sub: "Requisitos, conexión y solución de problemas" },
   about:       { title: "Acerca de Jintia",               sub: "Proyecto, autoría, versiones, licencia y tecnologías" },
-  "jintia-chat": { title: "Ask Jintia",                   sub: "Chat nativo con tu asignatura — OpenCode + Jintia Skill" },
+  "jintia-chat": { title: "Ask Jintia",                   sub: "Trabaja con tu asignatura mediante Claude, ChatGPT u OpenCode" },
 };
 
 /** Callbacks de renderizado registrados por cada módulo de página. */

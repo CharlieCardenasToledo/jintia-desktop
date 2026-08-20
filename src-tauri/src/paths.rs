@@ -86,6 +86,17 @@ pub fn skill_dir() -> Result<PathBuf, String> {
         .join("jintia-skill"))
 }
 
+pub fn codex_skill_dir() -> Result<PathBuf, String> {
+    Ok(home_dir()?.join(".agents").join("skills").join("jintia-skill"))
+}
+
+pub fn opencode_skill_dir() -> Result<PathBuf, String> {
+    let base = std::env::var_os("OPENCODE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or(home_dir()?.join(".opencode"));
+    Ok(base.join("skills").join("jintia-skill"))
+}
+
 pub fn openai_plugin_dir() -> Result<PathBuf, String> {
     Ok(home_dir()?.join(".codex").join("plugins").join("jintia"))
 }
@@ -123,11 +134,15 @@ pub fn claude_code_config_path() -> Result<PathBuf, String> {
     Ok(home_dir()?.join(".claude.json"))
 }
 
-pub fn codex_config_path() -> Result<PathBuf, String> {
-    let base = std::env::var_os("CODEX_HOME")
+pub fn codex_home_dir() -> Result<PathBuf, String> {
+    Ok(std::env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or(home_dir()?.join(".codex"));
-    Ok(base.join("config.toml"))
+        .unwrap_or(home_dir()?.join(".codex")))
+}
+
+pub fn codex_config_path() -> Result<PathBuf, String> {
+    Ok(codex_home_dir()?.join("config.toml"))
 }
 
 pub fn timestamp() -> u64 {

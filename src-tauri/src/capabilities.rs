@@ -240,7 +240,7 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
             note: if vivliostyle_ready {
                 "Usando Vivliostyle CLI administrado por Jintia.".to_string()
             } else {
-                "Compilador HTML→PDF requerido por Jintia.".to_string()
+                "Motor HTML→PDF requerido por Jintia.".to_string()
             },
             command: "vivliostyle --version".to_string(),
         },

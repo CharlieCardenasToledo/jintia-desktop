@@ -242,8 +242,8 @@ export async function installProfileBinaries(binaryIds) {
   return invoke("install_profile_binaries", { binaryIds });
 }
 
-export async function runSkillSelfTest() {
-  return invoke("run_skill_self_test");
+export async function runSkillSelfTest(operationId = "") {
+  return invoke("run_skill_self_test", { operationId });
 }
 
 export async function runWelcomeGuideGeneration() {
@@ -322,6 +322,23 @@ export async function codexInterruptTurn(threadId, turnId) {
 
 export async function codexRespondApproval(id, decision) {
   return invoke("codex_respond_approval", { id, decision });
+}
+
+// ── Claude Code CLI (suscripción, sin API key) ────────────────────────────
+export async function claudeStatus() {
+  return invoke("claude_status");
+}
+
+export async function claudeSubmitTurn(request, tools = null, permissionMode = null) {
+  return invoke("claude_submit_turn", { request, tools, permissionMode });
+}
+
+export async function claudeInterruptTurn(requestId) {
+  return invoke("claude_interrupt_turn", { requestId });
+}
+
+export async function claudeAuthLogin() {
+  return invoke("claude_auth_login");
 }
 
 // ── Diálogos ─────────────────────────────────────────────────────────────

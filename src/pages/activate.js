@@ -11,12 +11,13 @@ import { state } from "../state.js";
 import { ui, cx } from "../uiClasses.js";
 import { toast } from "../toast.js";
 import { ic, refreshIcons } from "../icons.js";
+import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
 
 export async function renderActivate() {
   const container = document.getElementById("activate-steps");
   if (!container) return;
-  container.innerHTML = `<div class="py-3 text-xs leading-relaxed text-app-muted">${ic("loader-2")} Verificando estado…</div>`;
-  refreshIcons();
+  container.innerHTML = `<div class="py-3 text-xs leading-relaxed text-app-muted">${jintiaLoaderPlaceholder(14)} Verificando estado…</div>`;
+  mountAllJintiaLoaders(container);
 
   let status = {
     skill_installed: false,

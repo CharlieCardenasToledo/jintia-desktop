@@ -19,7 +19,7 @@ import { renderDocs }         from "./pages/docs.js";
 import { renderAbout }        from "./pages/about.js";
 import { toast }              from "./toast.js";
 import { getOnboardingStatus, getRuntimeAppMeta } from "./api.js";
-import { mountGeminiLoading, renderOnboarding } from "./onboarding.js";
+import { mountJintiaLoading, renderOnboarding } from "./onboarding/index.js";
 import { getCurrentWindow }  from "@tauri-apps/api/window";
 import { ui, cx } from "./uiClasses.js";
 import { APP_META } from "./appMeta.js";
@@ -175,7 +175,7 @@ document.addEventListener("keydown", event => {
 // El onboarding es una página independiente: la app principal (sidebar,
 // topbar, páginas) ni siquiera se construye hasta que el onboarding termine.
 async function boot() {
-  const stopInitialLoading = mountGeminiLoading(
+  const stopInitialLoading = mountJintiaLoading(
     document.getElementById("onboarding-root"),
     "Cargando Jintia…",
   );

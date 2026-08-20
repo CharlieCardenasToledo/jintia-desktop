@@ -138,12 +138,6 @@ impl CodexProcess {
                 if trimmed.is_empty() {
                     continue;
                 }
-                // DIAGNÓSTICO TEMPORAL: imprime cada línea cruda que llega de
-                // Codex en la terminal de `npm run tauri:dev`, para confirmar
-                // si el problema es que Codex no manda nada, o que sí manda
-                // pero algo falla al clasificar/emitir. Quitar una vez resuelto.
-                eprintln!("[codex<<<] {trimmed}");
-
                 let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
                     eprintln!("[codex] línea no es JSON válido, se ignora");
                     continue;
@@ -151,7 +145,6 @@ impl CodexProcess {
 
                 match classify_inbound(&msg) {
                     RpcInbound::Response { id } => {
-                        eprintln!("[codex] clasificado como Response id={id}");
                         if let Some(tx) = pending_clone.lock().unwrap().remove(&id) {
                             let _ = tx.send(msg);
                         } else {
@@ -167,23 +160,19 @@ impl CodexProcess {
                         // excepción no capturada que cortaba el registro de TODOS los
                         // listeners siguientes. Por eso ningún evento de Codex llegaba nunca.
                         let event_name = format!("codex:{method}");
-                        eprintln!("[codex] clasificado como Notification method={method} -> emit({event_name})");
-                        match app.emit(&event_name, &msg) {
-                            Ok(()) => eprintln!("[codex] emit({event_name}) OK"),
-                            Err(e) => eprintln!("[codex] emit({event_name}) FALLÓ: {e}"),
+                        if let Err(error) = app.emit(&event_name, &msg) {
+                            eprintln!("[codex] no se pudo emitir {event_name}: {error}");
                         }
                     }
                     RpcInbound::ServerRequest { id, method } => {
                         let event_name = format!("codex:{method}");
-                        eprintln!("[codex] clasificado como ServerRequest method={method} id={id:?} -> emit({event_name})");
                         let payload = serde_json::json!({
                             "id": id,
                             "method": method,
                             "params": msg.get("params").cloned().unwrap_or(Value::Null),
                         });
-                        match app.emit(&event_name, &payload) {
-                            Ok(()) => eprintln!("[codex] emit({event_name}) OK"),
-                            Err(e) => eprintln!("[codex] emit({event_name}) FALLÓ: {e}"),
+                        if let Err(error) = app.emit(&event_name, &payload) {
+                            eprintln!("[codex] no se pudo emitir {event_name}: {error}");
                         }
                     }
                     RpcInbound::Unrecognized => {
@@ -491,6 +480,9 @@ impl CodexManager {
     /// applyPatchApproval) que el app-server envió al cliente. `id` debe ser
     /// exactamente el valor recibido en el evento `codex:*Approval`.
     pub fn respond_approval(&self, id: Value, decision: &str) -> Result<(), String> {
+        if !["allow", "deny", "accept", "cancel"].contains(&decision) {
+            return Err(format!("Decisión de aprobación no admitida: {decision}"));
+        }
         let lock = self.process.lock().unwrap();
         let proc = lock.as_ref().ok_or("Codex no está iniciado")?;
         proc.respond(id, serde_json::json!({ "decision": decision }))

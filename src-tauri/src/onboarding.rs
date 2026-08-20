@@ -5,7 +5,7 @@ use crate::paths::{app_config_dir, atomic_write, timestamp};
 use std::fs;
 use std::path::PathBuf;
 
-const ONBOARDING_VERSION: u32 = 3;
+const ONBOARDING_VERSION: u32 = 4;
 const LAST_STEP: u8 = 5;
 
 fn status_path() -> Result<PathBuf, String> {
@@ -51,6 +51,12 @@ fn migrate_status(mut status: OnboardingStatus) -> OnboardingStatus {
         status.current_step = status
             .current_step
             .min(status.max_completed_step.saturating_add(1));
+        status.version = 3;
+    }
+    if status.version < 4 {
+        // La versión 4 elimina la elección de proveedor: Jintia prepara el
+        // mismo contrato administrado para todos los asistentes soportados.
+        status.selected_target = "both".to_string();
         status.version = ONBOARDING_VERSION;
     }
     status
@@ -124,15 +130,21 @@ fn validate_environment(dependencies: &[crate::models::DependencyStatus]) -> Res
 }
 
 fn target_ready(target: &str) -> bool {
-    let setup = config::setup_status();
-    match target {
-        "claude-code" => setup.skill_current && setup.mcp_claude_code_configured,
-        "openai" => setup.openai_plugin_current,
-        "both" => {
-            setup.skill_current && setup.mcp_claude_code_configured && setup.openai_plugin_current
-        }
-        _ => false,
+    // Desde onboarding v4 solo existe la preparación conjunta. Mantener el
+    // valor explícito evita que destinos legacy o desconocidos se consideren
+    // listos por accidente.
+    if target != "both" {
+        return false;
     }
+    let setup = config::setup_status();
+    setup.skill_current
+        && setup.claude_skill_current
+        && setup.codex_skill_current
+        && setup.opencode_skill_current
+        && setup.opencode_cli_installed
+        && setup.mcp_claude_code_configured
+        && setup.mcp_codex_configured
+        && setup.openai_plugin_current
 }
 
 fn first_invalid_step(
@@ -164,7 +176,7 @@ fn first_invalid_step(
     if !target_ready(&status.selected_target) {
         return Some((
             4,
-            "el destino que elegiste dejó de estar completamente configurado",
+            "una o más integraciones dejaron de estar completamente configuradas",
         ));
     }
     None
@@ -211,7 +223,7 @@ pub fn go_to_step(step: u8) -> OnboardingResult {
     result(true, "Paso actualizado.", status)
 }
 
-pub fn advance(step: u8, selected_target: Option<String>) -> OnboardingResult {
+pub fn advance(step: u8, _selected_target: Option<String>) -> OnboardingResult {
     let mut status = get_status();
     if step != status.current_step {
         return result(
@@ -241,13 +253,10 @@ pub fn advance(step: u8, selected_target: Option<String>) -> OnboardingResult {
             if !auth.authenticated {
                 Err(auth.message)
             } else {
-                let target = selected_target.unwrap_or_else(|| status.selected_target.clone());
-                if !matches!(target.as_str(), "claude-code" | "openai" | "both") {
-                    Err("Selecciona dónde usarás la skill.".to_string())
-                } else if !target_ready(&target) {
-                    Err("El destino seleccionado todavía no tiene skill y MCP completamente configurados.".to_string())
+                if !target_ready("both") {
+                    Err("OpenCode, Claude Code y ChatGPT (Codex) todavía no están completamente preparados.".to_string())
                 } else {
-                    status.selected_target = target;
+                    status.selected_target = "both".to_string();
                     Ok(())
                 }
             }
@@ -500,7 +509,7 @@ mod tests {
         };
         let migrated = migrate_status(legacy);
         // v1→v2 (paso 8→9, max 7→8) y luego v2→v3 (9→4, 8→3) encadenadas.
-        assert_eq!(migrated.version, 3);
+        assert_eq!(migrated.version, 4);
         assert_eq!(migrated.current_step, 4);
         assert_eq!(migrated.max_completed_step, 3);
     }
@@ -517,7 +526,7 @@ mod tests {
             ..OnboardingStatus::default()
         };
         let migrated = migrate_status(mid_group);
-        assert_eq!(migrated.version, 3);
+        assert_eq!(migrated.version, 4);
         assert_eq!(migrated.max_completed_step, 2);
         assert_eq!(migrated.current_step, 3);
 
