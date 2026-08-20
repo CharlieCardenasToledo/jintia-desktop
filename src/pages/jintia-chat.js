@@ -1033,8 +1033,88 @@ async function respondToOpenCodePermission(props) {
   }
 }
 
+/**
+ * Pregunta estructurada de OpenCode (tool "question"): igual que un permiso,
+ * detiene el turno hasta recibir respuesta. El bug que esto evita: antes,
+ * el siguiente mensaje del usuario (p. ej. "continuar") se encolaba como un
+ * turno nuevo pero nunca respondía a la pregunta pendiente, así que el
+ * turno original se quedaba esperando para siempre. Se muestra como una
+ * tarjeta interactiva en el propio hilo, no como un modal aparte, para que
+ * las opciones queden documentadas junto al resto de la conversación.
+ */
+async function respondToOpenCodeQuestion(props) {
+  const { id, questions } = props;
+  const feed = el("jc-activity-feed");
+  if (!feed || !Array.isArray(questions) || !questions.length) return;
+  setStatus("Jintia Chat necesita tu respuesta…", "working");
+
+  const answers = [];
+  for (const q of questions) {
+    const selected = await new Promise(resolve => {
+      const wrap = document.createElement("div");
+      wrap.className = "jc-route-step mb-5 jc-msg-in";
+      wrap.innerHTML = `
+        ${assistantNode()}
+        <article class="jc-message-card" aria-label="Pregunta de Jintia Chat">
+          <div class="px-4 py-3 text-sm leading-relaxed text-slate-800">
+            <p class="text-[11px] font-bold uppercase tracking-wider text-teal-800">${escapeHtml(q.header || "Pregunta")}</p>
+            <p class="mt-1 font-semibold text-slate-900">${escapeHtml(q.question || "")}</p>
+            <div class="mt-3 flex flex-col gap-2" data-jc-question-options></div>
+            ${q.multiple ? `<button type="button" data-jc-question-submit class="jc-message-action mt-2 self-start rounded-lg px-3 py-1.5 text-xs font-semibold text-teal-800 disabled:text-slate-400" disabled>Enviar selección</button>` : ""}
+          </div>
+        </article>`;
+      const optionsWrap = wrap.querySelector("[data-jc-question-options]");
+      const submitBtn = wrap.querySelector("[data-jc-question-submit]");
+      const chosen = new Set();
+      const finish = labels => {
+        optionsWrap.querySelectorAll("button").forEach(b => { b.disabled = true; });
+        if (submitBtn) submitBtn.disabled = true;
+        resolve(labels);
+      };
+      (q.options || []).forEach(opt => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "jc-message-action w-full rounded-lg border border-slate-200 px-3 py-2 text-left text-sm hover:border-teal-300 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600";
+        btn.innerHTML = `<span class="block font-semibold text-slate-900">${escapeHtml(opt.label)}</span>${opt.description ? `<span class="mt-0.5 block text-xs text-slate-500">${escapeHtml(opt.description)}</span>` : ""}`;
+        btn.addEventListener("click", () => {
+          if (!q.multiple) { finish([opt.label]); return; }
+          if (chosen.has(opt.label)) chosen.delete(opt.label); else chosen.add(opt.label);
+          btn.classList.toggle("border-teal-400", chosen.has(opt.label));
+          btn.classList.toggle("bg-teal-50", chosen.has(opt.label));
+          if (submitBtn) submitBtn.disabled = chosen.size === 0;
+        });
+        optionsWrap.appendChild(btn);
+      });
+      submitBtn?.addEventListener("click", () => finish(Array.from(chosen)));
+      feed.appendChild(wrap);
+      refreshIcons();
+      scrollFeed();
+    });
+    answers.push(selected);
+  }
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${_port}/question/${id}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answers }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    setStatus("Respuesta enviada, continuando…", "working");
+  } catch (error) {
+    toast(`No se pudo responder a Jintia Chat: ${error}`, "error", 6000);
+  }
+}
+
 function handleSSE(event) {
   const props = event.properties || {};
+
+  // ── Preguntas estructuradas: bloquean el turno igual que un permiso ────
+  if (event.type === "question.asked" || event.type === "question.v2.asked") {
+    if (props.sessionID !== _sessionId) return;
+    respondToOpenCodeQuestion(props);
+    return;
+  }
 
   // ── Permisos: OpenCode detiene la herramienta hasta recibir respuesta ──
   // El bug que esto evita: sin este manejador, una petición de permiso

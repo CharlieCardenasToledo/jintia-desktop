@@ -328,6 +328,12 @@ pub fn install_vivliostyle() -> Result<(), String> {
 
     let prefix = paths::portable_node_prefix();
     let managed_path = managed_node_runtime_path()?;
+    // El tema jintia-clasico declara "@vivliostyle/theme-base" como capa
+    // base en su vivliostyle.config.js (y lo extiende/sobrescribe encima).
+    // Sin este paquete, la compilación a PDF sigue funcionando porque el
+    // CSS propio de Jintia cubre lo visible, pero Vivliostyle emite 404 al
+    // intentar cargar la capa base declarada y el render queda incompleto
+    // respecto a lo que el tema espera.
     let output = managed_node_command(&node)
             .arg(&npm_cli)
             .arg("install")
@@ -335,6 +341,7 @@ pub fn install_vivliostyle() -> Result<(), String> {
             .arg("--prefix")
             .arg(&prefix)
             .arg("@vivliostyle/cli")
+            .arg("@vivliostyle/theme-base")
             .env("PATH", managed_path)
             .output()
     .map_err(|e| format!("No se pudo ejecutar npm con el runtime portable: {e}"))?;

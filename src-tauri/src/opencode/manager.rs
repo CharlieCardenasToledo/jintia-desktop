@@ -99,7 +99,14 @@ impl OpenCodeManager {
             ],
             "env": {
                 "PATH": managed_path
-            }
+            },
+            // Sin esto, OpenCode aplica su propio timeout por defecto al
+            // llamar herramientas MCP, más corto que lo que el servidor de
+            // NotebookLM puede tardar en una respuesta larga (hasta 10 min
+            // más margen). Sin este valor explícito, OpenCode cortaba la
+            // llamada antes de que la respuesta real llegara, forzando
+            // reintentos en cascada aunque el servidor MCP seguía trabajando.
+            "timeout": 660_000
         });
 
         let bytes = serde_json::to_vec_pretty(&config)
