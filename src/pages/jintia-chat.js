@@ -998,8 +998,54 @@ function settleAssistantBubble() {
   _assistantRaw = "";
 }
 
+const OPENCODE_PERMISSION_LABELS = {
+  external_directory: "escribir fuera de la carpeta del curso",
+  bash: "ejecutar un comando en la terminal",
+  edit: "editar un archivo",
+  write: "crear o editar un archivo",
+  webfetch: "consultar una página web",
+};
+
+/** Muestra el detalle de una petición de permiso de OpenCode y le reenvía la decisión. */
+async function respondToOpenCodePermission(props) {
+  const { id, permission, patterns, metadata } = props;
+  const target = metadata?.filepath || metadata?.command || (patterns || [])[0] || "";
+  const label = OPENCODE_PERMISSION_LABELS[permission] || `usar "${permission}"`;
+  setStatus("Jintia Chat pide tu autorización…", "working");
+  appendRuntimeActivity(`Jintia Chat necesita permiso para ${label}.`, "warning");
+  const allowed = await confirmDialog({
+    title: "Jintia Chat pide autorización",
+    message: target ? `Quiere ${label}:\n${target}` : `Quiere ${label}.`,
+    confirmLabel: "Permitir",
+    cancelLabel: "Denegar",
+    danger: true,
+  });
+  try {
+    const response = await fetch(`http://127.0.0.1:${_port}/permission/${id}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reply: allowed ? "once" : "reject" }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    setStatus(allowed ? "Permiso concedido, continuando…" : "Permiso denegado, continuando…", "working");
+  } catch (error) {
+    toast(`No se pudo responder al permiso de Jintia Chat: ${error}`, "error", 6000);
+  }
+}
+
 function handleSSE(event) {
   const props = event.properties || {};
+
+  // ── Permisos: OpenCode detiene la herramienta hasta recibir respuesta ──
+  // El bug que esto evita: sin este manejador, una petición de permiso
+  // (p. ej. escribir fuera de la carpeta del curso) se queda esperando
+  // para siempre y el turno completo se cuelga con "Jintia Chat
+  // trabajando…" sin límite, sin ningún indicio de qué lo bloquea.
+  if (event.type === "permission.asked" || event.type === "permission.v2.asked") {
+    if (props.sessionID !== _sessionId) return;
+    respondToOpenCodePermission(props);
+    return;
+  }
 
   // ── Rastrear qué part está activo (abierto/cerrado) ──────────────────
   if (event.type === "message.part.updated") {
