@@ -725,10 +725,14 @@ pub fn managed_python_runtime_path(python: &std::path::Path) -> Result<std::ffi:
         .parent()
         .ok_or_else(|| format!("Python no tiene directorio padre: {}", python.display()))?
         .to_path_buf();
+    // En Windows, python.exe vive en la raíz del prefix (junto a Scripts/).
+    // En Unix, portable_python_exe() ya apunta a "<prefix>/bin/python3", así
+    // que python.parent() ES el directorio bin — unirlo con "bin" de nuevo
+    // producía "<prefix>/bin/bin", un PATH administrado inexistente.
     let entries = if cfg!(target_os = "windows") {
         vec![prefix.clone(), prefix.join("Scripts")]
     } else {
-        vec![prefix.join("bin")]
+        vec![prefix]
     };
 
     std::env::join_paths(entries)

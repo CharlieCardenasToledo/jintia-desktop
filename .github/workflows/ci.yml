@@ -42,7 +42,14 @@ jobs:
             --no-audit \
             --no-fund \
             @charlie.act7/jintia@latest @vivliostyle/cli @vivliostyle/theme-base
-          export PATH="$SMOKE_PREFIX/node_modules/.bin:$PATH"
+          VIV_BIN_NAME="vivliostyle"
+          if [ "$RUNNER_OS" = "Windows" ]; then VIV_BIN_NAME="vivliostyle.cmd"; fi
+          # node reporta process.cwd() en formato nativo del SO incluso
+          # corriendo bajo Git Bash en Windows: evita que la ruta quede en
+          # formato POSIX (/d/...) al pasarla como JINTIA_VIVLIOSTYLE_BIN a
+          # un proceso nativo (cmd.exe), que es lo que hacía que "where.exe"
+          # vía PATH nunca encontrara el binario instalado localmente aquí.
+          export JINTIA_VIVLIOSTYLE_BIN="$(cd "$SMOKE_PREFIX/node_modules/.bin" && node -e "console.log(require('path').join(process.cwd(), '$VIV_BIN_NAME'))")"
           node \
             "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/bin/jintia.js" \
             self-test \
