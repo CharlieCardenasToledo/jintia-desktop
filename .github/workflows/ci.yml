@@ -52,7 +52,7 @@ jobs:
           export JINTIA_VIVLIOSTYLE_BIN="$(cd "$SMOKE_PREFIX/node_modules/.bin" && node -e "console.log(require('path').join(process.cwd(), '$VIV_BIN_NAME'))")"
           echo "JINTIA_VIVLIOSTYLE_BIN=$JINTIA_VIVLIOSTYLE_BIN"
           ls -la "$SMOKE_PREFIX/node_modules/.bin"
-          node -e "console.log(require('$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/scripts/vivliostyle-adapter').checkVivliostyle())"
+          node -e "console.log(require(process.argv[1]).checkVivliostyle())" "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/scripts/vivliostyle-adapter"
           node \
             "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/bin/jintia.js" \
             self-test \
