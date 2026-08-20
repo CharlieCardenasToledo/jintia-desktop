@@ -348,6 +348,40 @@ function thinkingNode() {
   return `<span class="jc-route-node jc-route-node--thinking" aria-hidden="true">${jintiaLoaderPlaceholder(22)}</span>`;
 }
 
+// Manejador compartido de botones "starter": rellena el compositor sin
+// enviar automáticamente (el usuario revisa/edita antes de disparar el
+// turno). Se usa tanto en los botones estáticos de la pantalla vacía como
+// en los chips de acciones rápidas que se añaden junto al saludo.
+function attachStarterHandler(button) {
+  button.addEventListener("click", () => {
+    if (!_composerReady) {
+      toast("Selecciona y conecta una asignatura para comenzar.", "warning", 3000);
+      return;
+    }
+    const input = el("jc-input");
+    if (!input) return;
+    input.value = button.dataset.jcStarter;
+    input.dispatchEvent(new Event("input"));
+    input.focus();
+  });
+}
+
+// Acciones rápidas ligadas a comandos reales de la skill CLI para la
+// semana activa (no prompts genéricos): estado de la semana, validación
+// de la guía y la compuerta de evidencia, además del flujo de generación
+// ya cubierto por "Generar guía". Sin semana seleccionada no hay contexto
+// suficiente para ofrecerlas.
+function weekQuickActions() {
+  if (!_selectedWeek || !_course) return [];
+  const week = weekLabel();
+  return [
+    { label: "Generar guía", prompt: `Genera la guía de ${week} siguiendo el flujo de la skill: revisa el sílabo, junta evidencia, propón un plan y pide mi aprobación antes de crear archivos.` },
+    { label: "Estado de la semana", prompt: `Revisa el estado de ${week} (jintia week status) y resume qué falta: plan, guía, evidencia.` },
+    { label: "Validar guía activa", prompt: `Valida la guía activa de ${week} (jintia validate) y enumera los problemas que encuentres.` },
+    { label: "Compuerta de evidencia", prompt: `Revisa la compuerta de evidencia de ${week} (jintia evidence check): fuentes del sílabo y NotebookLM disponibles.` },
+  ];
+}
+
 function restorePrompt(text) {
   const input = el("jc-input");
   if (!input || input.value.trim()) return;
@@ -911,9 +945,24 @@ function appendAssistantMessage(text, { actions = true } = {}) {
 
 // Saludo local (no proviene de la IA): mismo tratamiento visual que una
 // respuesta, pero sin las acciones de respuesta (Copiar/Ver fuentes/Usar
-// como base no aplican a un texto que Jintia no generó).
-function appendGreetingMessage(text) {
-  appendAssistantMessage(text, { actions: false });
+// como base no aplican a un texto que Jintia no generó). En su lugar, si
+// hay una semana activa, ofrece chips de acciones rápidas ligadas a
+// comandos reales de la skill para que el usuario dispare algo útil desde
+// el primer momento en vez de encontrarse un hilo vacío.
+function appendGreetingMessage(text, quickActions = weekQuickActions()) {
+  const body = createAssistantBubble();
+  finalizeAssistantBubble(body, text, { actions: false });
+  const card = body.closest(".jc-message-card");
+  if (card && quickActions.length) {
+    const chips = document.createElement("div");
+    chips.className = "flex flex-wrap items-center gap-1.5 border-t border-slate-100 px-3 py-2.5";
+    chips.innerHTML = quickActions.map(a =>
+      `<button type="button" data-jc-starter="${escapeHtml(a.prompt)}" class="jc-message-action rounded-lg px-2.5 text-xs font-semibold text-teal-800 hover:border-teal-200 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">${escapeHtml(a.label)}</button>`
+    ).join("");
+    card.appendChild(chips);
+    chips.querySelectorAll("[data-jc-starter]").forEach(attachStarterHandler);
+  }
+  scrollFeed();
 }
 
 // Muestra el error tal como lo reporta Codex directamente en la conversación
@@ -2526,17 +2575,7 @@ function bindChatEvents() {
   _panelResizeHandler = () => syncPanelLayout();
   window.addEventListener("resize", _panelResizeHandler);
 
-  document.querySelectorAll("[data-jc-starter]").forEach(button => button.addEventListener("click", () => {
-    if (!_composerReady) {
-      toast("Selecciona y conecta una asignatura para comenzar.", "warning", 3000);
-      return;
-    }
-    const input = el("jc-input");
-    if (!input) return;
-    input.value = button.dataset.jcStarter;
-    input.dispatchEvent(new Event("input"));
-    input.focus();
-  }));
+  document.querySelectorAll("[data-jc-starter]").forEach(attachStarterHandler);
   el("jc-history-search")?.addEventListener("input", event => {
     const query = event.target.value.trim().toLocaleLowerCase("es");
     el("jc-sessions-list")?.querySelectorAll("[data-session-row]").forEach(row => {
