@@ -41,7 +41,8 @@ jobs:
             --no-save \
             --no-audit \
             --no-fund \
-            @charlie.act7/jintia@latest
+            @charlie.act7/jintia@latest @vivliostyle/cli @vivliostyle/theme-base
+          export PATH="$SMOKE_PREFIX/node_modules/.bin:$PATH"
           node \
             "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/bin/jintia.js" \
             self-test \

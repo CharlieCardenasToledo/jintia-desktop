@@ -199,11 +199,12 @@ mod tests {
         activate_staged_node_runtime,
         build_portable_node_version_command,
         build_staged_node_version_command,
-        extract_zip,
         managed_node_command,
         node_version_text_matches_expected,
         NODE_RUNTIME_MUTATION_LOCK,
     };
+    #[cfg(target_os = "windows")]
+    use super::node::extract_zip;
     #[cfg(not(target_os = "windows"))]
     use super::node::extract_node_tar_gz;
     use super::python::{
