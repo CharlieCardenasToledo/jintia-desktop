@@ -41,6 +41,7 @@ pub use python::{
 pub use npm::{
     install_npm_packages,
     install_vivliostyle,
+    install_opencode,
     resolve_vivliostyle,
     vivliostyle_version,
     resolve_node_cli,

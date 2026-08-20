@@ -362,6 +362,52 @@ pub fn install_vivliostyle() -> Result<(), String> {
     Ok(())
 }
 
+/// Instala `opencode-ai` en el prefix Node administrado por Jintia (en vez
+/// de depender de una instalación global del usuario). Así, cuando
+/// OpenCodeManager arranca el servidor y su proceso hereda el PATH del
+/// runtime gestionado, el binario `opencode` que encuentra siempre coincide
+/// con el que la app conoce y verificó, en cualquier máquina.
+pub fn install_opencode() -> Result<(), String> {
+    let _node_guard = try_runtime_mutation_lock(&NODE_RUNTIME_MUTATION_LOCK, "el runtime Node administrado")?;
+    let node = paths::portable_node_exe();
+    if !node.is_file() {
+        return Err("El ejecutable Node portable no está disponible.".to_string());
+    }
+
+    let npm_cli = paths::portable_npm_cli();
+    if !npm_cli.is_file() {
+        return Err("El npm administrado por Jintia no está disponible.".to_string());
+    }
+
+    let prefix = paths::portable_node_prefix();
+    let managed_path = managed_node_runtime_path()?;
+    let output = managed_node_command(&node)
+            .arg(&npm_cli)
+            .arg("install")
+            .arg("--global")
+            .arg("--prefix")
+            .arg(&prefix)
+            .arg("opencode-ai")
+            .env("PATH", managed_path)
+            .output()
+    .map_err(|e| format!("No se pudo ejecutar npm con el runtime portable: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("npm install opencode-ai falló: {stderr}"));
+    }
+
+    let executable = paths::portable_opencode_bin();
+    if !executable.is_file() {
+        return Err(format!(
+            "OpenCode fue instalado por npm pero no se encontró el ejecutable administrado en {}.",
+            executable.display()
+        ));
+    }
+
+    Ok(())
+}
+
 pub fn install_npm_packages(packages: &[String]) -> Result<(), String> {
     if packages.is_empty() {
         return Ok(());

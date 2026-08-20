@@ -323,6 +323,14 @@ pub fn portable_vivliostyle_bin() -> PathBuf {
     })
 }
 
+pub fn portable_opencode_bin() -> PathBuf {
+    portable_node_bin_dir().join(if cfg!(target_os = "windows") {
+        "opencode.cmd"
+    } else {
+        "opencode"
+    })
+}
+
 pub fn portable_python_exe() -> PathBuf {
     let root = portable_runtimes_dir().join("python");
     if cfg!(target_os = "windows") {

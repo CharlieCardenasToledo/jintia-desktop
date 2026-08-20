@@ -28,11 +28,7 @@ impl OpenCodeManager {
     }
 
     pub(crate) fn find_opencode() -> Option<PathBuf> {
-        let portable = crate::paths::portable_node_bin_dir().join(if cfg!(target_os = "windows") {
-            "opencode.cmd"
-        } else {
-            "opencode"
-        });
+        let portable = crate::paths::portable_opencode_bin();
         if portable.is_file() {
             return Some(portable);
         }
@@ -130,6 +126,19 @@ impl OpenCodeManager {
         let _ = crate::paths::atomic_write_if_changed(&dest, &bytes);
     }
 
+    /// PATH para el proceso `opencode serve`: antepone el bin del Node
+    /// administrado por Jintia al PATH heredado del sistema (no lo
+    /// reemplaza, a diferencia del PATH aislado que usa el MCP de
+    /// NotebookLM), para que la tool bash del agente conserve acceso a git y
+    /// demás utilidades normales del sistema.
+    fn managed_process_path() -> std::ffi::OsString {
+        let mut dirs = vec![crate::paths::portable_node_bin_dir()];
+        if let Some(existing) = std::env::var_os("PATH") {
+            dirs.extend(std::env::split_paths(&existing));
+        }
+        std::env::join_paths(dirs).unwrap_or_default()
+    }
+
     fn free_port() -> u16 {
         use std::net::TcpListener;
         TcpListener::bind("127.0.0.1:0")
@@ -193,11 +202,33 @@ impl OpenCodeManager {
             }
         }
 
-        let bin = Self::find_opencode()
-            .ok_or_else(|| "OpenCode no encontrado. Instálalo con: npm install -g opencode-ai".to_string())?;
+        // Preferimos siempre el binario del runtime Node administrado por
+        // Jintia sobre una instalación global del usuario: así el agente que
+        // arranca (y el PATH que le pasamos abajo) coinciden en cualquier
+        // máquina con lo que la app ya verificó, en vez de depender de que
+        // el usuario haya instalado opencode-ai globalmente por su cuenta.
+        let bin = match Self::find_opencode() {
+            Some(bin) => bin,
+            None => {
+                eprintln!("[opencode] binario no encontrado; instalando opencode-ai en el runtime Node administrado…");
+                crate::runtimes::install_opencode()?;
+                Self::find_opencode().ok_or_else(|| {
+                    "OpenCode se instaló pero no se encontró el binario administrado.".to_string()
+                })?
+            }
+        };
 
         let port = Self::free_port();
         eprintln!("[opencode] starting course={} binary={} port={}", work_dir.display(), bin.display(), port);
+
+        // El proceso hereda el PATH del sistema (para que su tool bash siga
+        // viendo git y demás utilidades normales), pero con el bin del Node
+        // administrado por Jintia primero: cualquier `node`/`npm`/`vivliostyle`
+        // que el agente invoque desde su tool bash resuelve de forma
+        // consistente al mismo runtime que la app ya verificó, en lugar de
+        // depender de lo que esta máquina en particular tenga instalado
+        // globalmente.
+        let managed_path = Self::managed_process_path();
 
         #[cfg(target_os = "windows")]
         let child = Command::new("cmd")
@@ -212,6 +243,7 @@ impl OpenCodeManager {
             ])
             .current_dir(work_dir)
             .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
+            .env("PATH", &managed_path)
             .spawn()
             .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?;
 
@@ -226,6 +258,7 @@ impl OpenCodeManager {
             ])
             .current_dir(work_dir)
             .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
+            .env("PATH", &managed_path)
             .spawn()
             .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?;
 
