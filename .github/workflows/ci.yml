@@ -53,6 +53,11 @@ jobs:
           echo "JINTIA_VIVLIOSTYLE_BIN=$JINTIA_VIVLIOSTYLE_BIN"
           ls -la "$SMOKE_PREFIX/node_modules/.bin"
           node -e "console.log(require(process.argv[1]).checkVivliostyle())" "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/scripts/vivliostyle-adapter"
+          printf '<!doctype html><html><body><p>diagnostico</p></body></html>' > "$SMOKE_PREFIX/diag.html"
+          node -e "require(process.argv[1]).buildPdf(process.argv[2], process.argv[3], { verbose: true })" \
+            "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/scripts/vivliostyle-adapter" \
+            "$SMOKE_PREFIX/diag.html" \
+            "$SMOKE_PREFIX/diag.pdf"
           node \
             "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/bin/jintia.js" \
             self-test \
