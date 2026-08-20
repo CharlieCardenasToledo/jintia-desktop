@@ -51,8 +51,8 @@ jobs:
           # vía PATH nunca encontrara el binario instalado localmente aquí.
           export JINTIA_VIVLIOSTYLE_BIN="$(cd "$SMOKE_PREFIX/node_modules/.bin" && node -e "console.log(require('path').join(process.cwd(), '$VIV_BIN_NAME'))")"
           echo "JINTIA_VIVLIOSTYLE_BIN=$JINTIA_VIVLIOSTYLE_BIN"
-          ls -la "$SMOKE_PREFIX/node_modules/.bin" || true
-          node -e "console.log(require('$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/scripts/vivliostyle-adapter').checkVivliostyle())" || true
+          ls -la "$SMOKE_PREFIX/node_modules/.bin"
+          node -e "console.log(require('$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/scripts/vivliostyle-adapter').checkVivliostyle())"
           node \
             "$SMOKE_PREFIX/node_modules/@charlie.act7/jintia/skill/bin/jintia.js" \
             self-test \
