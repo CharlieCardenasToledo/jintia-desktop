@@ -408,6 +408,38 @@ pub fn install_opencode() -> Result<(), String> {
     Ok(())
 }
 
+/// Nombre base de un specifier npm: "@scope/pkg@version" -> "@scope/pkg",
+/// "pkg@version" -> "pkg".
+pub(super) fn npm_bare_name(spec: &str) -> &str {
+    if let Some(rest) = spec.strip_prefix('@') {
+        match rest.find('@') {
+            Some(idx) => &spec[..idx + 1],
+            None => spec,
+        }
+    } else {
+        match spec.find('@') {
+            Some(idx) => &spec[..idx],
+            None => spec,
+        }
+    }
+}
+
+/// Filtra `packages` a solo los que no están ya instalados en el prefix
+/// global administrado por Jintia (donde install_npm_packages los pone).
+/// Se usa antes de ofrecer instalar las herramientas recomendadas del
+/// perfil disciplinar, para no pedir instalar de nuevo lo que ya está.
+pub fn missing_npm_packages(packages: &[String]) -> Vec<String> {
+    let prefix = paths::portable_node_prefix();
+    packages
+        .iter()
+        .filter(|spec| {
+            let name = npm_bare_name(spec);
+            !prefix.join("node_modules").join(name).join("package.json").is_file()
+        })
+        .cloned()
+        .collect()
+}
+
 pub fn install_npm_packages(packages: &[String]) -> Result<(), String> {
     if packages.is_empty() {
         return Ok(());

@@ -37,7 +37,7 @@ import {
   saveSelfTestResult,
 } from "./api.js";
 import { escapeHtml } from "./dom.js";
-import { state, saveConfig } from "./state.js";
+import { state, saveConfig, ensureJintiaSubfolder } from "./state.js";
 import { toast } from "./toast.js";
 import { ic, refreshIcons } from "./icons.js";
 import { jintiaLoaderPlaceholder, mountAllJintiaLoaders, mountJintiaLoader } from "./components/JintiaLoader.js";
@@ -766,7 +766,7 @@ async function jumpToDependencyTool(fromStep, toolIndex) {
 // secciones plegables que no bloquean el avance.
 function welcomeStep() {
   setFooter("Continuar", "advance", false);
-  const welcomeWorkspacePath = state.config.courseRoot || "";
+  const welcomeWorkspacePath = state.config.courseWorkspaceRoot || "";
   const welcomeWorkspaceLabel = welcomeWorkspacePath ? escapeHtml(welcomeWorkspacePath) : "Documentos / Jintia (predeterminada)";
   return `<section class="w-full">
     <div class="mb-5 text-left">
@@ -1513,17 +1513,17 @@ function bindStepEvents(current) {
   });
   if (current === 1) {
     root.querySelector("#onb-change-workspace")?.addEventListener("click", async () => {
-      let defaultPath = state.config.courseRoot;
+      let defaultPath = state.config.courseWorkspaceRoot;
       if (!defaultPath) {
         const result = await getDefaultCourseRoot().catch(() => null);
         defaultPath = result?.path || undefined;
       }
       const picked = await pickDirectory("Elige la carpeta de trabajo de Jintia", defaultPath);
       if (picked) {
-        state.config.courseRoot = picked;
+        state.config.courseWorkspaceRoot = ensureJintiaSubfolder(picked);
         saveConfig();
         const label = root.querySelector("#onb-workspace-label");
-        if (label) label.textContent = picked;
+        if (label) label.textContent = state.config.courseWorkspaceRoot;
       }
     });
   }

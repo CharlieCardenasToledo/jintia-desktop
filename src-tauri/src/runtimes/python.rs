@@ -697,6 +697,53 @@ fn emit_python_progress(app: &AppHandle, phase: &str, percent: f32, message: &st
     );
 }
 
+/// Nombre base de un specifier pip ("pymupdf>=1.24.0" -> "pymupdf"),
+/// normalizado como lo hace pip (PEP 503): minúsculas, "_"/"." -> "-".
+pub(super) fn pip_bare_name(spec: &str) -> String {
+    let end = spec
+        .find(|c: char| matches!(c, '<' | '>' | '=' | '!' | '~' | ';' | ' '))
+        .unwrap_or(spec.len());
+    spec[..end].to_lowercase().replace(['_', '.'], "-")
+}
+
+/// Filtra `packages` a solo los que no aparecen en `pip list` del runtime
+/// administrado. Se usa antes de ofrecer instalar las herramientas
+/// recomendadas del perfil disciplinar, para no pedir instalar de nuevo lo
+/// que el usuario ya tiene.
+pub fn missing_pip_packages(packages: &[String]) -> Result<Vec<String>, String> {
+    if packages.is_empty() {
+        return Ok(vec![]);
+    }
+    let python_exe = resolve_python()
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "Ningún runtime Python administrado está operativo.".to_string())?;
+    let managed_path = managed_python_runtime_path(&python_exe)?;
+    let output = managed_python_command(&python_exe)
+        .args(["-m", "pip", "list", "--format=json"])
+        .env("PATH", &managed_path)
+        .output()
+        .map_err(|e| format!("Error ejecutando pip list: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("pip list falló: {stderr}"));
+    }
+    #[derive(serde::Deserialize)]
+    struct PipEntry {
+        name: String,
+    }
+    let installed: Vec<PipEntry> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("No se pudo interpretar la salida de pip list: {e}"))?;
+    let installed_names: std::collections::HashSet<String> = installed
+        .into_iter()
+        .map(|entry| pip_bare_name(&entry.name))
+        .collect();
+    Ok(packages
+        .iter()
+        .filter(|spec| !installed_names.contains(&pip_bare_name(spec)))
+        .cloned()
+        .collect())
+}
+
 pub fn install_pip_packages(packages: &[String]) -> Result<(), String> {
     if packages.is_empty() {
         return Ok(());

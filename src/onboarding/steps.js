@@ -164,16 +164,60 @@ export function renderOnboardingSiteAnalysis() {
     </div>`;
 }
 
+/**
+ * Tarjeta de "Herramientas recomendadas" del paso 3. Se extrae a su propia
+ * función para poder regenerarla sola cuando cambia la disciplina, sin
+ * re-renderizar todo el formulario (que perdería el foco del usuario).
+ */
+export function profileToolsCardMarkup(discipline) {
+  const profileId = runtime.capabilityProfiles?.disciplines?.[discipline];
+  const profile = profileId ? runtime.capabilityProfiles?.profiles?.[profileId] : null;
+  const pythonPackages = profile?.python?.packages || [];
+  const nodePackages = profile?.node?.packages || [];
+  const packageCount = pythonPackages.length + nodePackages.length;
+  // Si ya comprobamos qué falta para esta disciplina, mostramos solo lo
+  // pendiente en vez de ofrecer instalar de nuevo lo que el usuario ya
+  // tiene (runtime.profilePackagesStatus lo llena refreshProfilePackagesStatus).
+  const packagesStatus = runtime.profilePackagesStatus?.discipline === discipline
+    ? runtime.profilePackagesStatus
+    : null;
+  const pythonMissing = packagesStatus ? packagesStatus.pythonMissing : pythonPackages;
+  const nodeMissing = packagesStatus ? packagesStatus.nodeMissing : nodePackages;
+  const missingCount = pythonMissing.length + nodeMissing.length;
+
+  return `<div id="onb-profile-tools-card" class="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <strong class="block text-sm text-gray-900">Herramientas recomendadas para tu área</strong>
+            <p class="mt-1 text-xs leading-relaxed text-gray-600">
+              ${!packageCount
+                ? "No hay paquetes adicionales para esta selección."
+                : !packagesStatus
+                  ? "Comprobando qué ya tienes instalado…"
+                  : !missingCount
+                    ? (packageCount === 1
+                        ? "Ya tienes instalado el paquete recomendado para esta área."
+                        : `Ya tienes instalados los ${packageCount} paquetes recomendados para esta área.`)
+                    : `Falta${missingCount === 1 ? "" : "n"} ${missingCount} de ${packageCount} paquete(s): ${pythonMissing.length ? "procesamiento Python" : ""}${pythonMissing.length && nodeMissing.length ? " y " : ""}${nodeMissing.length ? "visualización Node" : ""}.`
+              }
+              Se instalan dentro del entorno privado de Jintia y no modifican el sistema.
+            </p>
+          </div>
+          ${packagesStatus && missingCount
+            ? `<button type="button" class="${BTN_SECONDARY} shrink-0" data-onboarding-action="prepare-profile-tools">Instalar ${missingCount} pendiente${missingCount === 1 ? "" : "s"}</button>`
+            : packagesStatus && packageCount && !missingCount
+              ? `<span class="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs font-semibold text-green-700">${ic("check-circle-2", 14)} Ya instalado</span>`
+              : ""}
+        </div>
+        ${operationPanelMarkup(runtime.dependencyOperations.get("profile-packages"), "profile-packages")}
+      </div>`;
+}
+
 export function profileStep() {
   const config = runtime.profileDraft || profileDraftFromConfig(state.config, runtime.activeTemplate);
   const value = key => escapeHtml(config[key] || "");
   const selectedTemplate = config.templateId || runtime.activeTemplate;
   const template = runtime.templates.find(item => item.id === selectedTemplate) || runtime.templates[0];
-  const profileId = runtime.capabilityProfiles?.disciplines?.[config.discipline];
-  const profile = profileId ? runtime.capabilityProfiles?.profiles?.[profileId] : null;
-  const pythonPackages = profile?.python?.packages || [];
-  const nodePackages = profile?.node?.packages || [];
-  const packageCount = pythonPackages.length + nodePackages.length;
   const templateCards = runtime.templates.map(t => {
     const isSelected = t.id === selectedTemplate;
     const cardCls = isSelected
@@ -247,10 +291,7 @@ export function profileStep() {
       ${sectionHeading(3, "Formato del documento")}
       <div id="onb-template-group" class="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3" role="radiogroup" aria-label="Plantilla del documento" aria-describedby="onb-templateId-error">${templateCards}</div>
       <span id="onb-templateId-error" class="mt-2 block text-xs text-red-700" hidden></span>
-      <div class="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong class="block text-sm text-gray-900">Herramientas recomendadas para tu área</strong><p class="mt-1 text-xs leading-relaxed text-gray-600">${packageCount ? `${packageCount} paquete(s): ${pythonPackages.length ? "procesamiento Python" : ""}${pythonPackages.length && nodePackages.length ? " y " : ""}${nodePackages.length ? "visualización Node" : ""}.` : "No hay paquetes adicionales para esta selección."} Se instalan dentro del entorno privado de Jintia y no modifican el sistema.</p></div>${packageCount ? `<button type="button" class="${BTN_SECONDARY} shrink-0" data-onboarding-action="prepare-profile-tools">Preparar herramientas recomendadas</button>` : ""}</div>
-        ${operationPanelMarkup(runtime.dependencyOperations.get("profile-packages"), "profile-packages")}
-      </div>
+      ${profileToolsCardMarkup(config.discipline)}
     </div>
 
     <div class="${INLINE_ERROR} !max-w-none lg:col-span-12" id="onb-form-error" hidden></div>

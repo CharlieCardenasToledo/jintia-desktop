@@ -12,6 +12,7 @@
 import {
   checkDependencies,
   checkNotebookLMAuth,
+  checkProfilePackages,
   claudeStatus,
   codexStart,
   codexStatus,
@@ -59,6 +60,11 @@ export const runtime = {
   depFocusIndex: 0,
   profileDraft: null,
   capabilityProfiles: null,
+  // Qué falta instalar de las herramientas recomendadas del perfil
+  // disciplinar activo (null = todavía sin comprobar). Se recalcula al
+  // entrar al paso 3 y cada vez que cambia la disciplina; ver
+  // refreshProfilePackagesStatus en actions.js.
+  profilePackagesStatus: null,
   dependencyOperations: new Map(),
   authOperation: createOperationState({ title: "Conectar NotebookLM" }),
   targetOperation: createOperationState({ title: "Preparar integración" }),
@@ -91,6 +97,39 @@ export function rememberSuccessfulLoad(key) {
     status: "fulfilled",
     promise: Promise.resolve(),
   });
+}
+
+/**
+ * Recalcula qué falta instalar de las herramientas recomendadas para
+ * `discipline` (guarda el resultado en runtime.profilePackagesStatus).
+ * Se llama al entrar al paso 3 y de nuevo cada vez que el usuario cambia
+ * de disciplina, para no seguir ofreciendo instalar lo que ya está.
+ */
+export async function refreshProfilePackagesStatus(discipline) {
+  const profileId = discipline ? runtime.capabilityProfiles?.disciplines?.[discipline] : null;
+  const profile = profileId ? runtime.capabilityProfiles?.profiles?.[profileId] : null;
+  const pythonPackages = profile?.python?.packages || [];
+  const nodePackages = profile?.node?.packages || [];
+  if (!pythonPackages.length && !nodePackages.length) {
+    runtime.profilePackagesStatus = { discipline, pythonPackages, nodePackages, pythonMissing: [], nodeMissing: [] };
+    return runtime.profilePackagesStatus;
+  }
+  try {
+    const result = await checkProfilePackages(pythonPackages, nodePackages);
+    runtime.profilePackagesStatus = {
+      discipline,
+      pythonPackages,
+      nodePackages,
+      pythonMissing: result?.pythonMissing || [],
+      nodeMissing: result?.nodeMissing || [],
+    };
+  } catch {
+    // Si el chequeo en sí falla, no bloqueamos el flujo: se asume que
+    // falta todo (el comportamiento anterior a este chequeo) en vez de
+    // ocultar el botón de instalación por un error de detección.
+    runtime.profilePackagesStatus = { discipline, pythonPackages, nodePackages, pythonMissing: pythonPackages, nodeMissing: nodePackages };
+  }
+  return runtime.profilePackagesStatus;
 }
 
 export async function prepareOnboardingStep(step, { force = false } = {}) {
@@ -126,6 +165,7 @@ export async function prepareOnboardingStep(step, { force = false } = {}) {
         });
       }
       runtime.activeTemplate = runtime.profileDraft.templateId || runtime.activeTemplate;
+      await refreshProfilePackagesStatus(runtime.profileDraft.discipline);
     }, force);
   }
   if (step === 4) {

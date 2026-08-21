@@ -34,12 +34,14 @@ pub use python::{
     python_version,
     download_portable_python,
     install_pip_packages,
+    missing_pip_packages,
 };
 
 // ==================== RE-EXPORTS: npm ====================
 
 pub use npm::{
     install_npm_packages,
+    missing_npm_packages,
     install_vivliostyle,
     install_opencode,
     resolve_vivliostyle,
@@ -214,6 +216,7 @@ mod tests {
         build_portable_python_version_command,
         managed_python_command,
         managed_python_runtime_path,
+        pip_bare_name,
         python_version_text_matches_expected,
         quarantine_python_runtime,
         PYTHON_RUNTIME_MUTATION_LOCK,
@@ -225,6 +228,7 @@ mod tests {
         build_managed_notebooklm_npm_command,
         build_managed_npm_install_command,
         managed_node_runtime_path,
+        npm_bare_name,
         NOTEBOOKLM_RUNTIME_MUTATION_LOCK,
     };
     use super::skill::SKILL_RUNTIME_MUTATION_LOCK;
@@ -1517,6 +1521,22 @@ mod tests {
         let contract = crate::release::ManagedMcpContract { package: "@charlie.act7/gemini-notebook-mcp".into(), version: "2.3.5".into(), node_requirement: ">=22.13.0".into(), npm_integrity: "sha512-test".into(), jintia_version: "11.6.8".into() };
         assert!(resolve_notebooklm_mcp_bin_for(&package, &contract).is_err());
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn pip_bare_name_strips_version_specifiers_and_normalizes() {
+        assert_eq!(pip_bare_name("pymupdf>=1.24.0"), "pymupdf");
+        assert_eq!(pip_bare_name("networkx"), "networkx");
+        assert_eq!(pip_bare_name("Some_Package.Extra==2.0"), "some-package-extra");
+        assert_eq!(pip_bare_name("matplotlib ; python_version >= \"3.8\""), "matplotlib");
+    }
+
+    #[test]
+    fn npm_bare_name_strips_trailing_version_and_keeps_scope() {
+        assert_eq!(npm_bare_name("@mermaid-js/mermaid-cli@11.12.x"), "@mermaid-js/mermaid-cli");
+        assert_eq!(npm_bare_name("left-pad@1.3.0"), "left-pad");
+        assert_eq!(npm_bare_name("left-pad"), "left-pad");
+        assert_eq!(npm_bare_name("@scope/pkg"), "@scope/pkg");
     }
 }
 

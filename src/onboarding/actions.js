@@ -58,7 +58,7 @@ import { runSecondaryStage, normalizeProfileInstallResult, verifyPythonInstallRe
 import { runOperationWithFeedback, awaitPreparationWithCleanup, operationFailureResult } from "../onboardingOperation.js";
 import { runCompletionHandoff } from "../onboardingCompletion.js";
 import { APP_META } from "../appMeta.js";
-import { runtime, loadOnce, rememberSuccessfulLoad, prepareOnboardingStep, targetReady as _targetReady } from "./store.js";
+import { runtime, loadOnce, rememberSuccessfulLoad, prepareOnboardingStep, refreshProfilePackagesStatus, targetReady as _targetReady } from "./store.js";
 export { targetReady } from "./store.js";
 
 let finalRunSequence = 0;
@@ -84,7 +84,7 @@ import {
   setBusyState,
   actionBusyMessage,
 } from "./ui.js";
-import { operationPanelMarkup, dependencySequence, renderOnboardingSiteAnalysis } from "./steps.js";
+import { operationPanelMarkup, dependencySequence, renderOnboardingSiteAnalysis, profileToolsCardMarkup } from "./steps.js";
 
 // ── Variables de módulo ───────────────────────────────────────────────────────
 const DEP_PROGRESS_DOTS = 6;
@@ -432,8 +432,12 @@ async function installDisciplinePackages(reporter = null, disciplineOverride = n
       ? (caps?.profiles?.[profileId] ?? {})
       : {};
 
-    const pipPackages = profile?.python?.packages ?? [];
-    const npmPackages = profile?.node?.packages ?? [];
+    // Si ya sabemos qué falta para esta disciplina (ver
+    // refreshProfilePackagesStatus), instalamos solo eso: evita repetir
+    // "instalando" sobre paquetes que el usuario ya tiene.
+    const status = runtime.profilePackagesStatus?.discipline === discipline ? runtime.profilePackagesStatus : null;
+    const pipPackages = status ? status.pythonMissing : (profile?.python?.packages ?? []);
+    const npmPackages = status ? status.nodeMissing : (profile?.node?.packages ?? []);
 
     if (pipPackages.length > 0) {
       const pipResult = reporter
@@ -659,6 +663,13 @@ async function prepareProfileTools() {
     technicalDetail: result.success ? "" : result.message,
   });
   toast(result.message, result.success ? "success" : "error", 7000);
+  if (result.success) {
+    // Refleja de inmediato que ya no falta nada (en vez de dejar el botón
+    // "instalar" visible hasta que el usuario salga y vuelva al paso).
+    await refreshProfilePackagesStatus(discipline);
+    const { renderCurrentStep } = await import("./controller.js");
+    renderCurrentStep();
+  }
 }
 
 async function refreshTarget() {
@@ -1188,6 +1199,22 @@ export function bindStepEvents(current) {
       };
       control?.addEventListener("input", remember);
       control?.addEventListener("change", remember);
+    });
+    // La disciplina decide qué paquetes se recomiendan: al cambiarla,
+    // recomprobamos qué falta y regeneramos solo la tarjeta de
+    // herramientas (no todo el paso, para no perder el foco del usuario
+    // en otros campos del formulario).
+    root.querySelector("#onb-discipline")?.addEventListener("change", async () => {
+      const discipline = runtime.profileDraft?.discipline || "";
+      await refreshProfilePackagesStatus(discipline);
+      const card = document.getElementById("onb-profile-tools-card");
+      if (!card) return;
+      card.outerHTML = profileToolsCardMarkup(discipline);
+      // outerHTML crea nodos nuevos: el bind global de [data-onboarding-action]
+      // ya corrió al montar el paso, así que hay que re-atar el botón aquí.
+      document.querySelector('#onb-profile-tools-card [data-onboarding-action="prepare-profile-tools"]')
+        ?.addEventListener("click", () => handleAction("prepare-profile-tools", current));
+      refreshIcons();
     });
     root.querySelector("#onb-extract-palette")?.addEventListener("click", () => runOnboardingOperation(
       "Analizando el sitio institucional…",

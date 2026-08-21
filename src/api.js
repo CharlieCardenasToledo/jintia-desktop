@@ -234,6 +234,10 @@ export async function getCapabilitiesProfiles() {
   return invoke("get_capabilities_profiles");
 }
 
+export async function checkProfilePackages(pythonPackages, nodePackages) {
+  return invoke("check_profile_packages", { pythonPackages, nodePackages });
+}
+
 export async function installProfilePackages(packages) {
   return invoke("install_profile_packages", { packages });
 }

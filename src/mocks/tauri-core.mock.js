@@ -239,6 +239,10 @@ const handlers = {
     return onboardingResult(true, "Onboarding reiniciado.");
   },
   get_skill_path: () => (state.setup.skill_installed ? "/mock/home/.claude/skills/jintia-skill" : ""),
+  check_profile_packages: ({ pythonPackages, nodePackages }) => ({
+    pythonMissing: pythonPackages || [],
+    nodeMissing: nodePackages || [],
+  }),
   install_npm_packages: ({ packages }) => {
     if (packages?.includes("opencode-ai")) state.setup.opencode_cli_installed = true;
     return actionResult(true, "Paquetes Node instalados en el entorno privado de Jintia (mock).");

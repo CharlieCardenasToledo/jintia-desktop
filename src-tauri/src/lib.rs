@@ -733,6 +733,27 @@ async fn save_self_test_result(record: SelfTestRecord) -> OnboardingResult {
         })
 }
 
+/// Qué falta instalar realmente de las herramientas recomendadas del
+/// perfil disciplinar. El onboarding lo usa para no ofrecer "instalar" lo
+/// que el usuario ya tiene: muestra solo lo pendiente y, si no falta nada,
+/// un estado "ya instalado" en vez del botón.
+#[tauri::command]
+async fn check_profile_packages(
+    python_packages: Vec<String>,
+    node_packages: Vec<String>,
+) -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(move || {
+        let python_missing = runtimes::missing_pip_packages(&python_packages).unwrap_or(python_packages);
+        let node_missing = runtimes::missing_npm_packages(&node_packages);
+        serde_json::json!({
+            "pythonMissing": python_missing,
+            "nodeMissing": node_missing,
+        })
+    })
+    .await
+    .unwrap_or_else(|_| serde_json::json!({ "pythonMissing": [], "nodeMissing": [] }))
+}
+
 #[tauri::command]
 async fn install_profile_packages(app: tauri::AppHandle, packages: Vec<String>) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
@@ -1184,6 +1205,7 @@ pub fn run() {
             set_active_template,
             run_skill_tool,
             get_capabilities_profiles,
+            check_profile_packages,
             install_profile_packages,
             install_vivliostyle_cli,
             install_npm_packages,

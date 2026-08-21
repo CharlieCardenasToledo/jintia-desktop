@@ -9,7 +9,7 @@ import {
   claudeStatus,
   claudeAuthLogin,
 } from "../api.js";
-import { state, saveConfig } from "../state.js";
+import { state, saveConfig, ensureJintiaSubfolder } from "../state.js";
 import { navigate } from "../router.js";
 import { escapeHtml } from "../dom.js";
 import { isRateLimited, formatUsagePercent, formatResetCountdown, primaryWindow } from "../codexUsage.js";
@@ -661,10 +661,10 @@ export async function renderSettings() {
     const current = state.config?.courseWorkspaceRoot || undefined;
     const chosen = await pickDirectory("Selecciona la carpeta raíz de tus cursos", current);
     if (!chosen) return;
-    state.config = { ...state.config, courseWorkspaceRoot: chosen };
+    state.config = { ...state.config, courseWorkspaceRoot: ensureJintiaSubfolder(chosen) };
     saveConfig();
     const display = el.querySelector("#workspace-root-val");
-    if (display) display.textContent = chosen;
+    if (display) display.textContent = state.config.courseWorkspaceRoot;
     toast("Carpeta de cursos actualizada.", "success", 3000);
   });
   el.querySelector("#cfg-include-jintia-credit")?.addEventListener("change", event => {
