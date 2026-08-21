@@ -2,6 +2,14 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
+/// Capturas reales de la app (modo mock), incrustadas en el binario para que
+/// la guía de bienvenida no dependa de ningún recurso externo ni de rutas de
+/// instalación. Ver `src-tauri/resources/onboarding/`.
+const SCREENSHOT_MIS_CURSOS: &[u8] = include_bytes!("../../resources/onboarding/mis-cursos.png");
+const SCREENSHOT_ASK_JINTIA: &[u8] = include_bytes!("../../resources/onboarding/ask-jintia.png");
+const SCREENSHOT_PDFS: &[u8] = include_bytes!("../../resources/onboarding/pdfs-generados.png");
+const SCREENSHOT_PLANTILLAS: &[u8] = include_bytes!("../../resources/onboarding/plantillas.png");
+
 fn stable_pdf_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -53,10 +61,26 @@ fn welcome_guide_json() -> Value {
                 "content": "Durante el onboarding, Jintia prepara OpenCode, Claude Code y ChatGPT (Codex) en el mismo equipo. Claude y ChatGPT requieren una cuenta compatible con sus funciones profesionales; OpenCode es la alternativa gratuita cuando esas sesiones no están disponibles.\n\nEn Ask Jintia puedes revisar el proveedor activo antes de enviar una solicitud. Tus archivos académicos permanecen en la carpeta del curso que elegiste."
             },
             {
+                "type": "figure",
+                "id": "fig-plantillas",
+                "src": "figuras/plantillas.png",
+                "alt": "Catálogo de plantillas de publicación de Jintia, con Jintia Clásico activo y una vista previa de la guía a la derecha.",
+                "caption": "Elige el diseño editorial de tus guías desde Plantillas: institucionales o personales, con vista previa antes de generar el PDF.",
+                "pagination": "atomic"
+            },
+            {
                 "type": "practice",
                 "id": "crear-asignatura",
                 "title": "2. Crea tu primera asignatura",
                 "content": "En el panel selecciona {{keyterm:Nueva asignatura}}. Indica el código, el nombre y la carpeta de trabajo; Jintia prepara el proyecto sin mezclarlo con otras materias.\n\nAbre el editor de sílabo y completa los datos de cada semana: unidad, temas, resultado de aprendizaje, bibliografía, horas y actividad. Al guardar, genera el README del curso; este archivo será la fuente de verdad que la IA consultará."
+            },
+            {
+                "type": "figure",
+                "id": "fig-mis-cursos",
+                "src": "figuras/mis-cursos.png",
+                "alt": "Panel Mis cursos de Jintia mostrando una asignatura registrada, con su período, avance del sílabo y estado del proyecto.",
+                "caption": "Mis cursos: cada asignatura queda organizada con su propia carpeta, avance de sílabo y accesos directos a Ask Jintia.",
+                "pagination": "atomic"
             },
             {
                 "type": "concept",
@@ -65,10 +89,26 @@ fn welcome_guide_json() -> Value {
                 "content": "Abre Ask Jintia desde la asignatura para conservar el contexto correcto. Selecciona la semana y pide una acción concreta, por ejemplo: «crea la guía de la semana 1», «revisa la alineación entre resultado y actividad» o «valida las referencias».\n\nSi conectaste NotebookLM, Jintia puede contrastar el contenido con tus fuentes. Revisa siempre el resultado antes de publicarlo y no incluyas datos personales de estudiantes."
             },
             {
+                "type": "figure",
+                "id": "fig-ask-jintia",
+                "src": "figuras/ask-jintia.png",
+                "alt": "Pantalla de Ask Jintia con el contexto de una asignatura activo, el historial de conversaciones y el cuadro de mensaje.",
+                "caption": "Ask Jintia conserva el contexto de la asignatura y la semana activa, y guarda el historial de cada conversación.",
+                "pagination": "atomic"
+            },
+            {
                 "type": "theory",
                 "id": "generar-pdf",
                 "title": "4. Genera y revisa la guía",
                 "content": "Jintia crea primero el contenido estructurado de la guía, genera el HTML, aplica el CSS de la plantilla activa y renderiza el PDF con Vivliostyle. No necesitas instalar LaTeX para el flujo habitual.\n\nCuando termine, abre {{keyterm:PDFs generados}} para revisar el documento. Si algo falla, consulta Actividad del sistema: allí verás la etapa, el tiempo transcurrido y el diagnóstico que puedes copiar."
+            },
+            {
+                "type": "figure",
+                "id": "fig-pdfs",
+                "src": "figuras/pdfs-generados.png",
+                "alt": "Panel PDFs generados de Jintia mostrando un documento producido para una asignatura, con opciones para abrirlo o ver su carpeta.",
+                "caption": "PDFs generados reúne automáticamente las guías producidas dentro de tus proyectos preparados.",
+                "pagination": "atomic"
             },
             {
                 "type": "scenario",
@@ -123,6 +163,22 @@ pub fn generate_welcome_guide_pdf() -> Value {
     let pipeline_result = (|| -> Result<(), String> {
         fs::create_dir_all(&guide_dir)
             .map_err(|e| format!("No se pudo crear el directorio temporal: {e}"))?;
+
+        // Volcar las capturas incrustadas junto al guide.json para que las
+        // rutas relativas `figuras/*.png` declaradas en welcome_guide_json()
+        // resuelvan igual que cualquier figura real de una guía.
+        let figuras_dir = guide_dir.join("figuras");
+        fs::create_dir_all(&figuras_dir)
+            .map_err(|e| format!("No se pudo crear el directorio de figuras: {e}"))?;
+        for (name, bytes) in [
+            ("mis-cursos.png", SCREENSHOT_MIS_CURSOS),
+            ("ask-jintia.png", SCREENSHOT_ASK_JINTIA),
+            ("pdfs-generados.png", SCREENSHOT_PDFS),
+            ("plantillas.png", SCREENSHOT_PLANTILLAS),
+        ] {
+            fs::write(figuras_dir.join(name), bytes)
+                .map_err(|e| format!("No se pudo escribir la captura {name}: {e}"))?;
+        }
 
         let guide_file = guide_dir.join("guide.json");
         let html_file  = guide_dir.join("guide.html");
