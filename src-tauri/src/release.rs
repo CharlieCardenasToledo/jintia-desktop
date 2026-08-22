@@ -2,6 +2,7 @@ use semver::{Version, VersionReq};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 // ── Contrato MCP (retrocompatibilidad) ─────────────────────────────────────
@@ -186,7 +187,8 @@ pub fn parse_release_contract(
         Version::parse(desktop_version).map_err(|e| format!("Versión Desktop inválida: {e}"))?;
     if desktop < minimum_desktop_version {
         return Err(format!(
-            "Jintia requiere Desktop >= {minimum}, pero se ejecuta {desktop}."
+            "Jintia {jintia_version} requiere Jintia Desktop {minimum} o superior (tienes {desktop}). \
+             Actualiza Jintia Desktop para instalar esta versión de Jintia; tu instalación actual no se modifica."
         ));
     }
     let runtime_node_str = release
@@ -289,6 +291,120 @@ pub fn managed_mcp_contract() -> Result<ManagedMcpContract, String> {
         &crate::paths::portable_skill_npm_package_dir(),
         env!("CARGO_PKG_VERSION"),
     )
+}
+
+// ── Resolución de "latest compatible" (evita instalar un @latest que exija
+// una versión de Desktop más nueva que la instalada) ───────────────────────
+
+const REGISTRY_METADATA_URL: &str = "https://registry.npmjs.org/@charlie.act7%2Fjintia";
+/// Tope de versiones candidatas a inspeccionar (de más reciente a más
+/// antigua) antes de rendirse y dejar que el llamador use "@latest" —
+/// evita una cadena de descargas ilimitada si hay muchas versiones
+/// incompatibles publicadas.
+const MAX_COMPATIBILITY_CANDIDATES: usize = 15;
+
+/// Extrae, de la respuesta JSON del registro npm (`GET /<paquete>`), las
+/// versiones estables (sin prerelease) junto a la URL de su tarball,
+/// ordenadas de más reciente a más antigua. Función pura: no hace I/O, para
+/// poder probarla con fixtures.
+fn parse_registry_versions(body: &[u8]) -> Result<Vec<(Version, String)>, String> {
+    let packument: Value =
+        serde_json::from_slice(body).map_err(|e| format!("Metadatos npm inválidos: {e}"))?;
+    let versions = packument
+        .get("versions")
+        .and_then(Value::as_object)
+        .ok_or("Metadatos npm sin campo 'versions'.")?;
+    let mut parsed: Vec<(Version, String)> = versions
+        .iter()
+        .filter_map(|(raw_version, entry)| {
+            let version = Version::parse(raw_version).ok()?;
+            if !version.pre.is_empty() {
+                return None;
+            }
+            let tarball = entry.get("dist")?.get("tarball")?.as_str()?.to_string();
+            Some((version, tarball))
+        })
+        .collect();
+    parsed.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(parsed)
+}
+
+/// Extrae `minimumDesktopVersion` de `release/release-config.json` dentro de
+/// un tarball npm (`.tgz`) ya descargado en memoria. Todos los tarballs npm
+/// envuelven su contenido bajo el prefijo `package/`. Función pura: recibe
+/// los bytes ya descargados, para poder probarla con un tarball fabricado en
+/// memoria sin red.
+fn parse_minimum_desktop_version_from_tarball(tarball_bytes: &[u8]) -> Result<Version, String> {
+    let decoder = flate2::read::GzDecoder::new(tarball_bytes);
+    let mut archive = tar::Archive::new(decoder);
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("Tarball npm ilegible: {e}"))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("Tarball npm ilegible: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("Tarball npm ilegible: {e}"))?
+            .into_owned();
+        if path != Path::new("package/release/release-config.json") {
+            continue;
+        }
+        let mut content = String::new();
+        entry
+            .read_to_string(&mut content)
+            .map_err(|e| format!("release-config.json ilegible en el tarball: {e}"))?;
+        let release: Value = serde_json::from_str(&content)
+            .map_err(|e| format!("release-config.json inválido en el tarball: {e}"))?;
+        let minimum = required_string(&release, "minimumDesktopVersion")?;
+        return Version::parse(minimum)
+            .map_err(|e| format!("minimumDesktopVersion inválida en el tarball: {e}"));
+    }
+    Err("release/release-config.json no encontrado en el tarball.".to_string())
+}
+
+/// Descarga los metadatos del paquete `@charlie.act7/jintia` desde el
+/// registro npm.
+fn fetch_registry_versions() -> Result<Vec<(Version, String)>, String> {
+    let response = reqwest::blocking::get(REGISTRY_METADATA_URL)
+        .map_err(|e| format!("Error consultando el registro npm: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Error consultando el registro npm: {e}"))?;
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("Error leyendo el registro npm: {e}"))?;
+    parse_registry_versions(&bytes)
+}
+
+/// Descarga un tarball npm y extrae su `minimumDesktopVersion`.
+fn fetch_minimum_desktop_version(tarball_url: &str) -> Result<Version, String> {
+    let bytes = reqwest::blocking::get(tarball_url)
+        .map_err(|e| format!("Error descargando tarball: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Error descargando tarball: {e}"))?
+        .bytes()
+        .map_err(|e| format!("Error leyendo tarball: {e}"))?;
+    parse_minimum_desktop_version_from_tarball(&bytes)
+}
+
+/// Resuelve la versión más reciente de `@charlie.act7/jintia` publicada en
+/// npm cuyo `minimumDesktopVersion` esta versión de Desktop satisface.
+///
+/// Devuelve `Ok(None)` (no `Err`) cuando no se pudo determinar una versión
+/// compatible por cualquier motivo — sin red, metadatos inesperados, todas
+/// las candidatas inspeccionadas resultaron incompatibles, etc. El llamador
+/// debe interpretar `None` como "usa `@latest`": ese comportamiento ya está
+/// protegido por el rollback de `download_portable_skill`, así que no instalar
+/// nada nunca es peor que instalar `@latest` sin esta resolución previa.
+pub fn resolve_latest_compatible_version(desktop_version: &str) -> Option<String> {
+    let desktop = Version::parse(desktop_version).ok()?;
+    let candidates = fetch_registry_versions().ok()?;
+    for (version, tarball_url) in candidates.into_iter().take(MAX_COMPATIBILITY_CANDIDATES) {
+        match fetch_minimum_desktop_version(&tarball_url) {
+            Ok(minimum) if desktop >= minimum => return Some(version.to_string()),
+            _ => continue,
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -660,5 +776,81 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_file(&outside);
         assert!(result.is_err());
+    }
+
+    // ── resolución de "latest compatible" ──────────────────────────────────
+
+    #[test]
+    fn parses_registry_versions_sorted_descending_and_skips_prereleases() {
+        let body = serde_json::json!({
+            "versions": {
+                "1.0.0": { "dist": { "tarball": "https://example.com/1.0.0.tgz" } },
+                "2.0.0": { "dist": { "tarball": "https://example.com/2.0.0.tgz" } },
+                "1.5.0-beta.1": { "dist": { "tarball": "https://example.com/1.5.0-beta.1.tgz" } },
+                "not-a-real-version": { "dist": { "tarball": "https://example.com/x.tgz" } }
+            }
+        });
+        let versions =
+            parse_registry_versions(serde_json::to_vec(&body).unwrap().as_slice()).unwrap();
+        let strings: Vec<String> = versions.iter().map(|(v, _)| v.to_string()).collect();
+        assert_eq!(strings, vec!["2.0.0".to_string(), "1.0.0".to_string()]);
+    }
+
+    #[test]
+    fn rejects_registry_metadata_without_versions_field() {
+        assert!(parse_registry_versions(b"{}").is_err());
+    }
+
+    #[test]
+    fn rejects_registry_metadata_invalid_json() {
+        assert!(parse_registry_versions(b"not-json").is_err());
+    }
+
+    fn gzip(bytes: &[u8]) -> Vec<u8> {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, bytes).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn make_tarball(entry_path: &str, content: &[u8]) -> Vec<u8> {
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            let mut header = tar::Header::new_gnu();
+            header.set_path(entry_path).unwrap();
+            header.set_size(content.len() as u64);
+            header.set_cksum();
+            builder.append(&header, content).unwrap();
+            builder.finish().unwrap();
+        }
+        gzip(&tar_bytes)
+    }
+
+    #[test]
+    fn extracts_minimum_desktop_version_from_tarball() {
+        let content =
+            serde_json::to_vec(&serde_json::json!({ "minimumDesktopVersion": "1.2.0" })).unwrap();
+        let tarball = make_tarball("package/release/release-config.json", &content);
+        let version = parse_minimum_desktop_version_from_tarball(&tarball).unwrap();
+        assert_eq!(version, Version::parse("1.2.0").unwrap());
+    }
+
+    #[test]
+    fn rejects_tarball_without_release_config() {
+        let tarball = make_tarball("package/README.md", b"irrelevant");
+        assert!(parse_minimum_desktop_version_from_tarball(&tarball).is_err());
+    }
+
+    #[test]
+    fn rejects_tarball_with_invalid_release_config() {
+        let tarball = make_tarball("package/release/release-config.json", b"not-json");
+        assert!(parse_minimum_desktop_version_from_tarball(&tarball).is_err());
+    }
+
+    #[test]
+    fn rejects_tarball_missing_minimum_desktop_version_field() {
+        let content = serde_json::to_vec(&serde_json::json!({ "other": "x" })).unwrap();
+        let tarball = make_tarball("package/release/release-config.json", &content);
+        assert!(parse_minimum_desktop_version_from_tarball(&tarball).is_err());
     }
 }

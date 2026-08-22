@@ -46,14 +46,19 @@ let _aiTaskDraft = { week: 1, operation: "guide", guideExists: null, checking: f
 // Operaciones de semana disponibles cuando ya existe una guía (ver la tabla
 // de routing de SKILL.md). Se excluyen init/syllabus/migrate/doctor: son de
 // curso completo o de entorno, no aplican a una semana puntual.
+// "command" es texto en lenguaje natural para el prompt del agente, no un
+// slash-command literal: "/jintia" no es el comando registrado (la skill se
+// invoca como "jintia-skill" en Claude Code o "$jintia-skill" en Codex/
+// OpenCode — ver SKILL.md), así que embeber "/jintia X" aquí podría
+// confundir al agente en vez de orientarlo.
 const WEEK_AI_OPERATIONS = [
-  { id: "guide", label: "Revisar/actualizar guía", command: "/jintia guide" },
-  { id: "assessment", label: "Diseñar evaluación", command: "/jintia assessment" },
-  { id: "visual", label: "Gestionar figuras", command: "/jintia visual" },
-  { id: "validate", label: "Validar sin generar PDF", command: "/jintia validate" },
-  { id: "compile", label: "Generar y revisar PDF", command: "/jintia compile" },
-  { id: "audit", label: "Auditar calidad", command: "/jintia audit" },
-  { id: "state", label: "Registrar estado editorial", command: "/jintia state" },
+  { id: "guide", label: "Revisar/actualizar guía", command: "usa jintia-skill para revisar o actualizar la guía" },
+  { id: "assessment", label: "Diseñar evaluación", command: "usa jintia-skill para diseñar la evaluación" },
+  { id: "visual", label: "Gestionar figuras", command: "usa jintia-skill para gestionar las figuras" },
+  { id: "validate", label: "Validar sin generar PDF", command: "usa jintia-skill para validar la guía sin generar PDF" },
+  { id: "compile", label: "Generar y revisar PDF", command: "usa jintia-skill para generar y revisar el PDF" },
+  { id: "audit", label: "Auditar calidad", command: "usa jintia-skill para auditar la calidad" },
+  { id: "state", label: "Registrar estado editorial", command: "usa jintia-skill para registrar el estado editorial" },
 ];
 
 const REQUIRED_WEEK_FIELDS = ["title", "unit", "topics", "outcomes", "bibliography"];
@@ -591,8 +596,8 @@ function weekTaskPrompt(course, week, operationId, guideExists) {
   const folder = String(course.project_path || "").trim();
   const base = `Trabaja con la asignatura ${course.code} — ${course.name}. Carpeta local: ${folder}.`;
   const task = operationId === "guide" && !guideExists
-    ? `Genera la guía de la semana ${week} siguiendo el flujo /jintia guide.`
-    : `${WEEK_AI_OPERATIONS.find(item => item.id === operationId)?.command || "/jintia guide"}: ${WEEK_AI_OPERATIONS.find(item => item.id === operationId)?.label.toLowerCase() || "revisar la guía"} de la semana ${week}.`;
+    ? `Genera la guía de la semana ${week} usando jintia-skill.`
+    : `${WEEK_AI_OPERATIONS.find(item => item.id === operationId)?.command || "usa jintia-skill para revisar la guía"} de la semana ${week}.`;
   return `${base} ${task}`;
 }
 

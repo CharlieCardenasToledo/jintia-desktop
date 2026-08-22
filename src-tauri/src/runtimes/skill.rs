@@ -55,7 +55,19 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
 
     let managed_path = managed_node_runtime_path()?;
 
-    emit_skill_progress(app, "installing", 5.0, "Instalando Jintia desde npm...");
+    // Resuelve la versión más reciente compatible con esta versión de
+    // Desktop (según minimumDesktopVersion de cada release), en vez de
+    // instalar siempre "@latest" a ciegas. Si la resolución falla por
+    // cualquier motivo (sin red, metadatos inesperados...), se usa "@latest"
+    // como antes — la instalación sigue protegida por la validación y el
+    // rollback de más abajo, así que no perder esta resolución nunca deja la
+    // instalación en peor estado que el comportamiento previo.
+    let install_spec = match crate::release::resolve_latest_compatible_version(env!("CARGO_PKG_VERSION")) {
+        Some(version) => format!("@charlie.act7/jintia@{version}"),
+        None => "@charlie.act7/jintia@latest".to_string(),
+    };
+
+    emit_skill_progress(app, "installing", 5.0, &format!("Instalando Jintia ({install_spec}) desde npm..."));
 
     let output = managed_node_command(&node)
             .arg(&npm_cli)
@@ -63,7 +75,7 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
             .arg("--global")
             .arg("--prefix")
             .arg(&stage)
-            .arg("@charlie.act7/jintia@latest")
+            .arg(&install_spec)
             .arg("--no-audit")
             .arg("--no-fund")
             .env("PATH", &managed_path)
@@ -77,7 +89,7 @@ pub fn download_portable_skill(app: &AppHandle) -> Result<(), String> {
         let _ = fs::remove_dir_all(&stage);
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "npm install @charlie.act7/jintia@latest falló: {stderr}"
+            "npm install {install_spec} falló: {stderr}"
         ));
     }
 

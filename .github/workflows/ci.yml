@@ -28,6 +28,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - run: npm run docs:check
       - run: npm run skill:verify
       - run: npm test
       - run: npm run build

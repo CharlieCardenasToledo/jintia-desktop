@@ -14,9 +14,8 @@ Se requiere Node.js 22.13 o superior y Rust estable.
 ## Antes de proponer cambios
 
 1. No agregues configuraciones institucionales, tokens, cookies ni documentos reales.
-2. Conserva la skill como dependencia de release: no copies su árbol fuente al repositorio.
-3. Actualiza `skill.lock.json` solo mediante `npm run skill:sync -- --tag=vX.Y.Z`.
-4. Añade una entrada a `CHANGELOG.md` cuando el cambio sea visible o distribuible.
+2. La skill `jintia` es una dependencia npm que se instala en runtime (ver `src-tauri/src/runtimes/skill.rs`), no un payload embebido: no copies su árbol fuente al repositorio ni fijes su versión aquí.
+3. Añade una entrada a `CHANGELOG.md` cuando el cambio sea visible o distribuible.
 
 ## Validación
 

@@ -14,17 +14,17 @@ web
 
 ## Product Purpose
 
-Convertir un sílabo universitario en una ruta conectada de resultados, contenidos, actividades, evaluaciones y guías semanales listas para publicar. La aplicación elimina la fricción de instalar y configurar manualmente un entorno de diseño instruccional, integrando herramientas (Node.js, Python, LaTeX) y servicios (NotebookLM) en una sola aplicación de escritorio con interfaz clara.
+Convertir un sílabo universitario en una ruta conectada de resultados, contenidos, actividades, evaluaciones y guías semanales listas para publicar. La aplicación elimina la fricción de instalar y configurar manualmente un entorno de diseño instruccional, gestionando runtimes administrados (Node.js, Vivliostyle CLI, Python) y servicios (NotebookLM MCP) alrededor de la skill `jintia` (motor editorial HTML) en una sola aplicación de escritorio con interfaz clara.
 
-**Success means:** Un docente puede instalar la aplicación, completar el onboarding en minutos, crear una asignatura, subir un sílabo o contenido existente, y generar guías semanales LaTeX compiladas a PDF con criterios pedagógicos verificables (UDL 3.0, Backward Design, Quality Matters 7, WCAG 2.2).
+**Success means:** Un docente puede instalar la aplicación, completar el onboarding en minutos, crear una asignatura, subir un sílabo o contenido existente, y generar guías semanales HTML compiladas a PDF (vía Vivliostyle) con criterios pedagógicos verificables (UDL 3.0, Backward Design, Quality Matters 7, WCAG 2.2).
 
 ## Positioning
 
 Jintia es la única herramienta que integra:
-- **Instalador + configurador visual** (Tauri + React) para docentes sin experiencia técnica.
-- **Skill para Claude Code** como motor que interpreta pedagógicamente el curso.
-- **Plantillas LaTeX editables** con renderizado reproducible local, sin vendor lock-in.
-- **NotebookLM MCP** para investigación de fuentes integrada.
+- **Instalador + configurador visual** (Tauri + Vite/JS + Tailwind) para docentes sin experiencia técnica.
+- **Skill `jintia`** (npm, motor editorial HTML) como autoridad pedagógica: plan, targets, evidencia, reglas de calidad, `guide.json`.
+- **Motor editorial HTML + Vivliostyle CLI** para PDF reproducible local, sin vendor lock-in ni LaTeX.
+- **NotebookLM MCP** para investigación de fuentes integrada, como fuente primaria de evidencia.
 - **Privacidad por diseño:** compilación y archivos completamente locales.
 
 Competidores ofrecen LMS genéricos (Moodle, Canvas) o herramientas pedagógicas sin automatización; Jintia automatiza todo desde un sílabo.
@@ -32,40 +32,41 @@ Competidores ofrecen LMS genéricos (Moodle, Canvas) o herramientas pedagógicas
 ## Operating Context
 
 **Workflow canónico:**
-1. Instalar aplicación Tauri + completar onboarding (verificar Node, Python, Git, LaTeX).
-2. Configurar datos institucionales (docente, institución, carrera, paleta visual).
-3. Crear asignatura y estructurar su contenido (sílabo, temas, actividades).
-4. Consultar fuentes mediante NotebookLM MCP (investigación integrada).
-5. Generar guías LaTeX modulares por semana.
-6. Compilar a PDF localmente y revisar.
-7. Iterar y regresar a Claude (via skill) para refinamientos.
+1. Instalar aplicación Tauri + completar onboarding (runtimes administrados: Node, npm, Vivliostyle CLI; Python opcional para el pipeline visual).
+2. Configurar datos institucionales (docente, institución, carrera, paleta visual) y NotebookLM.
+3. Crear asignatura (`jintia init`) y estructurar su sílabo (temas, actividades).
+4. Planificar la semana (`jintia plan`): targets, matriz de alineación, evidencia — antes de redactar.
+5. Consultar fuentes mediante NotebookLM MCP (investigación integrada, jerarquía NotebookLM → local → ai-fallback).
+6. Generar la guía (`guide.json` + `evidence.json`) y cerrarla con `jintia ready`.
+7. Compilar a PDF localmente (Vivliostyle) y revisar.
+8. Iterar y regresar al agente (Claude Code, Codex u OpenCode, vía `jintia-skill`) para refinamientos.
 
 **Environments:** Windows 10/11, macOS (Apple Silicon y Intel), Linux. Aplicación de escritorio con acceso local a archivos, ejecución de compiladores, integración con MCP.
 
 **Tools & Materials:**
 - Sílabos escritos (PDF, Word, texto plano, Google Docs).
-- NotebookLM notebooks (para curación de fuentes).
-- Plantillas LaTeX (ElegantBook Clásico, Kaohandt Marginal).
-- Claude Code + jintia-skill (para generación y validación).
+- NotebookLM notebooks (para curación de fuentes, fuente primaria de evidencia).
+- Temas HTML de la skill (`jintia-clasico`, `jintia-tecnico`, `jintia-cuaderno`).
+- Claude Code, Codex u OpenCode + `jintia-skill` (para generación y validación).
 
 ## Capabilities and Constraints
 
 **Verified Capabilities:**
-- Verifica presencia de Node.js, Python, Git, compilador LaTeX (xelatex).
-- En Windows: instala vía `winget` con solicitud de autorización.
-- En macOS/Linux: muestra instrucciones manuales para herramientas.
-- Crea estructura canónica de asignatura (carpetas, `README.md` estructurado).
+- Descarga y administra Node.js, npm, Vivliostyle CLI y (opcionalmente) Python como runtimes propios, sin depender de instalaciones globales del sistema.
+- Instala la skill `jintia` desde npm (`@charlie.act7/jintia`) en staging, valida su contrato (`package.json`, `SKILL.md`, `skill/bin/jintia.js`, smoke test, `release-config.json`) y activa con rollback automático si algo falla.
+- Resuelve la versión de la skill más reciente compatible con la versión de Desktop instalada, en vez de instalar siempre la última publicada a ciegas.
+- En Windows: instala dependencias del sistema vía `winget` con solicitud de autorización, cuando aplica.
+- Crea estructura canónica de asignatura delegando en `jintia init` (sin lógica de creación de curso duplicada).
 - Conecta NotebookLM MCP sin sobrescribir otras configuraciones.
-- Permite previsualizar plantilla LaTeX dentro de la app.
-- Instala jintia-skill localmente o la exporta como ZIP.
+- Instala la skill como agente global en Claude Code, Codex y OpenCode delegando en el propio CLI de `jintia` (detección/instalación de harnesses).
 - Mantiene todos los archivos, compilación y datos localmente (sin servidores).
 
 **Constraints:**
 - Aplicación requiere conexión para descargar dependencias e instalarlas.
 - DMG actual (macOS) no está firmado ni notarizado (Gatekeeper warning).
 - Instaladores Windows aún no están firmados (SignPath en trámite).
-- Dos plantillas incluidas (expansible en futuro).
-- LaTeX requiere compilador local (xelatex con soporte UTF-8 para es, quechua, shuar).
+- Tres temas HTML incluidos en la skill (expansible en futuro).
+- El motor de compilación a PDF es Vivliostyle CLI (CSS Paged Media) — no hay pipeline LaTeX activo.
 
 **Product Facts (undecided):**
 - Mobile companion app: no confirmado; web responsive vs. desktop-only a decidir.
@@ -107,7 +108,7 @@ Competidores ofrecen LMS genéricos (Moodle, Canvas) o herramientas pedagógicas
 
 1. **Accesibilidad pedagógica:** La herramienta no sustituye el juicio del docente; amplifica su intención pedagógica mediante UDL, Backward Design, Quality Matters. Guías verificables y reproducibles.
 
-2. **Privacidad y soberanía:** Todos los datos, compilación y output del usuario se procesan localmente. Sin telemetría, sin vendor lock-in. Herramientas estándar (Git, LaTeX, Python).
+2. **Privacidad y soberanía:** Todos los datos, compilación y output del usuario se procesan localmente. Sin telemetría, sin vendor lock-in. Runtimes administrados y abiertos (Node.js, Vivliostyle CLI, Python opcional).
 
 3. **Honestidad técnica:** Advertencias visibles (unsigned installers, requisitos), no ocultar fricción. Documentación clara sobre qué requiere conexión y qué no.
 

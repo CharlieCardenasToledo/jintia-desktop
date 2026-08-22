@@ -23,19 +23,20 @@ para confirmar disponibilidad según tu plan y plataforma.
 
 La generación completa de guías requiere:
 
-- Node.js compatible con la aplicación;
-- Python;
-- un compilador LaTeX;
-- NotebookLM MCP cuando se necesite consultar bibliografía remota.
+- Node.js (administrado por la propia app, no necesitas instalarlo aparte);
+- Vivliostyle CLI (motor de compilación a PDF; la app puede administrarlo);
+- Python (opcional, solo para parte del pipeline visual);
+- NotebookLM MCP — fuente primaria de evidencia, no un complemento opcional.
 
-La aplicación comprueba estos requisitos. En Windows puede iniciar
-instalaciones con `winget` después de pedir confirmación. En macOS y Linux
-muestra los comandos que deben ejecutarse manualmente.
+La aplicación comprueba y administra estos requisitos por ti (runtimes
+propios, sin depender de instalaciones globales del sistema). En Windows
+puede iniciar instalaciones de dependencias del sistema vía `winget` después
+de pedir confirmación.
 
 ## Opción 1: Claude Code
 
 Es la modalidad recomendada para trabajar directamente con las carpetas del
-curso, ejecutar validadores y compilar LaTeX.
+curso, ejecutar validadores y compilar la guía a HTML/PDF.
 
 ### Instalación desde la aplicación
 
@@ -122,9 +123,8 @@ otras personas.
 No asumas que Cowork:
 
 - descubre automáticamente `~/.claude/skills`;
-- puede acceder a WSL;
 - comparte un proyecto entre miembros de un equipo;
-- compila LaTeX con las dependencias del equipo local.
+- tiene acceso al Vivliostyle CLI administrado por Jintia Desktop en el equipo local.
 
 Autoriza únicamente la carpeta del curso y verifica el resultado antes de
 sobrescribir archivos existentes. La
@@ -134,14 +134,16 @@ describe el modelo de ejecución vigente.
 ## Configurar NotebookLM MCP
 
 La aplicación preserva otros servidores MCP y agrega `notebooklm` con la
-versión que este proyecto ha verificado:
+versión fijada por el contrato de la skill instalada (`release.rs` la lee de
+`release/release-config.json`; nunca se hardcodea aquí, para no
+desincronizarse del release real):
 
 ```json
 {
   "mcpServers": {
     "notebooklm": {
       "command": "npx",
-      "args": ["-y", "@charlie.act7/gemini-notebook-mcp@2.3.3"]
+      "args": ["-y", "@charlie.act7/gemini-notebook-mcp@<versión del contrato>"]
     }
   }
 }
@@ -176,10 +178,10 @@ incluye.
 
 ### La guía no compila
 
-- Ejecuta primero `node scripts/latex-linter.js <guia.tex>`.
-- Revisa los requisitos de `skill/references/compilacion.md`.
-- En Windows, el validador completo de la skill requiere WSL 2 y TeX Live.
-- En macOS y Linux utiliza `pdflatex` y `biber` nativos.
+- Ejecuta primero `jintia validate guide.json` para descartar errores de estructura/esquema.
+- Confirma que Vivliostyle CLI está instalado y accesible (la app lo administra; revisa el estado en Configuración > Entorno).
+- Si validas manualmente, `jintia preflight guide.html` detecta problemas de paginación antes de compilar.
+- No hay dependencia de ninguna distribución ni compilador de documentos externo en ninguna plataforma: el motor es HTML + Vivliostyle CLI.
 
 ## Alcance de privacidad
 

@@ -5,8 +5,8 @@ que ejecutan. La detección distingue alcance de proyecto y global, skills
 existentes y soporte de hooks.
 
 ```bash
-npx jintia detect . --json
-npx jintia detect . --providers=claude,codex,cursor --json
+npx @charlie.act7/jintia detect . --json
+npx @charlie.act7/jintia detect . --providers=claude,codex,cursor --json
 ```
 
 La selección prioriza proveedores explícitos, luego carpetas del proyecto,
@@ -17,11 +17,11 @@ una acción explícita.
 ## Estados y ciclo de vida
 
 ```bash
-npx jintia harness status --project ./curso --providers=claude,codex,cursor --json
-npx jintia harness install --project ./curso --scope=project --providers=claude,codex,cursor --yes
-npx jintia harness update --project ./curso --scope=global --providers=claude,codex --yes
-npx jintia harness repair --project ./curso --scope=project --providers=cursor --yes
-npx jintia harness uninstall --project ./curso --scope=project --providers=cursor --yes
+npx @charlie.act7/jintia harness status --project ./curso --providers=claude,codex,cursor --json
+npx @charlie.act7/jintia harness install --project ./curso --scope=project --providers=claude,codex,cursor --yes
+npx @charlie.act7/jintia harness update --project ./curso --scope=global --providers=claude,codex --yes
+npx @charlie.act7/jintia harness repair --project ./curso --scope=project --providers=cursor --yes
+npx @charlie.act7/jintia harness uninstall --project ./curso --scope=project --providers=cursor --yes
 ```
 
 Los estados son `not-detected`, `detected`, `installed`, `outdated`,
@@ -57,8 +57,13 @@ agrégalo a mano una vez:
 ```toml
 [mcp_servers.notebooklm]
 command = "npx"
-args = ["-y", "@charlie.act7/gemini-notebook-mcp@2.3.3"]
+args = ["-y", "@charlie.act7/gemini-notebook-mcp@<versión del contrato>"]
 ```
+
+Sustituye `<versión del contrato>` por el valor de `mcp.version` en
+`release/release-config.json` de la skill instalada (`release.rs` lo lee y
+valida su integridad SRI) — no fijar aquí un número de versión que pueda
+desincronizarse en el próximo release.
 
 `openai-plugin/.mcp.json` es un archivo distinto: alimenta el plugin/conector
 de la app de ChatGPT (`~/.codex/plugins/jintia/.mcp.json` +
