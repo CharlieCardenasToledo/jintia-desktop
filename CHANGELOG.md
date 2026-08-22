@@ -5,6 +5,19 @@ y versionado semántico.
 
 ## Sin publicar
 
+## 1.1.2 — 2026-08-22
+
+### Corregido
+
+- **Instalación de la skill:** en vez de instalar siempre `@charlie.act7/jintia@latest` a ciegas, Desktop ahora resuelve la versión más reciente publicada en npm cuyo `minimumDesktopVersion` esta versión de Desktop satisface. Si la resolución falla por cualquier motivo (sin red, metadatos inesperados), sigue usando `@latest` como antes — el comportamiento previo nunca empeora, y la instalación sigue protegida por la validación de contrato y el rollback existentes.
+- Mensaje de error más accionable cuando una versión de la skill exige un Desktop más nuevo (aclara que la instalación actual no se modifica).
+
+### Documentación
+
+- Sincronizada toda la documentación pública (`PRODUCT.md`, `docs/architecture.md`, `docs/guia-claude-desktop.md`, `docs/generate-weekly-guide.md`, `docs/rules.md`, `docs/troubleshooting.md`, `docs/notebooklm.md`, `docs/harnesses.md`, `CONTRIBUTING.md`) con la arquitectura vigente desde la migración a la skill como dependencia npm en runtime: sin LaTeX/xelatex/Biber/MiKTeX/TeX Live, sin `skill.lock.json`/`build.rs`/payload embebido, sin hardcodear la versión del MCP de NotebookLM, y con `npx @charlie.act7/jintia` (con scope) en todos los ejemplos.
+- Corregidos los comandos conceptuales `/jintia guide`/`/jintia assessment` embebidos en los prompts de `src/pages/courses.js`: no son slash-commands reales (`/jintia` no está registrado; la skill se invoca como `jintia-skill`).
+- Añadido `scripts/check-docs.mjs` (wired en CI) para detectar automáticamente este tipo de drift documental en el futuro.
+
 ## 1.1.1 — 2026-08-01
 
 ### Corregido
