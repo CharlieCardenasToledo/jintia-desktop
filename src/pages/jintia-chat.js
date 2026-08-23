@@ -56,6 +56,11 @@ import {
   showNotebookQuestionCompleted,
   resetNotebookEvidenceCards,
 } from "../notebook-evidence.js";
+import {
+  isJintiaCliCall,
+  showJintiaProgress,
+  resetJintiaProgress,
+} from "../jintia-progress.js";
 
 // Configurar marked: sin modo pedantic, con saltos de línea = <br>
 marked.use({ breaks: true, gfm: true });
@@ -648,6 +653,7 @@ function disconnectSSE() {
   _assistantRaw    = "";
   _currentPartType = null;
   resetNotebookEvidenceCards();
+  resetJintiaProgress();
 }
 
 // Carga modelos disponibles desde OpenCode y puebla el selector.
@@ -1231,6 +1237,7 @@ function handleSSE(event) {
       // como actividad (evita filtrar nombres técnicos crudos al usuario).
       if (part.type === "reasoning" || part.type === "tool") {
         const isNotebookQuery = part.type === "tool" && isNotebookAskQuestionTool(part.tool);
+        const isJintiaCli     = part.type === "tool" && isJintiaCliCall(part);
         // La consulta a NotebookLM es evidencia, no "actividad del sistema"
         // genérica: se muestra como una tarjeta de fuente aparte (pregunta
         // exacta visible de inmediato) en vez de "Ejecutando una tarea
@@ -1239,6 +1246,15 @@ function handleSSE(event) {
         if (isNotebookQuery) {
           showNotebookQuestionRunning(el("jc-activity-feed"), part.callID, part.state?.input);
           setStatus("Consultando las fuentes del curso…", "working");
+        } else if (isJintiaCli) {
+          // jintia ready / jintia plan approve: la skill ya calcula sus
+          // propias fases deterministas (ver progress-events.js en la skill)
+          // — se traducen a la tarjeta de 5 fases en vez de "Ejecutando una
+          // tarea (bash)…". showJintiaProgress no crea la tarjeta si aún no
+          // llegó ningún evento (puede que OpenCode no entregue nada hasta
+          // que el part cierre; ver jintia-progress.js).
+          showJintiaProgress(el("jc-activity-feed"), part.state?.input);
+          setStatus("Preparando la guía…", "working");
         } else {
           const label = part.type === "reasoning" ? "Analizando contenido…" : `Ejecutando una tarea${part.tool ? ` (${part.tool})` : ""}…`;
           setStatus(label.replaceAll("OpenCode", "Jintia"), "working");
@@ -1253,6 +1269,8 @@ function handleSSE(event) {
       // Part cerrado
       if (part.type === "tool" && isNotebookAskQuestionTool(part.tool)) {
         showNotebookQuestionCompleted(el("jc-activity-feed"), part.callID, part.state?.output);
+      } else if (part.type === "tool" && isJintiaCliCall(part)) {
+        showJintiaProgress(el("jc-activity-feed"), part.state?.output);
       }
       _currentPartType = null;
     }
@@ -2803,6 +2821,7 @@ function resetConversation({ announce = false } = {}) {
   _currentPartType = null;
   _currentPartId   = null;
   resetNotebookEvidenceCards();
+  resetJintiaProgress();
   _busy = false;
   _codexThreadId = null;
   _codexTurnId = null;
