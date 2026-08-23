@@ -222,6 +222,7 @@ function claudeInterruptTurn({ requestId } = {}) {
 
 const handlers = {
   check_dependencies: () => state.dependencies.map(d => ({ ...d })),
+  check_skill_update_status: () => ({ installedVersion: null, latestNpmVersion: null, updateAvailable: false }),
   get_onboarding_status: () => ({ ...state.onboarding }),
   advance_onboarding: advanceOnboarding,
   go_to_onboarding_step: goToOnboardingStep,

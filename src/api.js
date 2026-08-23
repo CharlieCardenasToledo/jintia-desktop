@@ -101,6 +101,10 @@ export async function downloadSkillRuntime(app) {
   return invoke("download_skill_runtime");
 }
 
+export async function checkSkillUpdateStatus() {
+  return invoke("check_skill_update_status");
+}
+
 export async function resetOnboarding() {
   return invoke("reset_onboarding");
 }

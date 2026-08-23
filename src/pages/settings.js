@@ -1,6 +1,6 @@
 import {
   applyInstitutionConfig, checkDependencies, getVisualInstallProfiles, installDependency,
-  downloadNodeRuntime, downloadPythonRuntime, downloadSkillRuntime, installVivliostyleCli,
+  downloadNodeRuntime, downloadPythonRuntime, downloadSkillRuntime, checkSkillUpdateStatus, installVivliostyleCli,
   configureMcp, configureCodexMcp, getSetupStatus, checkNotebookLMAuth, runNotebookLMAuth,
   installSkill, installOpenAIPlugin,
   resetOnboarding, getSkillPath, extractSitePalette, runSkillTool, detectHarnesses, manageHarnesses,
@@ -1125,6 +1125,61 @@ async function loadSetupStatus() {
   }
 }
 
+// Compara la Jintia Skill ya instalada contra el @latest publicado en npm
+// (check_skill_update_status, ver release.rs) y, si difiere, reemplaza el
+// badge "OK" de esa fila por la versión disponible + un botón "Actualizar".
+// Se llama después de pintar la fila (no bloquea la carga de dependencias:
+// la consulta a npm puede tardar o fallar sin red, y en ese caso simplemente
+// no se muestra nada nuevo).
+async function refreshSkillUpdateBadge(container) {
+  const row = [...container.querySelectorAll("[data-settings-dependency]")]
+    .find(candidate => candidate.dataset.settingsDependency === "Jintia Skill");
+  const actions = row?.querySelector("[data-dependency-actions]");
+  if (!actions) return;
+  let status;
+  try {
+    status = await checkSkillUpdateStatus();
+  } catch {
+    return; // sin red o falla la consulta: no hay nada que avisar, no es un error del usuario
+  }
+  if (!status?.updateAvailable || !status.latestNpmVersion) return;
+  if (!actions.isConnected) return; // la sección pudo haberse vuelto a renderizar mientras esperábamos
+
+  actions.innerHTML = `
+    <div class="flex flex-col items-end gap-1">
+      <span class="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">Nueva versión: ${escapeHtml(status.latestNpmVersion)}</span>
+      <button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-update-skill>Actualizar Jintia Skill</button>
+    </div>`;
+  refreshIcons();
+
+  actions.querySelector("[data-update-skill]")?.addEventListener("click", async () => {
+    const btn = actions.querySelector("[data-update-skill]");
+    btn.disabled = true;
+    btn.textContent = "Actualizando…";
+    try {
+      const result = await runDependencyWithSettingsProgress(
+        container,
+        "Jintia Skill",
+        () => downloadSkillRuntime()
+      );
+      if (result.success) {
+        toast(result.message, "success", 5000);
+        loadDeps();
+        loadSetupStatus();
+      } else {
+        toast(result.message, "error", 6000);
+      }
+    } catch (e) {
+      toast(`Error: ${e}`, "error", 6000);
+    } finally {
+      if (btn.isConnected) {
+        btn.disabled = false;
+        btn.textContent = "Actualizar Jintia Skill";
+      }
+    }
+  });
+}
+
 async function loadDeps() {
   const container = document.getElementById("deps-content");
   if (!container) return;
@@ -1200,7 +1255,7 @@ async function loadDeps() {
               </div>
             </div>
           </div>
-          <div class="${ui.list.right}">
+          <div class="${ui.list.right}" data-dependency-actions>
             ${!dep.installed && dep.installable !== false
               ? dep.name === "Node.js"
                 ? `<button class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}" data-download-node>Descargar Node.js portable</button>`
@@ -1314,6 +1369,13 @@ async function loadDeps() {
         btn.textContent = "Instalar Jintia Skill";
       }
     });
+
+    // Solo tiene sentido si la skill ya está instalada: compara contra npm
+    // en segundo plano y, si hay una versión más nueva, agrega un botón
+    // "Actualizar" sin bloquear el resto de la pantalla mientras responde.
+    if (deps.some(d => d.name === "Jintia Skill" && d.installed)) {
+      refreshSkillUpdateBadge(container);
+    }
 
     container.querySelector("#visual-install-profile")?.addEventListener("change", event => {
       localStorage.setItem("jintia.visualProfile", event.target.value);

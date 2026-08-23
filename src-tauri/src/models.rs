@@ -116,6 +116,18 @@ pub struct CapabilityStatus {
 
 pub type DependencyStatus = CapabilityStatus;
 
+/// Estado de actualización de la Jintia Skill instalada frente al `@latest`
+/// publicado en npm. Comparación simple, sin lógica de compatibilidad de
+/// por medio (eso lo resuelve `release::resolve_latest_compatible_version`
+/// al momento de instalar, no este chequeo informativo).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUpdateStatus {
+    pub installed_version: Option<String>,
+    pub latest_npm_version: Option<String>,
+    pub update_available: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LongOperationStatus {

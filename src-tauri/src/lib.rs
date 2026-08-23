@@ -45,6 +45,17 @@ async fn check_dependencies() -> Vec<DependencyStatus> {
 }
 
 #[tauri::command]
+async fn check_skill_update_status() -> models::SkillUpdateStatus {
+    tauri::async_runtime::spawn_blocking(release::check_skill_update)
+        .await
+        .unwrap_or(models::SkillUpdateStatus {
+            installed_version: None,
+            latest_npm_version: None,
+            update_available: false,
+        })
+}
+
+#[tauri::command]
 async fn download_node_runtime(app: tauri::AppHandle) -> ActionResult {
     tauri::async_runtime::spawn_blocking(move || {
         runtimes::download_portable_node(&app)
@@ -1228,6 +1239,7 @@ pub fn run() {
             opencode_stop_course,
             opencode_health,
             agent_restart_engine,
+            check_skill_update_status,
             agent_create_session,
             agent_send_message,
             agent_get_messages,

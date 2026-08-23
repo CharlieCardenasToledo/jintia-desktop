@@ -407,6 +407,44 @@ pub fn resolve_latest_compatible_version(desktop_version: &str) -> Option<String
     None
 }
 
+/// ¿La versión instalada difiere de la última compatible? Función pura
+/// (sin I/O) para poder probar la comparación sin red: la ambigüedad real
+/// (versión inválida, ausente, etc.) siempre resuelve a "sin actualización
+/// disponible" — nunca se ofrece actualizar sobre datos que no se pudieron
+/// interpretar con certeza.
+fn skill_update_available(installed: Option<&str>, latest_compatible: Option<&str>) -> bool {
+    match (installed, latest_compatible) {
+        (Some(installed), Some(compatible)) => {
+            match (Version::parse(installed), Version::parse(compatible)) {
+                (Ok(installed), Ok(compatible)) => compatible > installed,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Compara la Jintia Skill instalada localmente contra lo publicado en npm:
+/// solo si la versión instalada es distinta (más vieja) que el `@latest`
+/// real de npm — sin lógica de compatibilidad de por medio, eso lo sigue
+/// resolviendo `resolve_latest_compatible_version` al momento de instalar/
+/// actualizar (download_portable_skill), no este chequeo informativo. Nunca
+/// falla: cualquier problema de red o parseo se refleja como `None`, no
+/// como error.
+pub fn check_skill_update() -> crate::models::SkillUpdateStatus {
+    let installed_version = managed_release_contract().ok().map(|c| c.jintia_version);
+    let latest_npm_version = fetch_registry_versions()
+        .ok()
+        .and_then(|versions| versions.first().map(|(version, _)| version.to_string()));
+    let update_available =
+        skill_update_available(installed_version.as_deref(), latest_npm_version.as_deref());
+    crate::models::SkillUpdateStatus {
+        installed_version,
+        latest_npm_version,
+        update_available,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,5 +890,34 @@ mod tests {
         let content = serde_json::to_vec(&serde_json::json!({ "other": "x" })).unwrap();
         let tarball = make_tarball("package/release/release-config.json", &content);
         assert!(parse_minimum_desktop_version_from_tarball(&tarball).is_err());
+    }
+
+    // ── skill_update_available ──────────────────────────────────────────────
+
+    #[test]
+    fn skill_update_available_is_true_when_compatible_is_newer() {
+        assert!(skill_update_available(Some("11.6.10"), Some("11.7.0")));
+    }
+
+    #[test]
+    fn skill_update_available_is_false_when_versions_match() {
+        assert!(!skill_update_available(Some("11.6.10"), Some("11.6.10")));
+    }
+
+    #[test]
+    fn skill_update_available_is_false_when_compatible_is_older() {
+        // No debería pasar en la práctica (resolve_latest_compatible_version
+        // nunca devuelve algo más viejo que lo instalado), pero si pasara no
+        // debe ofrecerse como "actualización".
+        assert!(!skill_update_available(Some("11.7.0"), Some("11.6.10")));
+    }
+
+    #[test]
+    fn skill_update_available_is_false_when_either_side_is_missing_or_invalid() {
+        assert!(!skill_update_available(None, Some("11.7.0")));
+        assert!(!skill_update_available(Some("11.6.10"), None));
+        assert!(!skill_update_available(None, None));
+        assert!(!skill_update_available(Some("not-a-version"), Some("11.7.0")));
+        assert!(!skill_update_available(Some("11.6.10"), Some("not-a-version")));
     }
 }
