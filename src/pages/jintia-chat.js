@@ -9,7 +9,7 @@
  * (message.part.delta) se acumulan en silencio y se revelan completos al
  * cerrar el turno (ver settleAssistantBubble) — no se muestran token a token.
  */
-import { invoke }     from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen }     from "@tauri-apps/api/event";
 import { marked }     from "marked";
 import { ic, refreshIcons } from "../icons.js";
@@ -61,6 +61,8 @@ import {
   showJintiaProgress,
   noteJintiaEvidenceActivity,
   resetJintiaProgress,
+  startJournalListener,
+  extractReadyReport,
 } from "../jintia-progress.js";
 
 // Configurar marked: sin modo pedantic, con saltos de línea = <br>
@@ -83,6 +85,7 @@ let _course          = null;
 let _sessionId       = null;
 let _port            = 0;
 let _sse             = null;   // EventSource activo
+let _journalUnlisten = null;   // cancela la suscripción a eventos "jintia-progress" (journal en vivo)
 let _assistantEl     = null;   // <div> que recibe deltas de respuesta
 let _assistantRaw    = "";     // texto acumulado en bruto para convertir a MD al final
 let _currentPartType = null;   // "reasoning" | "text" | null — part activo según SSE
@@ -647,6 +650,7 @@ function connectSSE(port) {
 
 function disconnectSSE() {
   if (_sse) { _sse.close(); _sse = null; }
+  if (_journalUnlisten) { _journalUnlisten(); _journalUnlisten = null; }
   stopOpenCodeProgressTimer();
   clearOpenCodeStallWatchdog();
   _turnSupervisor  = null;
@@ -1098,6 +1102,77 @@ async function respondToOpenCodePermission(props) {
 }
 
 /**
+ * Tarjeta de aprobación humana antes de compilar el PDF final. `ready
+ * --skip-pdf` ya congeló un snapshot inmutable de fuentes+HTML en
+ * `.jintia-revisions/<hash>/guide.html` y reportó su hash — aquí solo se
+ * previsualiza exactamente ese HTML congelado (nunca se re-renderiza) y, si
+ * el docente aprueba, Desktop firma (Ed25519, clave que nunca sale de esta
+ * instalación) y compila directamente, sin que el agente vuelva a
+ * intervenir en el tramo final — ver approval.rs para el porqué de la firma
+ * en vez de solo comparar un hash.
+ */
+function showApprovalCard(feed, { coursePath, week, revision }) {
+  if (!feed || !coursePath || !Number.isFinite(week) || !revision?.hash || !revision?.path) return;
+  const htmlPath = `${revision.path}/guide.html`.replace(/\\/g, "/");
+  const previewUrl = convertFileSrc(htmlPath);
+
+  const wrap = document.createElement("div");
+  wrap.className = "jc-route-step mb-5 jc-msg-in";
+  wrap.innerHTML = `
+    <article class="jc-message-card" aria-label="Aprobación de guía">
+      <div class="px-4 py-3 text-sm leading-relaxed text-slate-800">
+        <div class="jc-work-label"><span class="jc-work-label-dot" aria-hidden="true"></span>Aprobación requerida</div>
+        <p class="mt-1 font-semibold text-slate-900">La guía está lista para publicarse. Revisa el resultado antes de generar el PDF.</p>
+        <iframe src="${previewUrl}" class="mt-3 w-full rounded-lg border border-slate-200 bg-white" style="height:420px;" title="Vista previa de la guía"></iframe>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button type="button" data-jc-approval-reject class="jc-message-action rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 transition hover:border-teal-300 hover:bg-teal-50">Solicitar cambios</button>
+          <button type="button" data-jc-approval-accept class="jc-message-action rounded-lg border border-transparent bg-teal-700 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-800">Aprobar guía</button>
+        </div>
+        <p data-jc-approval-status class="mt-2 text-xs text-slate-500"></p>
+      </div>
+    </article>`;
+
+  const acceptBtn = wrap.querySelector("[data-jc-approval-accept]");
+  const rejectBtn = wrap.querySelector("[data-jc-approval-reject]");
+  const statusEl  = wrap.querySelector("[data-jc-approval-status]");
+
+  acceptBtn?.addEventListener("click", async () => {
+    acceptBtn.disabled = true;
+    if (rejectBtn) rejectBtn.disabled = true;
+    if (statusEl) statusEl.textContent = "Firmando y publicando…";
+    try {
+      await invoke("grant_guide_approval", { projectPath: coursePath, week, hash: revision.hash });
+      const result = await invoke("publish_guide", { projectPath: coursePath, week });
+      if (result?.success === false) {
+        throw new Error((result.stderr || result.stdout || "La compilación no tuvo éxito.").trim());
+      }
+      if (statusEl) statusEl.textContent = "Guía aprobada y PDF publicado.";
+      toast("Guía aprobada y PDF publicado.", "success", 5000);
+    } catch (error) {
+      if (statusEl) statusEl.textContent = `No se pudo publicar: ${error}`;
+      acceptBtn.disabled = false;
+      if (rejectBtn) rejectBtn.disabled = false;
+      toast(`No se pudo publicar la guía: ${error}`, "error", 8000);
+    }
+  });
+
+  rejectBtn?.addEventListener("click", () => {
+    acceptBtn.disabled = true;
+    rejectBtn.disabled = true;
+    if (statusEl) statusEl.textContent = "Cambios solicitados.";
+    const input = el("jc-input");
+    if (input) {
+      input.value = "El docente solicitó cambios sobre esta revisión de la guía antes de aprobarla.";
+      sendMessage();
+    }
+  });
+
+  feed.appendChild(wrap);
+  refreshIcons();
+  scrollFeed();
+}
+
+/**
  * Pregunta estructurada de OpenCode (tool "question"): igual que un permiso,
  * detiene el turno hasta recibir respuesta. El bug que esto evita: antes,
  * el siguiente mensaje del usuario (p. ej. "continuar") se encolaba como un
@@ -1274,6 +1349,18 @@ function handleSSE(event) {
         showNotebookQuestionCompleted(el("jc-activity-feed"), part.callID, part.state?.output);
       } else if (part.type === "tool" && isJintiaCliCall(part)) {
         showJintiaProgress(el("jc-activity-feed"), { command: part.state?.input?.command, output: part.state?.output, opening: false });
+        // "ready --skip-pdf" congela un snapshot inmutable y reporta su hash:
+        // si el precheck determinístico no bloqueó nada, se ofrece la tarjeta
+        // de aprobación. Sin revision.hash no hay nada que aprobar todavía
+        // (compiló de una vez, o el precheck sí bloqueó).
+        const readyReport = extractReadyReport(part.state?.output);
+        if (readyReport && readyReport.deterministicDecision !== "BLOCKED" && readyReport.revision?.hash) {
+          showApprovalCard(el("jc-activity-feed"), {
+            coursePath: _course?.project_path,
+            week: Number(_selectedWeek),
+            revision: readyReport.revision,
+          });
+        }
       }
       _currentPartType = null;
     }
@@ -1711,6 +1798,13 @@ async function startRuntime(coursePath) {
     _port = info.port;
     if (_runtimeReady) {
       connectSSE(_port);
+      // Rust ya arrancó el watcher del journal dentro de opencode_start_course;
+      // esto solo SUSCRIBE el frontend al evento Tauri que ese watcher reenvía
+      // — sin esto, el progreso en vivo seguiría degradado al salto único que
+      // llega al cerrar el tool call (ver jintia-progress.js).
+      startJournalListener(coursePath, () => el("jc-activity-feed")).then(unlisten => {
+        _journalUnlisten = unlisten;
+      });
       loadModels(coursePath);      // sin await — paralelo
       syncPanelLayout({ force: true });
       loadSessions(coursePath);    // sin await — paralelo

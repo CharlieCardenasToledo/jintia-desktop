@@ -14,6 +14,7 @@ import {
   isJintiaCliCall,
   extractProgressEvents,
   interpretCoarseOutcome,
+  extractReadyReport,
   PHASE_MAP,
   MACRO_PHASES,
   JintiaProgressTracker,
@@ -274,4 +275,28 @@ test('REGRESIÓN — un comando "coarse" cuyo resultado no se puede confirmar se
   const unknownOutcome = interpretCoarseOutcome('salida de texto plano sin campo de estado reconocible');
   tracker.ingestCoarse('compile', unknownOutcome);
   assert.equal(tracker.markers()[4], '●', 'sin poder confirmar el resultado, la fase se queda activa — ni "✓" ni "!" fabricados');
+});
+
+test('extractReadyReport reconoce el shape real de createReport() para "jintia ready" y devuelve report.data', () => {
+  const output = JSON.stringify({
+    schemaVersion: '1.0.0', tool: 'jintia', command: 'ready', status: 'failed', exitCode: 1,
+    errors: [{ code: 'COMMAND_FAILED', message: '}' }],
+    data: {
+      tool: 'jintia ready', target: '/curso/semanas/semana-01/guide.json',
+      steps: [{ step: 'validate --publish', status: 'ok' }],
+      deterministicDecision: 'PRECHECK_READY',
+      revision: { hash: 'abc123', path: '/curso/semanas/semana-01/.jintia-revisions/abc123' },
+    },
+  });
+  const report = extractReadyReport(output);
+  assert.equal(report.deterministicDecision, 'PRECHECK_READY');
+  assert.equal(report.revision.hash, 'abc123');
+});
+
+test('extractReadyReport devuelve null ante salida que no es JSON, JSON sin data.tool==="jintia ready", o vacía', () => {
+  assert.equal(extractReadyReport('JINTIA READY\nObjetivo: guide.json\n'), null, 'salida de texto humano (sin --json) no debe interpretarse como el reporte');
+  assert.equal(extractReadyReport(JSON.stringify({ data: { tool: 'jintia validate' } })), null, 'un reporte de otro comando no debe confundirse con el de ready');
+  assert.equal(extractReadyReport(JSON.stringify({ status: 'failed', errors: [] })), null, 'un reporte sin data (ready.js nunca llegó a correr) no debe lanzar');
+  assert.equal(extractReadyReport(''), null);
+  assert.equal(extractReadyReport(undefined), null);
 });

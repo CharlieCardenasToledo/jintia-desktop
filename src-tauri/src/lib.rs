@@ -1,3 +1,4 @@
+mod approval;
 mod capabilities;
 mod claude;
 mod codex;
@@ -14,6 +15,7 @@ mod palette;
 mod paths;
 mod pdfs;
 mod process;
+mod progress_journal;
 mod release;
 mod runtimes;
 mod toolchain;
@@ -1027,18 +1029,47 @@ async fn save_ai_preference(
 
 #[tauri::command]
 fn opencode_start_course(
+    app: tauri::AppHandle,
     course_path: String,
     manager: tauri::State<opencode::OpenCodeManager>,
+    journal: tauri::State<progress_journal::JournalWatcherManager>,
 ) -> Result<opencode::models::RuntimeInfo, String> {
-    manager.start(&course_path)
+    let result = manager.start(&course_path)?;
+    // El watcher del journal de progreso es independiente del proceso
+    // OpenCode en sí (ver progress_journal.rs) — arranca junto con la
+    // sesión del curso para que esté listo desde el primer turno, y falla
+    // en silencio si el sistema de archivos no coopera (es una mejora de
+    // experiencia, no una garantía; el respaldo vía SSE sigue disponible).
+    journal.start(app, &course_path);
+    // La skill necesita la clave pública vigente para verificar firmas de
+    // aprobación (revision-manager.js::checkApproval, JIN-APR-003 si
+    // falta) — se refresca en cada arranque de sesión en vez de una sola
+    // vez en la vida del curso, para que un curso creado antes de esta
+    // función también quede cubierto sin pasos manuales.
+    if let Err(error) = approval::ensure_public_key_in_course(&course_path) {
+        eprintln!("No se pudo escribir la clave pública de aprobación en el curso: {error}");
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn grant_guide_approval(project_path: String, week: u32, hash: String) -> Result<(), String> {
+    approval::grant_approval(&project_path, week, &hash)
+}
+
+#[tauri::command]
+fn publish_guide(project_path: String, week: u32) -> Result<engine::EngineResult, String> {
+    approval::publish(&project_path, week)
 }
 
 #[tauri::command]
 fn opencode_stop_course(
     course_path: String,
     manager: tauri::State<opencode::OpenCodeManager>,
+    journal: tauri::State<progress_journal::JournalWatcherManager>,
 ) {
     manager.stop(&course_path);
+    journal.stop(&course_path);
 }
 
 #[tauri::command]
@@ -1175,6 +1206,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(opencode::OpenCodeManager::new())
+        .manage(progress_journal::JournalWatcherManager::new())
         .manage(codex::CodexManager::new())
         .manage(claude::ClaudeManager::new())
         .invoke_handler(tauri::generate_handler![
@@ -1237,6 +1269,8 @@ pub fn run() {
             run_migration,
             opencode_start_course,
             opencode_stop_course,
+            grant_guide_approval,
+            publish_guide,
             opencode_health,
             agent_restart_engine,
             check_skill_update_status,
@@ -1280,6 +1314,9 @@ pub fn run() {
                     mgr.stop_all();
                 }
                 if let Some(mgr) = window.try_state::<codex::CodexManager>() {
+                    mgr.stop_all();
+                }
+                if let Some(mgr) = window.try_state::<progress_journal::JournalWatcherManager>() {
                     mgr.stop_all();
                 }
                 // NotebookLM MCP vive en un `static` (mcp::client::CONNECTION),

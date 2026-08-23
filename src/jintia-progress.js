@@ -3,10 +3,24 @@
  *
  * `jintia ready` y `jintia plan approve` (skill/scripts/ready.js,
  * skill/runtime/core/plan-state.js) emiten una línea por transición de paso
- * a stderr, con el sentinel `##JINTIA-EVENT##` seguido de JSON (ver
- * scripts/progress-events.js en el repo de la skill). Cuando el agente
- * OpenCode ejecuta esos comandos vía su tool de shell, esa salida llega a
- * Jintia Desktop como `part.state.output` del tool call correspondiente.
+ * por DOS vías (ver scripts/progress-events.js en el repo de la skill):
+ *
+ * 1. `##JINTIA-EVENT##{...}` a stderr — llega a Jintia Desktop como
+ *    `part.state.output` del tool call de OpenCode, pero solo AL CERRAR el
+ *    tool call (confirmado empíricamente contra un servidor real, ver
+ *    abajo): sirve para no perder nada, no para verlo en vivo.
+ * 2. Un journal de archivo (`<courseRoot>/.jintia/runtime/progress/
+ *    <runId>.jsonl`) vigilado por un watcher nativo en Rust
+ *    (`src-tauri/src/progress_journal.rs`, `notify`, no polling), que
+ *    reenvía cada línea nueva como evento Tauri `"jintia-progress"` — este
+ *    SÍ llega en vivo, segundo a segundo, sin pasar por OpenCode en
+ *    absoluto. `startJournalListener()` de este módulo consume ese canal.
+ *
+ * Ambas vías alimentan el MISMO `JintiaProgressTracker.ingest()` — el
+ * tracker no distingue de dónde vino un evento, solo procesa su forma
+ * `{command, step, status, detail}`. La vía 1 (SSE) queda como respaldo: si
+ * el journal no llegó a iniciarse (permisos, disco, etc.), sigue habiendo
+ * progreso, aunque degradado a "avanza de un salto al cerrar el tool call".
  *
  * Regla de diseño no negociable: la interfaz nunca marca ✓ en una fase que
  * la skill no haya confirmado explícitamente. Concretamente:
@@ -33,17 +47,17 @@
  *     resuelva.
  *
  * Confirmado empíricamente (ejecución real vía el servidor OpenCode,
- * session.shell + suscripción a /event): OpenCode NO entrega
- * part.state.output de forma incremental mientras el comando corre — el
- * part queda en "running" sin ningún output hasta que cierra, y entrega el
- * blob completo de una sola vez al cerrar. Por eso ready()/plan-approve()
- * siempre avanzan de fase "de un salto" al terminar la invocación, nunca
- * paso a paso en vivo con el transporte actual (ver plan
- * idempotent-imagining-waffle.md, Opción A, para el mecanismo que sí
- * permitiría progreso en vivo).
+ * session.shell + suscripción a /event, y además contra una custom tool
+ * propia usando context.metadata() — ni en la versión estable ni en el
+ * build dev más reciente): OpenCode NO entrega ninguna actualización
+ * incremental de una tool call mientras corre, ni por part.state.output ni
+ * por metadata — todo llega de una sola vez al cerrar. Por eso el progreso
+ * en vivo de este módulo depende enteramente del journal (vía 2 arriba),
+ * no de nada que pase por OpenCode.
  */
 
 import { escapeHtml } from "./dom.js";
+import { listen } from "@tauri-apps/api/event";
 
 const SENTINEL = "##JINTIA-EVENT##";
 
@@ -408,4 +422,51 @@ export function noteJintiaEvidenceActivity(feed) {
 export function resetJintiaProgress() {
   _tracker = new JintiaProgressTracker();
   _cardEl = null;
+}
+
+/**
+ * Suscribe el canal de progreso EN VIVO (journal + watcher nativo, ver
+ * cabecera del archivo) para un curso concreto. `getFeed` se llama en cada
+ * evento (no una sola vez al suscribir) para tolerar que el feed del chat
+ * se recree entre turnos — mismo patrón que `el(...)` en jintia-chat.js.
+ *
+ * Cada evento nativo trae `{coursePath, event}` (ver
+ * src-tauri/src/progress_journal.rs) porque puede haber más de un curso con
+ * sesión activa a la vez; los de un curso distinto al indicado se ignoran
+ * para no mezclar el progreso de dos trabajos.
+ *
+ * @returns {Promise<() => void>} función para cancelar la suscripción.
+ */
+export async function startJournalListener(coursePath, getFeed) {
+  return listen("jintia-progress", event => {
+    const payload = event?.payload;
+    if (!payload || payload.coursePath !== coursePath) return;
+    const feed = typeof getFeed === "function" ? getFeed() : getFeed;
+    if (!feed) return;
+    _tracker.ingest([payload.event]);
+    renderIfTouched(feed, true);
+  });
+}
+
+/**
+ * Extrae el reporte real de `jintia ready --json` de la salida de un tool
+ * call (el shape que ya produce `createReport()` del lado de la skill,
+ * confirmado en los commits `afb83a0`/`4456dd5`: `{..., data: {tool,
+ * deterministicDecision, revision, ...}}`). Se usa para detectar
+ * `PRECHECK_READY` + `revision.hash` y mostrar la tarjeta de vista previa/
+ * aprobación — independiente de `extractProgressEvents`, que sigue
+ * ocupándose solo de los eventos `##JINTIA-EVENT##` de progreso.
+ * @returns {object|null}
+ */
+export function extractReadyReport(output) {
+  const text = typeof output === "string" ? output : "";
+  if (!text.trim()) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!parsed || parsed.data?.tool !== "jintia ready") return null;
+  return parsed.data;
 }
