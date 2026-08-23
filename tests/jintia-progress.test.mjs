@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import {
   isJintiaCliCall,
   extractProgressEvents,
+  interpretCoarseOutcome,
   PHASE_MAP,
   MACRO_PHASES,
   JintiaProgressTracker,
@@ -180,7 +181,7 @@ test('ingestCoarse: "guide create" activa la fase 3 sin cerrarla; "guide finaliz
   const tracker = new JintiaProgressTracker();
   tracker.ingestCoarse('guide create', 'running');
   assert.equal(tracker.markers()[2], '●');
-  assert.equal(tracker.currentLabel(), 'Redactando la guía');
+  assert.equal(tracker.currentLabel(), 'Registrando la guía redactada');
   tracker.ingestCoarse('guide create', 'ok');
   assert.equal(tracker.markers()[2], '●', '"guide create" no es terminal: debe seguir activa, no cerrarse');
   tracker.ingestCoarse('guide finalize', 'ok');
@@ -200,4 +201,77 @@ test('noteEvidenceActivity no reabre la fase 2 si ya está cerrada (done/blocked
   assert.equal(tracker.markers()[1], '✓');
   tracker.noteEvidenceActivity();
   assert.equal(tracker.markers()[1], '✓', 'una fase ya cerrada no debe volver a "active"');
+});
+
+test('REGRESIÓN — plan-approve cierra la fase 1 (interior) cuando la fase 2 (evidence) empieza a reportar, no solo cuando termina su propio paso terminal', () => {
+  // plan-approve reparte sus pasos entre fase 1 (syllabus-hash..assessment)
+  // y fase 2 (evidence, su único paso). El paso terminal declarado
+  // ("evidence") solo cierra la fase 2 por sí mismo — sin la regla de
+  // "fase posterior activa cierra fases anteriores con evidencia propia",
+  // la fase 1 se quedaba "●" para siempre aunque el propio plan-approve ya
+  // hubiera progresado más allá de ella.
+  const tracker = new JintiaProgressTracker();
+  tracker.ingest([
+    { event: 'work.progress', command: 'plan-approve', step: 'syllabus-hash', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'week', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'targets', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'alignment', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'workload', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'assessment', status: 'ok' },
+  ]);
+  assert.equal(tracker.markers()[0], '●', 'fase 1 debe estar activa tras sus propios pasos, todavía no cerrada');
+  tracker.ingest([{ event: 'work.progress', command: 'plan-approve', step: 'evidence', status: 'ok' }]);
+  assert.equal(tracker.markers()[0], '✓', 'fase 1 debe cerrarse en cuanto la fase 2 (evidence) empieza a reportar — ya no puede seguir "en curso"');
+  assert.equal(tracker.markers()[1], '✓', 'fase 2 se cierra por su propio paso terminal, como antes');
+});
+
+test('REGRESIÓN — ready cierra la fase 4 (interior) cuando compile (fase 5) reporta, incluso si se saltó con --skip-pdf', () => {
+  const tracker = new JintiaProgressTracker();
+  const qualitySteps = ['validate --publish', 'evidence provenance', 'bibliography (pre-render)', 'assets (SVG)', 'render', 'html lint', 'render consistency', 'html content', 'bibliography (post-render)', 'preflight'];
+  for (const step of qualitySteps) tracker.ingest([{ event: 'work.progress', command: 'ready', step, status: 'ok' }]);
+  assert.equal(tracker.markers()[3], '●', 'fase 4 activa tras preflight, todavía no cerrada por sí sola');
+  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'compile (PDF)', status: 'skipped', detail: '--skip-pdf' }]);
+  assert.equal(tracker.markers()[3], '✓', 'fase 4 debe cerrarse en cuanto compile (fase 5) reporta, sin importar si compile en sí se saltó');
+  assert.equal(tracker.markers()[4], '–', 'fase 5 sigue distinguiendo "saltada" de "hecha"');
+});
+
+test('REGRESIÓN — la fase posterior nunca cierra una fase anterior que sigue en "pending" (sin evidencia propia) — no reintroduce el bug de fabricar ✓', () => {
+  // Si un turno SOLO ejecuta `ready` (sin plan-approve, sin NotebookLM, sin
+  // guide create en esta misma sesión de progreso), las fases 1-3 no tienen
+  // ninguna evidencia real — deben quedarse en "pending", no "done".
+  const tracker = new JintiaProgressTracker();
+  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'validate --publish', status: 'ok' }]);
+  assert.deepEqual(tracker.markers().slice(0, 3), ['○', '○', '○'], 'fases sin ningún evento propio deben seguir "pending", nunca "done" por la mera llegada de un evento de una fase posterior');
+});
+
+test('interpretCoarseOutcome reconoce éxito/fallo en las formas JSON reales usadas por la skill (report.js, plan save, ok booleano, exitCode)', () => {
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ status: 'success', exitCode: 0 })), 'ok');
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ status: 'failed', exitCode: 1 })), 'blocked');
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ status: 'saved', state: 'pending' })), 'ok');
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ status: 'error', message: 'x' })), 'blocked');
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ ok: true, message: 'Plan aprobado.' })), 'ok');
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ ok: false, message: 'x' })), 'blocked');
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ exitCode: 0 })), 'ok');
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ exitCode: 2 })), 'blocked');
+});
+
+test('interpretCoarseOutcome devuelve "unknown" (nunca "ok") cuando no hay señal reconocible — OpenCode no expone el exit code real', () => {
+  assert.equal(interpretCoarseOutcome(''), 'unknown');
+  assert.equal(interpretCoarseOutcome(undefined), 'unknown');
+  assert.equal(interpretCoarseOutcome('✓ Plan guardado correctamente'), 'unknown', 'texto humano plano no debe interpretarse como éxito solo por no verse mal');
+  assert.equal(interpretCoarseOutcome(JSON.stringify({ message: 'listo' })), 'unknown', 'un JSON sin ningún campo de estado reconocible no debe asumirse exitoso');
+});
+
+test('REGRESIÓN — un comando "coarse" que falla nunca se muestra como éxito (P0: OpenCode reporta "completed" incluso con exit code != 0)', () => {
+  const tracker = new JintiaProgressTracker();
+  const failedOutput = interpretCoarseOutcome(JSON.stringify({ status: 'failed', exitCode: 1, errors: [{ message: 'JIN-CNT-005' }] }));
+  tracker.ingestCoarse('guide finalize', failedOutput);
+  assert.equal(tracker.markers()[2], '!', 'un "guide finalize" fallido debe mostrarse bloqueado, nunca "✓"');
+});
+
+test('REGRESIÓN — un comando "coarse" cuyo resultado no se puede confirmar se queda activo, ni éxito ni bloqueo fabricados', () => {
+  const tracker = new JintiaProgressTracker();
+  const unknownOutcome = interpretCoarseOutcome('salida de texto plano sin campo de estado reconocible');
+  tracker.ingestCoarse('compile', unknownOutcome);
+  assert.equal(tracker.markers()[4], '●', 'sin poder confirmar el resultado, la fase se queda activa — ni "✓" ni "!" fabricados');
 });

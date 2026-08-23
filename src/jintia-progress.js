@@ -9,20 +9,38 @@
  * Jintia Desktop como `part.state.output` del tool call correspondiente.
  *
  * Regla de diseño no negociable: la interfaz nunca marca ✓ en una fase que
- * la skill no haya confirmado explícitamente. Concretamente, eso significa
- * que este módulo NO rellena fases anteriores como "hechas" solo porque
- * llegó un evento de una fase posterior — si nunca se instrumentó o nunca
- * corrió ese paso en este turno, la fase se queda en "pendiente" (○), no en
- * "✓" fabricado. El precio de esta honestidad es que un turno que solo
- * ejecuta `jintia ready` (porque el plan ya se aprobó en un turno anterior)
- * muestra las fases 1-3 en ○ aunque ese trabajo ya haya ocurrido realmente
- * — es preferible a mentir con un checkmark no confirmado.
+ * la skill no haya confirmado explícitamente. Concretamente:
+ *   - Una fase sin NINGÚN evento propio se queda en "pendiente" (○) para
+ *     siempre — nunca se fabrica un ✓ para una fase sin evidencia real (ver
+ *     REGRESIÓN de fase-3 en la revisión anterior).
+ *   - Una fase que SÍ tiene evidencia propia (llegó a "active" por al menos
+ *     un evento real) se cierra a "done" cuando (a) su propio paso terminal
+ *     reporta "ok"/"skipped", o (b) una fase posterior cualquiera empieza a
+ *     reportar actividad — porque si el trabajo avanzó más allá, esta fase
+ *     ya no puede seguir "en curso". (b) es necesario porque un comando
+ *     (`plan approve`, `ready`) reparte sus propios pasos entre dos fases
+ *     (1+2, 4+5) y el paso terminal SOLO cierra la ÚLTIMA de esas dos — sin
+ *     (b), la fase interior se queda "activa" para siempre aunque el propio
+ *     comando ya haya progresado más allá de ella.
+ *   - Un comando SIN eventos finos (ver COARSE_COMMANDS) solo se marca
+ *     "done" si su salida permite CONFIRMAR éxito (JSON parseable con un
+ *     campo de estado reconocible) — OpenCode no expone el exit code del
+ *     comando ejecutado (confirmado empíricamente: `state.status` del tool
+ *     call es "completed" tanto si el comando exitoso como si falló), así
+ *     que cerrar la fase sin poder confirmarlo sería fabricar un ✓ igual de
+ *     inválido que los que esta regla prohíbe. Sin confirmación, la fase se
+ *     queda "activa" (no bloqueada, no cerrada) hasta que otra señal la
+ *     resuelva.
  *
- * No hay evidencia local de si OpenCode entrega part.state.output de forma
- * incremental mientras el comando corre o solo al cerrar el part — por eso
- * se alimenta tanto al abrir como al cerrar el part, y el tracker degrada
- * con gracia a "avanza la fase de un salto al cerrar" si no hay nada
- * intermedio. Sigue sin confirmarse contra una ejecución real.
+ * Confirmado empíricamente (ejecución real vía el servidor OpenCode,
+ * session.shell + suscripción a /event): OpenCode NO entrega
+ * part.state.output de forma incremental mientras el comando corre — el
+ * part queda en "running" sin ningún output hasta que cierra, y entrega el
+ * blob completo de una sola vez al cerrar. Por eso ready()/plan-approve()
+ * siempre avanzan de fase "de un salto" al terminar la invocación, nunca
+ * paso a paso en vivo con el transporte actual (ver plan
+ * idempotent-imagining-waffle.md, Opción A, para el mecanismo que sí
+ * permitiría progreso en vivo).
  */
 
 import { escapeHtml } from "./dom.js";
@@ -93,10 +111,12 @@ export const PHASE_MAP = {
 };
 
 // El último paso de cada comando que SÍ emite eventos finos: solo al llegar
-// aquí una fase puede pasar a "done" (o "skipped" si el paso se saltó
-// deliberadamente, ej. --skip-pdf). Antes solo existía esta noción para
-// ready/compile — plan-approve nunca cerraba su fase y se quedaba "activo"
-// para siempre aunque hubiera terminado con éxito.
+// aquí la fase de ESE paso puede pasar a "done" (o "skipped" si el paso se
+// saltó deliberadamente, ej. --skip-pdf) directamente por su propio status.
+// Una fase INTERIOR de ese mismo comando (ej. la fase 1 de plan-approve,
+// cuyo único paso terminal declarado aquí es "evidence" — que en realidad
+// es fase 2) se cierra por la regla de "fase posterior activa" en
+// JintiaProgressTracker.ingest(), no por esta tabla.
 const TERMINAL_STEPS = {
   ready: "compile (PDF)",
   "plan-approve": "evidence",
@@ -104,20 +124,54 @@ const TERMINAL_STEPS = {
 
 // Comandos jintia que la skill NO instrumenta con eventos finos (no tienen
 // una secuencia de sub-pasos como ready/plan-approve — son operaciones de
-// un solo gate). Se les da progreso de una sola fase basado únicamente en
-// que el tool call abrió/cerró, no en contenido de stderr. `terminal:true`
-// marca la fase como "done" al cerrar con éxito.
+// un solo gate). Se les da progreso de una sola fase basado en el
+// contenido de su output al cerrar (ver interpretCoarseOutcome) — nunca en
+// el mero hecho de que el tool call haya cerrado, porque OpenCode no
+// distingue un cierre exitoso de uno fallido (confirmado: state.status es
+// "completed" incluso con exit code != 0). `terminal:true` marca la fase
+// como candidata a "done" SOLO si además se pudo confirmar éxito.
 const COARSE_COMMANDS = {
   "plan save":      { phase: 1, label: "Guardando la planificación de la semana" },
   "plan check":     { phase: 1, label: "Revisando el estado del plan" },
   "evidence check": { phase: 2, label: "Comprobando evidencia disponible" },
-  "guide create":   { phase: 3, label: "Redactando la guía" },
+  // "guide create" NO redacta la guía — recibe un draft.json que la IA ya
+  // escribió antes, verifica plan/evidencia, valida el draft, y lo copia a
+  // guide.json. La etiqueta refleja eso, no el momento creativo (que ya
+  // ocurrió antes de esta llamada, fuera de cualquier comando jintia).
+  "guide create":   { phase: 3, label: "Registrando la guía redactada" },
   "guide finalize": { phase: 3, label: "Cerrando la guía", terminal: true },
   validate:         { phase: 4, label: "Revisando estructura académica" },
   render:           { phase: 4, label: "Preparando vista previa" },
   preflight:        { phase: 4, label: "Revisión final" },
   compile:          { phase: 5, label: "Generando documento final", terminal: true },
 };
+
+/**
+ * ¿El output de un comando "coarse" permite confirmar éxito o fallo? No hay
+ * exit code disponible (ver arriba) — el único rastro es el propio output.
+ * Los comandos de esta familia usan formas JSON heterogéneas
+ * (`{status:"success"|"failed",...}` vía report.js/createReport() para
+ * validate/render/preflight/compile; `{status:"saved"|"error",...}` para
+ * plan save; `{ok:true|false,...}` para plan check/approve-like) — en vez
+ * de mantener una lista por comando, se buscan las señales que SÍ son
+ * inequívocas en cualquiera de esas formas. Si no hay salida parseable con
+ * una señal reconocible, devuelve "unknown" — nunca "ok" por defecto, para
+ * no fabricar una confirmación que no existe.
+ */
+export function interpretCoarseOutcome(output) {
+  const text = typeof output === "string" ? output : "";
+  if (!text.trim()) return "unknown";
+  let data;
+  try { data = JSON.parse(text); } catch { return "unknown"; }
+  if (!data || typeof data !== "object") return "unknown";
+  if (typeof data.status === "string") {
+    if (data.status === "success" || data.status === "saved" || data.status === "approved") return "ok";
+    if (data.status === "failed" || data.status === "error" || data.status === "blocked") return "blocked";
+  }
+  if (typeof data.ok === "boolean") return data.ok ? "ok" : "blocked";
+  if (typeof data.exitCode === "number") return data.exitCode === 0 ? "ok" : "blocked";
+  return "unknown";
+}
 
 function matchCoarseCommand(command) {
   if (typeof command !== "string") return null;
@@ -156,12 +210,27 @@ export class JintiaProgressTracker {
     return ["blocked", "done", "skipped"].includes(this._phaseState[idx]);
   }
 
+  /** Cierra a "done" cualquier fase ANTERIOR a `idx` que ya esté "active"
+   * (tiene evidencia real propia). Nunca toca una fase "pending" (sin
+   * ningún evento) — esa es la línea que separa esto de la regresión de la
+   * revisión anterior ("fabricar ✓ para fases sin evidencia"). Aquí la
+   * evidencia sí existe: la fase ya recibió al menos un evento real: lo
+   * único que faltaba confirmar es que no vendrán más eventos suyos, y eso
+   * lo prueba el hecho de que el trabajo ya avanzó a una fase posterior. */
+  _closeEarlierActivePhases(idx) {
+    for (let i = 0; i < idx; i++) {
+      if (this._phaseState[i] === "active") this._phaseState[i] = "done";
+    }
+  }
+
   ingest(events) {
     for (const evt of events) {
       const mapping = PHASE_MAP[evt?.command]?.[evt?.step];
       if (!mapping) continue;
       const idx = mapping.phase - 1;
       if (this._isClosed(idx)) continue;
+
+      this._closeEarlierActivePhases(idx);
 
       if (evt.status === "blocked" || evt.status === "error") {
         this._phaseState[idx] = "blocked";
@@ -186,16 +255,28 @@ export class JintiaProgressTracker {
     return this;
   }
 
-  /** Progreso de un comando SIN eventos finos (ver COARSE_COMMANDS):
-   * una sola fase, activa mientras corre, "done" solo si terminal+ok. */
-  ingestCoarse(key, status) {
+  /** Progreso de un comando SIN eventos finos (ver COARSE_COMMANDS y
+   * interpretCoarseOutcome). `outcome` es "running" (tool call recién
+   * abierto), "ok"/"blocked" (confirmado por el contenido del output), o
+   * "unknown" (cerró pero no se pudo confirmar nada) — "running" y
+   * "unknown" se tratan igual (activa, sin cerrar) porque ninguno de los
+   * dos es evidencia de éxito. */
+  ingestCoarse(key, outcome) {
     const mapping = COARSE_COMMANDS[key];
     if (!mapping) return this;
     const idx = mapping.phase - 1;
     if (this._isClosed(idx)) return this;
+
+    this._closeEarlierActivePhases(idx);
+
+    if (outcome === "blocked") {
+      this._phaseState[idx] = "blocked";
+      this._blockedDetail = mapping.label;
+      return this;
+    }
     this._phaseState[idx] = "active";
     this._currentLabel = mapping.label;
-    if (status === "ok" && mapping.terminal) this._phaseState[idx] = "done";
+    if (outcome === "ok" && mapping.terminal) this._phaseState[idx] = "done";
     return this;
   }
 
@@ -205,6 +286,7 @@ export class JintiaProgressTracker {
   noteEvidenceActivity() {
     const idx = 1;
     if (this._isClosed(idx)) return this;
+    this._closeEarlierActivePhases(idx);
     this._phaseState[idx] = "active";
     this._currentLabel = "Reuniendo evidencia";
     return this;
@@ -302,7 +384,12 @@ export function showJintiaProgress(feed, { command, output, opening = false } = 
   } else {
     const coarse = matchCoarseCommand(command);
     if (coarse) {
-      _tracker.ingestCoarse(coarse, opening ? "running" : "ok");
+      // Al cerrar, OpenCode no distingue éxito de fallo en sus metadatos
+      // (confirmado empíricamente) — el único rastro real es el propio
+      // output, interpretado por interpretCoarseOutcome. "running" solo se
+      // usa al abrir, cuando por definición aún no hay resultado que leer.
+      const outcome = opening ? "running" : interpretCoarseOutcome(output);
+      _tracker.ingestCoarse(coarse, outcome);
       touched = true;
     }
   }
