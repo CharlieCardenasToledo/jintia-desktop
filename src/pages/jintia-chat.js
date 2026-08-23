@@ -1049,6 +1049,13 @@ async function respondToOpenCodePermission(props) {
   const { id, permission, patterns, metadata } = props;
   const target = metadata?.filepath || metadata?.command || (patterns || [])[0] || "";
   const label = OPENCODE_PERMISSION_LABELS[permission] || `usar "${permission}"`;
+  // Igual que en respondToOpenCodeQuestion: un permiso también pausa el
+  // turno sin terminarlo, así que revela cualquier texto que el agente
+  // ya hubiera escrito antes de pedir autorización.
+  settleAssistantBubble();
+  // Ver el comentario equivalente en respondToOpenCodeQuestion: mientras el
+  // usuario decide, esto no es "el modelo atascado".
+  clearOpenCodeStallWatchdog();
   setStatus("Autorización requerida…", "working");
   appendRuntimeActivity(`Se necesita autorización para ${label}.`, "warning");
   const allowed = await confirmDialog({
@@ -1068,6 +1075,8 @@ async function respondToOpenCodePermission(props) {
     setStatus(allowed ? "Permiso concedido, continuando…" : "Permiso denegado, continuando…", "working");
   } catch (error) {
     toast(`No se pudo responder la autorización: ${error}`, "error", 6000);
+  } finally {
+    if (_busy && _provider === "opencode") startOpenCodeStallWatchdog();
   }
 }
 
@@ -1084,6 +1093,17 @@ async function respondToOpenCodeQuestion(props) {
   const { id, questions } = props;
   const feed = el("jc-activity-feed");
   if (!feed || !Array.isArray(questions) || !questions.length) return;
+  // Una pregunta PAUSA el turno, no lo termina: session.status nunca llega a
+  // "idle" mientras espera respuesta. Si el agente ya había escrito la
+  // explicación del plan (o cualquier texto) antes de preguntar, ese texto
+  // sigue acumulado en silencio (ver message.part.delta) y nunca se reveló
+  // — sin esto, la pregunta aparece sin el contexto que la motiva.
+  settleAssistantBubble();
+  // El turno queda en pausa indefinida mientras el usuario decide — nada de
+  // esto es "el modelo atascado", así que el watchdog de failover no debe
+  // seguir corriendo (podría abortar la sesión y cambiar de modelo a mitad
+  // de la decisión del usuario). Se reactiva al enviar la respuesta.
+  clearOpenCodeStallWatchdog();
   setStatus("Decisión requerida…", "working");
 
   const answers = [];
@@ -1109,11 +1129,18 @@ async function respondToOpenCodeQuestion(props) {
         if (submitBtn) submitBtn.disabled = true;
         resolve(labels);
       };
-      (q.options || []).forEach(opt => {
+      // Jerarquía visual: en modo de opción única, la primera alternativa es
+      // la acción recomendada (así la ordena OpenCode) y se distingue con
+      // relleno de color; el resto queda en segundo plano. En modo múltiple
+      // (checklist) todas las opciones pesan igual, así que ninguna se resalta.
+      (q.options || []).forEach((opt, index) => {
+        const isPrimary = !q.multiple && index === 0;
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "jc-message-action w-full rounded-lg border border-slate-200 px-3 py-2 text-left text-sm hover:border-teal-300 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600";
-        btn.innerHTML = `<span class="block font-semibold text-slate-900">${escapeHtml(opt.label)}</span>${opt.description ? `<span class="mt-0.5 block text-xs text-slate-500">${escapeHtml(opt.description)}</span>` : ""}`;
+        btn.className = isPrimary
+          ? "jc-message-action w-full rounded-lg border border-transparent bg-teal-700 px-3 py-2.5 text-left text-sm text-white shadow-sm transition hover:bg-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2"
+          : "jc-message-action w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left text-sm text-slate-800 transition hover:border-teal-300 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600";
+        btn.innerHTML = `<span class="block font-semibold ${isPrimary ? "text-white" : "text-slate-900"}">${escapeHtml(opt.label)}</span>${opt.description ? `<span class="mt-0.5 block text-xs ${isPrimary ? "text-teal-100" : "text-slate-500"}">${escapeHtml(opt.description)}</span>` : ""}`;
         btn.addEventListener("click", () => {
           if (!q.multiple) { finish([opt.label]); return; }
           if (chosen.has(opt.label)) chosen.delete(opt.label); else chosen.add(opt.label);
@@ -1141,6 +1168,8 @@ async function respondToOpenCodeQuestion(props) {
     setStatus("Respuesta enviada, continuando…", "working");
   } catch (error) {
     toast(`No se pudo continuar el trabajo: ${error}`, "error", 6000);
+  } finally {
+    if (_busy && _provider === "opencode") startOpenCodeStallWatchdog();
   }
 }
 
