@@ -59,6 +59,7 @@ import {
 import {
   isJintiaCliCall,
   showJintiaProgress,
+  noteJintiaEvidenceActivity,
   resetJintiaProgress,
 } from "../jintia-progress.js";
 
@@ -1246,14 +1247,16 @@ function handleSSE(event) {
         if (isNotebookQuery) {
           showNotebookQuestionRunning(el("jc-activity-feed"), part.callID, part.state?.input);
           setStatus("Consultando las fuentes del curso…", "working");
+          // Evidencia real de que la fase 2 ("Reuniendo evidencia") está en
+          // curso, aunque no venga de un comando jintia — comparte la misma
+          // tarjeta de progreso en vez de dejarla como un widget suelto.
+          noteJintiaEvidenceActivity(el("jc-activity-feed"));
         } else if (isJintiaCli) {
-          // jintia ready / jintia plan approve: la skill ya calcula sus
-          // propias fases deterministas (ver progress-events.js en la skill)
-          // — se traducen a la tarjeta de 5 fases en vez de "Ejecutando una
-          // tarea (bash)…". showJintiaProgress no crea la tarjeta si aún no
-          // llegó ningún evento (puede que OpenCode no entregue nada hasta
-          // que el part cierre; ver jintia-progress.js).
-          showJintiaProgress(el("jc-activity-feed"), part.state?.input);
+          // jintia ready / plan approve / guide create / validate / etc.:
+          // la skill ya calcula sus propias fases (o, para comandos sin
+          // sub-pasos, al menos su propio inicio/fin) — se traducen a la
+          // tarjeta de 5 fases en vez de "Ejecutando una tarea (bash)…".
+          showJintiaProgress(el("jc-activity-feed"), { command: part.state?.input?.command, output: part.state?.input, opening: true });
           setStatus("Preparando la guía…", "working");
         } else {
           const label = part.type === "reasoning" ? "Analizando contenido…" : `Ejecutando una tarea${part.tool ? ` (${part.tool})` : ""}…`;
@@ -1270,7 +1273,7 @@ function handleSSE(event) {
       if (part.type === "tool" && isNotebookAskQuestionTool(part.tool)) {
         showNotebookQuestionCompleted(el("jc-activity-feed"), part.callID, part.state?.output);
       } else if (part.type === "tool" && isJintiaCliCall(part)) {
-        showJintiaProgress(el("jc-activity-feed"), part.state?.output);
+        showJintiaProgress(el("jc-activity-feed"), { command: part.state?.input?.command, output: part.state?.output, opening: false });
       }
       _currentPartType = null;
     }
@@ -2614,6 +2617,11 @@ async function sendMessage() {
   _busy = true;
   updateComposerState();
   setAbortVisible(true);
+  // Un trabajo nuevo, una tarjeta de progreso nueva: sin esto, un segundo
+  // pedido en la misma conversación (ej. "ahora revisa la semana 4") hereda
+  // fases ya marcadas "done"/"blocked" del trabajo anterior, que el tracker
+  // no reabre a propósito — el progreso pertenece al trabajo, no a la sesión.
+  resetJintiaProgress();
 
   if (_provider === "codex") {
     await sendMessageViaCodex(text);

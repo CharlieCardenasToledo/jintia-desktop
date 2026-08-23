@@ -69,14 +69,17 @@ function ensureCard(feed, callID) {
     <article class="jc-message-card" aria-label="Evidencia de NotebookLM">
       <div class="px-4 py-3 text-sm leading-relaxed text-slate-800">
         <div class="jc-work-label">
-          <span class="jc-work-label-dot" aria-hidden="true"></span>Fuente · NotebookLM
+          <span class="jc-work-label-dot" aria-hidden="true"></span>Consulta · NotebookLM
           <span class="ml-auto rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700" data-nb-status>En curso</span>
         </div>
         <p class="mt-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">Consulta</p>
         <p class="mt-0.5 whitespace-pre-line break-words font-medium text-slate-900" data-nb-question></p>
         <p class="mt-2 text-xs text-slate-500" data-nb-progress>Consultando las fuentes del curso…</p>
         <div class="mt-3 hidden" data-nb-answer-wrap>
-          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Respuesta de las fuentes</p>
+          <!-- NotebookLM sintetiza esta respuesta con IA a partir de los
+               documentos cargados: no es una extracción textual determinista
+               de las fuentes, por eso "basada en" y no "de las fuentes". -->
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Respuesta basada en las fuentes</p>
           <p class="mt-0.5 whitespace-pre-line break-words text-sm leading-relaxed text-slate-800" data-nb-answer></p>
         </div>
         <div class="mt-3 hidden" data-nb-sources-wrap>

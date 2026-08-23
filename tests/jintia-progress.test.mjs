@@ -1,9 +1,12 @@
 // Progreso semántico de la skill en Ask Jintia (jintia-progress.js).
 // La skill emite líneas ##JINTIA-EVENT##{...} a stderr desde
-// scripts/progress-events.js (repo jintia) — estos tests verifican que el
-// parseo, el mapeo a fases humanas y el tracker de estado sean correctos,
-// sin depender de si OpenCode entrega esa salida en vivo o solo al cerrar
-// el tool call (riesgo documentado en el plan de esta feature).
+// scripts/progress-events.js (repo jintia) — estos tests verifican el
+// parseo, el mapeo a fases humanas y el tracker de estado.
+//
+// Regla no negociable que ancla varios de estos tests: la interfaz nunca
+// marca ✓ en una fase que la skill no haya confirmado explícitamente. Los
+// tests marcados "regresión" reproducen bugs reales encontrados en una
+// revisión de código de la primera versión de este módulo.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,9 +24,20 @@ test('isJintiaCliCall reconoce jintia ready y jintia plan approve dentro del com
   assert.equal(isJintiaCliCall({ state: { input: { command: '  jintia   plan   approve  curso 3' } } }), true);
 });
 
+test('isJintiaCliCall también reconoce los comandos de una sola fase (plan save/check, evidence check, guide create/finalize, validate, render, preflight, compile)', () => {
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia plan save curso 3' } } }), true);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia plan check curso 3' } } }), true);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia evidence check curso 3' } } }), true);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia guide create --input draft.json' } } }), true);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia guide finalize' } } }), true);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'node bin/jintia.js validate guide.json' } } }), true);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia render guide.json --output guide.html' } } }), true);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia preflight guide.html' } } }), true);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia compile guide.json' } } }), true);
+});
+
 test('isJintiaCliCall no confunde otros comandos jintia ni tools sin comando', () => {
-  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia validate guide.json' } } }), false);
-  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia plan save' } } }), false);
+  assert.equal(isJintiaCliCall({ state: { input: { command: 'jintia state update curso 1' } } }), false);
   assert.equal(isJintiaCliCall({ state: { input: { command: 'ls -la' } } }), false);
   assert.equal(isJintiaCliCall({}), false);
   assert.equal(isJintiaCliCall(undefined), false);
@@ -57,9 +71,6 @@ test('extractProgressEvents ignora eventos que no son event:"work.progress"', ()
 });
 
 test('PHASE_MAP cubre exactamente los steps que la skill emite (ready.js, plan-state.js)', () => {
-  // Nombres literales tal como aparecen en record()/emitProgress() del lado
-  // de la skill — si algún día cambian ahí, este test debe fallar aquí
-  // primero, no en producción silenciosamente cayendo a "sin traducir".
   const readySteps = [
     'validate --publish', 'evidence provenance', 'bibliography (pre-render)', 'assets (SVG)',
     'render', 'html lint', 'render consistency', 'html content', 'bibliography (post-render)',
@@ -76,14 +87,74 @@ test('PHASE_MAP cubre exactamente los steps que la skill emite (ready.js, plan-s
   }
 });
 
-test('JintiaProgressTracker: una fase completada nunca retrocede a pending/active', () => {
+test('REGRESIÓN — "render" vive en fase 4 (calidad), no en fase 5 (documento)', () => {
+  // render NO es el último paso antes de compile: le siguen html-lint,
+  // render-consistency, html-content, bibliography-post y preflight, todos
+  // fase 4. Ponerlo en fase 5 rompía la monotonía del tracker (ver test de
+  // "toda la cadena de ready avanza sin quedarse pegada").
+  assert.equal(PHASE_MAP.ready.render.phase, 4);
+  assert.equal(PHASE_MAP.ready['compile (PDF)'].phase, 5);
+});
+
+test('REGRESIÓN — un evento de fase 4 (validate --publish) NO marca las fases 1-3 como completadas', () => {
+  // Bug real: el tracker anterior rellenaba TODAS las fases anteriores como
+  // "done" en cuanto llegaba cualquier evento de una fase posterior, aunque
+  // nunca hubiera evidencia real de que esas fases ocurrieron en este turno.
   const tracker = new JintiaProgressTracker();
-  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'render', status: 'ok' }]);
-  const beforeMarkers = tracker.markers();
-  // Un evento "viejo" (de una fase anterior) llega después, fuera de orden.
   tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'validate --publish', status: 'running' }]);
-  const afterMarkers = tracker.markers();
-  assert.deepEqual(afterMarkers, beforeMarkers, 'un evento de una fase ya superada no debe revertir el estado');
+  const markers = tracker.markers();
+  assert.equal(markers[0], '○', 'fase 1 no debe fabricarse como completada');
+  assert.equal(markers[1], '○', 'fase 2 no debe fabricarse como completada');
+  assert.equal(markers[2], '○', 'fase 3 no debe fabricarse como completada');
+  assert.equal(markers[3], '●', 'fase 4 (la que realmente recibió el evento) sí está activa');
+});
+
+test('REGRESIÓN — la cadena completa de ready avanza sin quedarse pegada en un paso intermedio', () => {
+  // Con render en fase 5 (bug), un preflight/html-lint posterior de fase 4
+  // se ignoraba porque el tracker no retrocede. Con todo en fase 4 salvo
+  // compile, cada paso de la cadena debe reflejarse como "activo" en su
+  // momento sin excepción.
+  const tracker = new JintiaProgressTracker();
+  const steps = ['validate --publish', 'evidence provenance', 'bibliography (pre-render)', 'assets (SVG)', 'render', 'html lint', 'render consistency', 'html content', 'bibliography (post-render)', 'preflight'];
+  for (const step of steps) {
+    tracker.ingest([{ event: 'work.progress', command: 'ready', step, status: 'ok' }]);
+    assert.equal(tracker.currentLabel(), PHASE_MAP.ready[step].label, `el paso "${step}" debe reflejarse como la etiqueta activa`);
+    assert.notEqual(tracker.markers()[3], '○', `la fase 4 debe seguir activa/visible en el paso "${step}"`);
+  }
+  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'compile (PDF)', status: 'ok' }]);
+  assert.equal(tracker.markers()[4], '✓', 'compile (PDF) ok debe cerrar la fase 5');
+});
+
+test('REGRESIÓN — plan-approve cierra su fase (evidence=ok) en vez de quedarse "activo" para siempre', () => {
+  const tracker = new JintiaProgressTracker();
+  tracker.ingest([
+    { event: 'work.progress', command: 'plan-approve', step: 'syllabus-hash', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'week', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'targets', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'alignment', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'workload', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'assessment', status: 'ok' },
+    { event: 'work.progress', command: 'plan-approve', step: 'evidence', status: 'ok' },
+  ]);
+  assert.equal(tracker.markers()[1], '✓', 'evidence=ok es el paso terminal de plan-approve: la fase 2 debe quedar "done", no "active" para siempre');
+});
+
+test('REGRESIÓN — ready con --skip-pdf marca la fase final como "saltada", no como un ✓ engañoso', () => {
+  // deterministicDecision queda en PRECHECK_READY, no READY, cuando se usa
+  // --skip-pdf — un checkmark verde ahí sugeriría falsamente que el PDF se
+  // generó.
+  const tracker = new JintiaProgressTracker();
+  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'compile (PDF)', status: 'skipped', detail: '--skip-pdf' }]);
+  assert.equal(tracker.markers()[4], '–');
+  assert.equal(tracker.skippedDetail(), '--skip-pdf');
+});
+
+test('JintiaProgressTracker: una fase completada nunca retrocede a pending/active ante un evento fuera de orden', () => {
+  const tracker = new JintiaProgressTracker();
+  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'compile (PDF)', status: 'ok' }]);
+  const before = tracker.markers();
+  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'compile (PDF)', status: 'running' }]);
+  assert.deepEqual(tracker.markers(), before);
 });
 
 test('JintiaProgressTracker: ignora eventos de un command/step desconocido sin lanzar', () => {
@@ -97,23 +168,36 @@ test('JintiaProgressTracker: ignora eventos de un command/step desconocido sin l
   assert.equal(tracker.hasProgress(), false);
 });
 
-test('JintiaProgressTracker: start→end de un paso refleja active y luego done al llegar a compile (PDF)', () => {
-  const tracker = new JintiaProgressTracker();
-  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'validate --publish', status: 'running' }]);
-  assert.equal(tracker.hasProgress(), true);
-  assert.equal(tracker.isBlocked(), false);
-  assert.equal(tracker.currentLabel(), PHASE_MAP.ready['validate --publish'].label);
-
-  tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'compile (PDF)', status: 'ok' }]);
-  const finalPhaseIdx = PHASE_MAP.ready['compile (PDF)'].phase - 1;
-  assert.equal(tracker.markers()[finalPhaseIdx], '✓');
-});
-
-test('JintiaProgressTracker: un status "blocked" marca esa fase como bloqueada y expone el detalle', () => {
+test('JintiaProgressTracker: un status "blocked"/"error" marca esa fase como bloqueada y expone el detalle', () => {
   const tracker = new JintiaProgressTracker();
   tracker.ingest([{ event: 'work.progress', command: 'ready', step: 'validate --publish', status: 'error', detail: '3 error(es)' }]);
   assert.equal(tracker.isBlocked(), true);
   assert.equal(tracker.blockedDetail(), '3 error(es)');
-  const idx = PHASE_MAP.ready['validate --publish'].phase - 1;
-  assert.equal(tracker.markers()[idx], '!');
+  assert.equal(tracker.markers()[3], '!');
+});
+
+test('ingestCoarse: "guide create" activa la fase 3 sin cerrarla; "guide finalize" ok sí la cierra', () => {
+  const tracker = new JintiaProgressTracker();
+  tracker.ingestCoarse('guide create', 'running');
+  assert.equal(tracker.markers()[2], '●');
+  assert.equal(tracker.currentLabel(), 'Redactando la guía');
+  tracker.ingestCoarse('guide create', 'ok');
+  assert.equal(tracker.markers()[2], '●', '"guide create" no es terminal: debe seguir activa, no cerrarse');
+  tracker.ingestCoarse('guide finalize', 'ok');
+  assert.equal(tracker.markers()[2], '✓', '"guide finalize" es terminal: sí cierra la fase 3');
+});
+
+test('noteEvidenceActivity: una consulta a NotebookLM marca la fase 2 activa sin necesitar un evento de la skill', () => {
+  const tracker = new JintiaProgressTracker();
+  tracker.noteEvidenceActivity();
+  assert.equal(tracker.markers()[1], '●');
+  assert.equal(tracker.currentLabel(), 'Reuniendo evidencia');
+});
+
+test('noteEvidenceActivity no reabre la fase 2 si ya está cerrada (done/blocked)', () => {
+  const tracker = new JintiaProgressTracker();
+  tracker.ingest([{ event: 'work.progress', command: 'plan-approve', step: 'evidence', status: 'ok' }]);
+  assert.equal(tracker.markers()[1], '✓');
+  tracker.noteEvidenceActivity();
+  assert.equal(tracker.markers()[1], '✓', 'una fase ya cerrada no debe volver a "active"');
 });
