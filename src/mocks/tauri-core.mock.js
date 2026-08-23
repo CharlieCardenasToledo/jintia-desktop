@@ -404,6 +404,11 @@ const handlers = {
     port: 14200,
     status: "ready",
   }),
+  agent_restart_engine: ({ coursePath }) => ({
+    course_path: coursePath,
+    port: 14200,
+    status: "ready",
+  }),
   opencode_rename_session: ({ sessionId, title }) => {
     const session = chatSessions.find(entry => entry.id === sessionId);
     if (!session) throw new Error("Conversación no encontrada (mock).");

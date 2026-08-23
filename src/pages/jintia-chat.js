@@ -40,6 +40,13 @@ import {
   trimCodexTechnicalOutput,
 } from "../ai/codexActivity.js";
 import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
+import {
+  classifyFailure,
+  isFailoverEligible,
+  FailureCategory,
+  ModelHealthRegistry,
+  TurnSupervisor,
+} from "../opencode-failover.js";
 
 // Configurar marked: sin modo pedantic, con saltos de línea = <br>
 marked.use({ breaks: true, gfm: true });
@@ -110,6 +117,15 @@ let _openCodeTurnStartedAt = 0;
 let _openCodeProgressTimer = null;
 let _lastRuntimeActivity = "";
 let _runtimeActivityEl = null;
+// Failover automático de modelos (ver src/opencode-failover.js). El registry
+// de salud vive fuera del turno: así una conversación que descubre un modelo
+// agotado evita que otra pierda tiempo reintentándolo mientras dure el
+// cooldown. _turnSupervisor solo existe mientras hay un turno OpenCode activo.
+const _modelHealthRegistry = new ModelHealthRegistry();
+let _turnSupervisor        = null;
+let _availableModels       = []; // [{id, provider_id, name}] — poblado por loadModels()
+let _openCodeStallTimer    = null;
+const OPENCODE_STALL_MS    = 90000; // sin actividad SSE del modelo (no de una tool) → considerarlo atascado
 
 // Diagnóstico común de proveedores. Codex ya deja una traza detallada; estos
 // registros hacen que Claude y OpenCode sean igual de observables durante una
@@ -179,6 +195,28 @@ function startOpenCodeProgressTimer() {
     if (seconds >= 15) setStatus(`Jintia Chat trabajando… ${formatElapsed(seconds)}`, "working");
     providerLog("opencode", "turn.waiting", { elapsedSeconds: seconds, sessionId: _sessionId });
   }, 15000);
+}
+
+// ── Watchdog de "modelo atascado" (time-to-first-token / actividad) ────────
+// A diferencia de startOpenCodeProgressTimer (solo actualiza el texto de
+// estado), este watchdog dispara el failover si el modelo actual lleva
+// OPENCODE_STALL_MS sin producir ninguna señal — ni texto, ni razonamiento,
+// ni una tool. Se reinicia con cada evento SSE relevante (ver handleSSE) y
+// se pausa mientras hay una tool activa: NotebookLM puede tardar minutos
+// investigando y eso no es culpa del modelo elegido.
+function startOpenCodeStallWatchdog() {
+  clearOpenCodeStallWatchdog();
+  _openCodeStallTimer = setTimeout(() => {
+    if (!_busy || _provider !== "opencode" || !_turnSupervisor) return;
+    if (_currentPartType === "tool") return; // una tool sigue activa: no es el modelo el que está atascado
+    providerLog("opencode", "turn.stalled", { sessionId: _sessionId, model: _turnSupervisor.currentModel });
+    triggerOpenCodeFailover("stall", { message: "El modelo no generó actividad en el tiempo esperado." });
+  }, OPENCODE_STALL_MS);
+}
+
+function clearOpenCodeStallWatchdog() {
+  if (_openCodeStallTimer) clearTimeout(_openCodeStallTimer);
+  _openCodeStallTimer = null;
 }
 
 // ── Helpers DOM ────────────────────────────────────────────────────────────
@@ -603,6 +641,8 @@ function connectSSE(port) {
 function disconnectSSE() {
   if (_sse) { _sse.close(); _sse = null; }
   stopOpenCodeProgressTimer();
+  clearOpenCodeStallWatchdog();
+  _turnSupervisor  = null;
   _assistantEl     = null;
   _assistantRaw    = "";
   _currentPartType = null;
@@ -617,6 +657,7 @@ async function loadModels(coursePath) {
       invoke("opencode_list_models", { coursePath }),
       invoke("get_ai_preference").catch(() => null),
     ]);
+    _availableModels = models; // usado por el failover para elegir el siguiente candidato
     const sel = el("jc-model-select");
     if (!sel || !models.length) return;
     sel.innerHTML = models
@@ -1109,6 +1150,13 @@ async function respondToOpenCodeQuestion(props) {
 function handleSSE(event) {
   const props = event.properties || {};
 
+  // Cualquier evento SSE real del turno activo demuestra que OpenCode sigue
+  // vivo — reinicia el watchdog de "modelo atascado" (ver
+  // startOpenCodeStallWatchdog). Solo el silencio total dispara el failover.
+  if (_provider === "opencode" && _busy && _turnSupervisor && props.sessionID === _sessionId) {
+    startOpenCodeStallWatchdog();
+  }
+
   // ── Preguntas estructuradas: bloquean el turno igual que un permiso ────
   if (event.type === "question.asked" || event.type === "question.v2.asked") {
     if (props.sessionID !== _sessionId) return;
@@ -1149,6 +1197,10 @@ function handleSSE(event) {
         const label = part.type === "reasoning" ? "Jintia Chat está razonando…" : `Jintia Chat está usando una herramienta${part.tool ? ` (${part.tool})` : ""}…`;
         setStatus(label.replaceAll("OpenCode", "Jintia Chat"), "working");
         appendRuntimeActivity(label);
+        // Desde aquí en adelante no es seguro repetir el prompt original si
+        // hay que cambiar de modelo: ya se ejecutó (o se está ejecutando)
+        // una herramienta que puede haber modificado archivos.
+        if (part.type === "tool") _turnSupervisor?.noteToolActivity();
       }
     } else {
       // Part cerrado
@@ -1188,6 +1240,8 @@ function handleSSE(event) {
     if (st === "idle") {
       providerLog("opencode", "turn.completed", { sessionId: _sessionId, elapsedSeconds: _openCodeTurnStartedAt ? Math.floor((Date.now() - _openCodeTurnStartedAt) / 1000) : null });
       stopOpenCodeProgressTimer();
+      clearOpenCodeStallWatchdog();
+      _turnSupervisor = null;
       appendRuntimeActivity("Jintia Chat completó la respuesta.");
       settleAssistantBubble();
       _currentPartType = null;
@@ -1205,6 +1259,18 @@ function handleSSE(event) {
       const status = props.status || {};
       const waitSecs = typeof status.next === "number" ? Math.max(0, Math.round((status.next - Date.now()) / 1000)) : null;
       const base = status.action?.message || status.message || "Jintia Chat está reintentando…";
+
+      // OpenCode puede quedarse en este estado sin llegar nunca a
+      // session.error (bug documentado de su propio retry policy). No
+      // esperamos a que decida solo: si ya lleva ≥2 intentos, o el próximo
+      // intento está demasiado lejos, tomamos el control y cambiamos de
+      // modelo en vez de dejarlo reintentar indefinidamente.
+      if (_turnSupervisor?.shouldInterceptRetry(status)) {
+        providerLog("opencode", "turn.retry_intercepted", { attempt: status.attempt, next: status.next, model: _turnSupervisor.currentModel });
+        triggerOpenCodeFailover("retry", status);
+        return;
+      }
+
       providerLog("opencode", "turn.retry", { attempt: status.attempt, message: base, next: status.next });
       appendRuntimeActivity(`${base}${status.attempt ? ` (intento ${status.attempt})` : ""}`, "warning");
       setStatus(waitSecs !== null ? `${base} (reintenta en ${waitSecs}s)` : base, "working");
@@ -1220,9 +1286,26 @@ function handleSSE(event) {
   // ── Error fatal de sesión ─────────────────────────────────────────────
   if (event.type === "session.error") {
     providerLog("opencode", "turn.error_event", props);
+    if (props.sessionID !== _sessionId) return;
+
+    // Antes de rendirse: ¿este fallo amerita cambiar de modelo automáticamente?
+    // MCP (NotebookLM), errores de validación de Jintia o desbordamiento de
+    // contexto NO cambian de modelo — cambiarlo no arregla nada en esos casos.
+    const category = classifyFailure({
+      statusCode: props.error?.data?.statusCode,
+      name: props.error?.name,
+      message: props.error?.message || props.message,
+    });
+    if (_turnSupervisor && isFailoverEligible(category)) {
+      providerLog("opencode", "turn.error_failover", { category, model: _turnSupervisor.currentModel });
+      triggerOpenCodeFailover("error", { category, message: props.error?.message || props.message });
+      return;
+    }
+
     appendRuntimeActivity(props.error?.message || props.message || "Jintia Chat reportó un error.", "error");
     stopOpenCodeProgressTimer();
-    if (props.sessionID !== _sessionId) return;
+    clearOpenCodeStallWatchdog();
+    _turnSupervisor = null;
     settleAssistantBubble();
     _currentPartType = null;
     _currentPartId = null;
@@ -1233,6 +1316,133 @@ function handleSSE(event) {
     setStatus("Error", "error");
     const msg = props.error?.message || props.message || "Error desconocido de Jintia Chat";
     appendErrorMessage(msg);
+  }
+}
+
+// ── Failover automático de modelos ──────────────────────────────────────
+// Decide qué hacer cuando el turno actual falla de una forma que amerita
+// cambiar de modelo (ver src/opencode-failover.js para la política exacta):
+// aborta la sesión en curso, elige el siguiente modelo disponible que no se
+// haya intentado ya, y reenvía el turno con ese modelo — sin que el usuario
+// tenga que reescribir el prompt ni tocar el selector manualmente. Si ya no
+// queda ningún candidato, muestra el diagnóstico de todos los intentos.
+async function triggerOpenCodeFailover(reason, statusOrError) {
+  const supervisor = _turnSupervisor;
+  if (!supervisor || !_course?.project_path || !_sessionId) return;
+
+  const category = reason === "error" && statusOrError?.category
+    ? statusOrError.category
+    : reason === "retry"
+      ? FailureCategory.RETRY_EXHAUSTED
+      : FailureCategory.PROVIDER_TIMEOUT; // reason === "stall"
+  const failMessage = statusOrError?.message
+    || statusOrError?.action?.message
+    || (reason === "retry" ? "OpenCode lleva demasiado tiempo reintentando." : "El modelo no respondió.");
+  const retryAfterMs = typeof statusOrError?.next === "number"
+    ? Math.max(0, statusOrError.next - Date.now())
+    : undefined;
+
+  supervisor.recordFailure(category, failMessage, { retryAfterMs });
+
+  stopOpenCodeProgressTimer();
+  clearOpenCodeStallWatchdog();
+  try {
+    await invoke("agent_abort", { coursePath: _course.project_path, sessionId: _sessionId });
+  } catch (err) {
+    providerLog("opencode", "failover.abort_error", { error: String(err) });
+  }
+
+  const next = supervisor.nextCandidate(_availableModels);
+  if (!next) {
+    _busy = false;
+    _turnSupervisor = null;
+    if (_assistantEl && _assistantRaw) finalizeAssistantBubble(_assistantEl, _assistantRaw);
+    hideThinkingBubble();
+    setSendEnabled(true);
+    setAbortVisible(false);
+    setStatus("Error", "error");
+    const lines = supervisor.summary();
+    appendErrorMessage(
+      `No pude completar este turno con los modelos disponibles.\n\n${lines.join("\n")}`,
+    );
+    return;
+  }
+
+  const previousName = supervisor.currentModel?.name || supervisor.currentModel?.id || "El modelo";
+  appendRuntimeActivity(`${previousName} no está disponible (${failMessage}). Continuando con ${next.name}…`, "warning");
+  toast(`Cambiando a ${next.name}…`, "warning", 5000);
+
+  supervisor.advanceTo({ id: next.id, providerID: next.provider_id, name: next.name });
+  _selectedModel = supervisor.currentModel;
+  const sel = el("jc-model-select");
+  if (sel) sel.value = `${next.provider_id}|${next.id}`;
+
+  const prompt = supervisor.buildRecoveryPrompt();
+  try {
+    await invoke("agent_send_message", {
+      coursePath: _course.project_path,
+      sessionId: _sessionId,
+      message: prompt,
+      modelProvider: supervisor.currentModel.providerID,
+      modelId: supervisor.currentModel.id,
+    });
+    startOpenCodeProgressTimer();
+    startOpenCodeStallWatchdog();
+    setStatus(`Continuando con ${next.name}…`, "working");
+  } catch (err) {
+    // No se pudo ni siquiera aceptar el prompt: probablemente el propio
+    // servidor OpenCode dejó de responder, no el modelo. Reiniciar el motor
+    // en vez de agotar el resto de la lista de modelos contra un servidor caído.
+    providerLog("opencode", "failover.resend_error", { error: String(err) });
+    await recoverOpenCodeServer();
+  }
+}
+
+// Reinicia el proceso de OpenCode cuando el servidor mismo dejó de responder
+// (no un proveedor/modelo puntual). Crea una sesión nueva (la anterior murió
+// con el proceso) y, si había un turno en curso, lo reanuda con el modelo
+// que el failover ya había elegido.
+async function recoverOpenCodeServer() {
+  const supervisor = _turnSupervisor;
+  if (!_course?.project_path) return;
+  appendRuntimeActivity("Jintia Chat dejó de responder. Reiniciando el motor…", "warning");
+  setStatus("Reiniciando el motor…", "working");
+  try {
+    const info = await invoke("agent_restart_engine", { coursePath: _course.project_path });
+    if (info?.status !== "ready") throw new Error(`estado del motor tras reiniciar: ${info?.status}`);
+    _port = info.port;
+    connectSSE(_port);
+    appendRuntimeActivity("Motor recuperado.", "info");
+
+    if (supervisor) {
+      // La sesión anterior murió con el proceso: crear una nueva (misma
+      // función que usa el flujo normal, incluye refrescar el historial).
+      const ok = await createSession();
+      if (!ok) throw new Error("no se pudo crear una sesión nueva tras reiniciar");
+      supervisor.sessionId = _sessionId;
+      await invoke("agent_send_message", {
+        coursePath: _course.project_path,
+        sessionId: _sessionId,
+        message: supervisor.buildRecoveryPrompt(),
+        modelProvider: supervisor.currentModel?.providerID ?? null,
+        modelId: supervisor.currentModel?.id ?? null,
+      });
+      startOpenCodeProgressTimer();
+      startOpenCodeStallWatchdog();
+      showThinkingBubble();
+      setStatus(`Continuando con ${supervisor.currentModel?.name || "el modelo"}…`, "working");
+    } else {
+      setStatus("Jintia Chat listo", "ready");
+    }
+  } catch (err) {
+    providerLog("opencode", "failover.restart_error", { error: String(err) });
+    _busy = false;
+    _turnSupervisor = null;
+    hideThinkingBubble();
+    setSendEnabled(true);
+    setAbortVisible(false);
+    setStatus("Error", "error");
+    appendErrorMessage("No se pudo recuperar Jintia Chat tras reiniciar el motor. Intenta de nuevo.");
   }
 }
 
@@ -2363,6 +2573,15 @@ async function sendMessage() {
     return;
   }
 
+  // Un turno nuevo, un supervisor nuevo: el failover de un turno anterior no
+  // debe influir en este (aparte del circuit breaker global, que sí persiste).
+  _turnSupervisor = new TurnSupervisor({
+    originalPrompt: text,
+    initialModel: _selectedModel,
+    sessionId: _sessionId,
+    registry: _modelHealthRegistry,
+  });
+
   try {
     providerLog("opencode", "turn.submit", { coursePath: _course.project_path, sessionId: _sessionId, model: _selectedModel });
     providerLog("opencode", "turn.request", { sessionId: _sessionId, model: _selectedModel, messageLength: text.length });
@@ -2374,11 +2593,13 @@ async function sendMessage() {
       modelId: _selectedModel?.id ?? null,
     });
     startOpenCodeProgressTimer();
+    startOpenCodeStallWatchdog();
     providerLog("opencode", "turn.accepted", { sessionId: _sessionId });
     showThinkingBubble();
     setStatus("Jintia está pensando…", "working");
   } catch (err) {
     providerLog("opencode", "turn.error", { error: String(err), sessionId: _sessionId });
+    _turnSupervisor = null;
     _busy = false;
     restorePrompt(text);
     setSendEnabled(true);
@@ -2755,6 +2976,8 @@ function bindChatEvents() {
       } else {
         if (!_sessionId) return;
         await invoke("agent_abort", { coursePath: _course.project_path, sessionId: _sessionId });
+        _turnSupervisor = null;
+        clearOpenCodeStallWatchdog();
       }
       // Renderizar lo que haya llegado hasta el momento
       if (_assistantEl && _assistantRaw) {

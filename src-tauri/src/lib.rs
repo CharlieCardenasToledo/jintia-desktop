@@ -1038,6 +1038,14 @@ fn opencode_health(
 }
 
 #[tauri::command]
+fn agent_restart_engine(
+    course_path: String,
+    manager: tauri::State<opencode::OpenCodeManager>,
+) -> Result<opencode::models::RuntimeInfo, String> {
+    manager.restart(&course_path)
+}
+
+#[tauri::command]
 fn agent_create_session(
     course_path: String,
     week: Option<String>,
@@ -1218,6 +1226,7 @@ pub fn run() {
             opencode_start_course,
             opencode_stop_course,
             opencode_health,
+            agent_restart_engine,
             agent_create_session,
             agent_send_message,
             agent_get_messages,

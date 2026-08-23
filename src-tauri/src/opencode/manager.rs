@@ -3,9 +3,12 @@ use super::models::{RuntimeInfo, RuntimeStatus};
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 struct OpenCodeProcess {
     child: Child,
@@ -14,7 +17,55 @@ struct OpenCodeProcess {
 
 const JINTIA_AGENTS_START: &str = "<!-- jintia:ask-context:start -->";
 const JINTIA_AGENTS_END: &str = "<!-- jintia:ask-context:end -->";
-const JINTIA_AGENTS_CONTEXT: &str = "<!-- jintia:ask-context:start -->\n## Ask Jintia\n\nUsa la skill instalada `jintia-skill` para tareas académicas de Jintia. El flujo editorial vigente es `guide.json` → HTML → Vivliostyle. No crees guías LaTeX ni ejecutes `pdflatex`. Responde siempre en español con tono profesional y cercano.\n<!-- jintia:ask-context:end -->";
+
+/// Resuelve el idioma base del curso/desktop para inyectar en AGENTS.md.
+/// Prioridad: .jintia/course.json → institution.json (si tuviera lang) → settings.json → "es"
+fn resolve_base_language(course_path: &Path) -> String {
+    // 1. .jintia/course.json lang
+    let course_cfg = course_path.join(".jintia").join("course.json");
+    if let Ok(text) = std::fs::read_to_string(&course_cfg) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(lang) = v.get("lang").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+                return lang;
+            }
+            if let Some(lang) = v.get("baseLanguage").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+                return lang;
+            }
+        }
+    }
+    // 2. app_config institution.json lang
+    if let Ok(dir) = crate::paths::app_config_dir() {
+        let inst = dir.join("institution.json");
+        if let Ok(text) = std::fs::read_to_string(&inst) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(lang) = v.get("lang").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+                    return lang;
+                }
+                if let Some(lang) = v.get("baseLanguage").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+                    return lang;
+                }
+            }
+        }
+        let settings = dir.join("settings.json");
+        if let Ok(text) = std::fs::read_to_string(&settings) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(lang) = v.get("baseLanguage").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+                    return lang;
+                }
+                if let Some(lang) = v.get("lang").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+                    return lang;
+                }
+            }
+        }
+    }
+    "es".to_string()
+}
+
+fn build_agents_context(lang: &str) -> String {
+    format!(
+        "<!-- jintia:ask-context:start -->\n## Ask Jintia\n\nUsa la skill instalada `jintia-skill` para tareas académicas de Jintia. El flujo editorial vigente es `guide.json` → HTML → Vivliostyle. No crees guías LaTeX ni ejecutes `pdflatex`. Responde siempre en {lang} con tono profesional y cercano.\n<!-- jintia:ask-context:end -->"
+    )
+}
 
 pub struct OpenCodeManager {
     processes: Mutex<HashMap<String, OpenCodeProcess>>,
@@ -147,19 +198,21 @@ impl OpenCodeManager {
     }
 
     fn ensure_jintia_agents_context(course_path: &Path) -> Result<(), String> {
+        let lang = resolve_base_language(course_path);
+        let context = build_agents_context(&lang);
         let path = course_path.join("AGENTS.md");
         let previous = std::fs::read_to_string(&path).unwrap_or_default();
         let next = if let Some(start) = previous.find(JINTIA_AGENTS_START) {
             if let Some(relative_end) = previous[start..].find(JINTIA_AGENTS_END) {
                 let end = start + relative_end + JINTIA_AGENTS_END.len();
-                format!("{}{}{}", &previous[..start], JINTIA_AGENTS_CONTEXT, &previous[end..])
+                format!("{}{}{}", &previous[..start], context, &previous[end..])
             } else {
-                format!("{}\n\n{JINTIA_AGENTS_CONTEXT}\n", previous.trim_end())
+                format!("{}\n\n{context}\n", previous.trim_end())
             }
         } else if previous.trim().is_empty() {
-            format!("# Instrucciones de la asignatura\n\n{JINTIA_AGENTS_CONTEXT}\n")
+            format!("# Instrucciones de la asignatura\n\n{context}\n")
         } else {
-            format!("{}\n\n{JINTIA_AGENTS_CONTEXT}\n", previous.trim_end())
+            format!("{}\n\n{context}\n", previous.trim_end())
         };
         if next != previous {
             crate::paths::atomic_write(&path, next.as_bytes())?;
@@ -230,9 +283,15 @@ impl OpenCodeManager {
         // globalmente.
         let managed_path = Self::managed_process_path();
 
+        // Windows: ocultar ventana de terminal y evitar herencia de consola.
+        // Se usa CREATE_NO_WINDOW (0x08000000) y se redirige stdio a null
+        // para no dejar ventanas visibles. El proceso no se inserta en el
+        // HashMap hasta que el health check pasa, por lo que en timeout hay
+        // que matar explícitamente al Child huérfano (fix P0 — procesos huérfanos).
         #[cfg(target_os = "windows")]
-        let child = Command::new("cmd")
-            .args([
+        let mut child = {
+            let mut cmd = Command::new("cmd");
+            cmd.args([
                 "/c",
                 bin.to_str().unwrap_or("opencode.cmd"),
                 "serve",
@@ -244,12 +303,18 @@ impl OpenCodeManager {
             .current_dir(work_dir)
             .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
             .env("PATH", &managed_path)
-            .spawn()
-            .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?;
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .stdin(Stdio::null())
+            .creation_flags(0x08000000); // CREATE_NO_WINDOW
+            cmd.spawn()
+                .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?
+        };
 
         #[cfg(not(target_os = "windows"))]
-        let child = Command::new(bin)
-            .args([
+        let mut child = {
+            let mut cmd = Command::new(bin);
+            cmd.args([
                 "serve",
                 "--hostname",
                 "127.0.0.1",
@@ -259,19 +324,37 @@ impl OpenCodeManager {
             .current_dir(work_dir)
             .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
             .env("PATH", &managed_path)
-            .spawn()
-            .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?;
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .stdin(Stdio::null());
+            // En Unix, crear nuevo grupo de procesos para poder matar árbol completo en stop_all
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt as _;
+                cmd.process_group(0);
+            }
+            cmd.spawn()
+                .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?
+        };
 
         // Esperar hasta 20s a que el proceso esté listo
         let client = OpenCodeClient::new(port);
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             if Instant::now() > deadline {
-                eprintln!("[opencode] startup timeout course={} port={}", work_dir.display(), port);
+                eprintln!("[opencode] startup timeout course={} port={} — killing orphan", work_dir.display(), port);
+                let _ = child.kill();
+                // Esperar breve para que el árbol termine
+                std::thread::sleep(Duration::from_millis(200));
                 return Err("OpenCode tardó demasiado en arrancar (>20s).".to_string());
             }
             if client.health().map(|h| h.healthy).unwrap_or(false) {
                 break;
+            }
+            // Si el proceso murió prematuramente, abortar temprano
+            if let Ok(None) = child.try_wait() {} else if let Ok(Some(status)) = child.try_wait() {
+                eprintln!("[opencode] process exited early status={:?} course={}", status, work_dir.display());
+                return Err(format!("OpenCode terminó inesperadamente (status: {status:?})."));
             }
             std::thread::sleep(Duration::from_millis(500));
         }
@@ -290,17 +373,51 @@ impl OpenCodeManager {
         })
     }
 
+    fn kill_child_tree(child: &mut Child) {
+        #[cfg(target_os = "windows")]
+        {
+            // En Windows, el proceso es cmd /c opencode serve — matar solo el Child deja huérfano a node/opencode.
+            // Intentar kill de árbol vía taskkill; fallback a kill directo.
+            let pid = child.id();
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdout(Stdio::null()).stderr(Stdio::null())
+                .status();
+            let _ = child.kill();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // `process_group(0)` en start() crea un nuevo grupo cuyo GID es el
+            // PID del hijo: matar solo `child` (como se hacía antes) no
+            // garantiza que mueran los procesos que ese hijo haya lanzado
+            // (p.ej. node/opencode reales bajo el shell). Enviar la señal al
+            // grupo completo (`kill -<pid>`) sí lo hace, igual que `taskkill
+            // /T` en Windows. Se apoya en el binario `kill` en vez de sumar
+            // una dependencia (`nix`/`libc`) solo para esto.
+            let pid = child.id();
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &format!("-{pid}")])
+                .stdout(Stdio::null()).stderr(Stdio::null())
+                .status();
+            let _ = child.kill();
+        }
+    }
+
     pub fn stop(&self, course_path: &str) {
         if let Some(mut proc) = self.processes.lock().unwrap().remove(course_path) {
-            let _ = proc.child.kill();
+            Self::kill_child_tree(&mut proc.child);
+            // Grace period + ensure terminated
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = proc.child.try_wait();
         }
     }
 
     pub fn stop_all(&self) {
         let mut procs = self.processes.lock().unwrap();
         for (_, mut proc) in procs.drain() {
-            let _ = proc.child.kill();
+            Self::kill_child_tree(&mut proc.child);
         }
+        std::thread::sleep(Duration::from_millis(100));
     }
 
     pub fn health(&self, course_path: &str) -> RuntimeInfo {
@@ -324,6 +441,18 @@ impl OpenCodeManager {
 
     pub fn get_port(&self, course_path: &str) -> Option<u16> {
         self.processes.lock().unwrap().get(course_path).map(|p| p.port)
+    }
+
+    /// Mata el proceso administrado de este curso (si existe) y arranca uno
+    /// nuevo. A diferencia de `start()`, que reutiliza el proceso si el
+    /// health check ya pasa, `restart()` siempre fuerza un proceso nuevo:
+    /// existe para el failover de Jintia Chat cuando el servidor de OpenCode
+    /// dejó de responder (no un modelo/proveedor puntual, sino el propio
+    /// proceso `opencode serve`) y un simple reintento de `prompt_async` no
+    /// alcanza.
+    pub fn restart(&self, course_path: &str) -> Result<RuntimeInfo, String> {
+        self.stop(course_path);
+        self.start(course_path)
     }
 }
 
