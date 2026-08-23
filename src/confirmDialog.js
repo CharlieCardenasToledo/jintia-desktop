@@ -65,17 +65,19 @@ export function confirmDialog({
     overlay.className = "fixed inset-0 z-[5300] flex items-center justify-center bg-slate-900/45 p-4";
     overlay.innerHTML = `
       <div role="alertdialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-message"
-           class="w-full max-w-[400px] rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-        <div class="mb-3 flex items-start gap-3">
-          <div class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${danger ? "bg-red-50 text-red-500" : "bg-brand-50 text-brand-600"}">
-            ${ic(danger ? "trash-2" : "triangle-alert", 17)}
-          </div>
-          <div class="min-w-0">
-            <h2 id="confirm-dialog-title" class="text-base font-bold text-app-text" style="font-family: var(--font-display, 'Syne', sans-serif);">${escapeHtml(title)}</h2>
-            <p id="confirm-dialog-message" class="mt-1 whitespace-pre-line text-sm leading-relaxed text-app-muted">${escapeHtml(message)}</p>
+           class="flex max-h-[85vh] w-full max-w-[400px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div class="min-h-0 flex-1 overflow-y-auto p-5">
+          <div class="flex items-start gap-3">
+            <div class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${danger ? "bg-red-50 text-red-500" : "bg-brand-50 text-brand-600"}">
+              ${ic(danger ? "trash-2" : "triangle-alert", 17)}
+            </div>
+            <div class="min-w-0">
+              <h2 id="confirm-dialog-title" class="text-base font-bold text-app-text" style="font-family: var(--font-display, 'Syne', sans-serif);">${escapeHtml(title)}</h2>
+              <p id="confirm-dialog-message" class="mt-1 whitespace-pre-line break-words text-sm leading-relaxed text-app-muted">${escapeHtml(message)}</p>
+            </div>
           </div>
         </div>
-        <div class="mt-4 flex justify-end gap-2">
+        <div class="flex shrink-0 justify-end gap-2 border-t border-slate-100 p-4">
           <button type="button" class="${cx(ui.button.base, ui.button.ghost, "min-h-11")}" data-confirm-cancel>${escapeHtml(cancelLabel)}</button>
           <button type="button" class="${cx(ui.button.base, danger ? ui.button.danger : ui.button.primary, "min-h-11")}" data-confirm-ok>${escapeHtml(confirmLabel)}</button>
         </div>
