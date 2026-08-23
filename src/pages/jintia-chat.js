@@ -1,10 +1,13 @@
 /**
- * jintia-chat.js — Chat nativo con OpenCode (Ask Jintia)
+ * jintia-chat.js — Ask Jintia: espacio de trabajo académico, no un chat.
  * Plan Maestro sección 29: "Ask Jintia" dentro de una asignatura/semana.
- * Arquitectura: React UI → Tauri commands → OpenCode process → Jintia Skill
+ * Arquitectura: JS directo (sin framework) → Tauri commands → OpenCode/
+ * Codex/Claude → Jintia Skill. Cada interacción es Solicitud → Resultado/
+ * Decisión, no un intercambio de mensajes de chatbot.
  *
- * Streaming: usa SSE (GET /event) en lugar de polling. Los deltas de texto
- * llegan evento a evento (message.part.delta) y se concatenan en tiempo real.
+ * SSE (GET /event) en vez de polling. Los deltas de texto de OpenCode
+ * (message.part.delta) se acumulan en silencio y se revelan completos al
+ * cerrar el turno (ver settleAssistantBubble) — no se muestran token a token.
  */
 import { invoke }     from "@tauri-apps/api/core";
 import { listen }     from "@tauri-apps/api/event";
@@ -47,6 +50,12 @@ import {
   ModelHealthRegistry,
   TurnSupervisor,
 } from "../opencode-failover.js";
+import {
+  isNotebookAskQuestionTool,
+  showNotebookQuestionRunning,
+  showNotebookQuestionCompleted,
+  resetNotebookEvidenceCards,
+} from "../notebook-evidence.js";
 
 // Configurar marked: sin modo pedantic, con saltos de línea = <br>
 marked.use({ breaks: true, gfm: true });
@@ -162,7 +171,7 @@ function appendRuntimeActivity(text, kind = "info") {
     wrap = document.createElement("div");
     wrap.id = "jc-runtime-activity";
     wrap.className = "jc-route-step mb-4 jc-msg-in";
-    wrap.innerHTML = `<span class="jc-route-node grid place-items-center border-slate-200 bg-white text-slate-500" aria-hidden="true">${ic("activity", 15)}</span><div class="jc-runtime-activity-body max-w-[72ch] rounded-xl border px-3 py-2 text-xs" role="status" aria-live="polite"><span class="font-semibold">Actividad del sistema</span><span class="mx-1" aria-hidden="true">·</span><span class="jc-runtime-activity-text"></span></div>`;
+    wrap.innerHTML = `<div class="flex max-w-[72ch] items-start gap-2"><span class="mt-0.5 shrink-0 text-slate-400" aria-hidden="true">${ic("activity", 14)}</span><div class="jc-runtime-activity-body min-w-0 flex-1 rounded-xl border px-3 py-2 text-xs" role="status" aria-live="polite"><span class="font-semibold">Actividad del sistema</span><span class="mx-1" aria-hidden="true">·</span><span class="jc-runtime-activity-text"></span></div></div>`;
     feed.appendChild(wrap);
     _runtimeActivityEl = wrap;
     refreshIcons();
@@ -172,7 +181,7 @@ function appendRuntimeActivity(text, kind = "info") {
   }
   const body = wrap.querySelector(".jc-runtime-activity-body");
   const message = wrap.querySelector(".jc-runtime-activity-text");
-  if (body) body.className = `jc-runtime-activity-body max-w-[72ch] rounded-xl border px-3 py-2 text-xs ${palette}`;
+  if (body) body.className = `jc-runtime-activity-body min-w-0 flex-1 rounded-xl border px-3 py-2 text-xs ${palette}`;
   if (message) message.textContent = text;
   scrollFeed();
 }
@@ -638,6 +647,7 @@ function disconnectSSE() {
   _assistantEl     = null;
   _assistantRaw    = "";
   _currentPartType = null;
+  resetNotebookEvidenceCards();
 }
 
 // Carga modelos disponibles desde OpenCode y puebla el selector.
@@ -1220,9 +1230,20 @@ function handleSSE(event) {
       // marcadores de control sin contenido legible: no deben mostrarse
       // como actividad (evita filtrar nombres técnicos crudos al usuario).
       if (part.type === "reasoning" || part.type === "tool") {
-        const label = part.type === "reasoning" ? "Analizando contenido…" : `Ejecutando una tarea${part.tool ? ` (${part.tool})` : ""}…`;
-        setStatus(label.replaceAll("OpenCode", "Jintia"), "working");
-        appendRuntimeActivity(label);
+        const isNotebookQuery = part.type === "tool" && isNotebookAskQuestionTool(part.tool);
+        // La consulta a NotebookLM es evidencia, no "actividad del sistema"
+        // genérica: se muestra como una tarjeta de fuente aparte (pregunta
+        // exacta visible de inmediato) en vez de "Ejecutando una tarea
+        // (ask_question)…" — el profesor tiene que poder ver qué se le
+        // preguntó a las fuentes, no solo que "una tool corrió".
+        if (isNotebookQuery) {
+          showNotebookQuestionRunning(el("jc-activity-feed"), part.callID, part.state?.input);
+          setStatus("Consultando las fuentes del curso…", "working");
+        } else {
+          const label = part.type === "reasoning" ? "Analizando contenido…" : `Ejecutando una tarea${part.tool ? ` (${part.tool})` : ""}…`;
+          setStatus(label.replaceAll("OpenCode", "Jintia"), "working");
+          appendRuntimeActivity(label);
+        }
         // Desde aquí en adelante no es seguro repetir el prompt original si
         // hay que cambiar de modelo: ya se ejecutó (o se está ejecutando)
         // una herramienta que puede haber modificado archivos.
@@ -1230,6 +1251,9 @@ function handleSSE(event) {
       }
     } else {
       // Part cerrado
+      if (part.type === "tool" && isNotebookAskQuestionTool(part.tool)) {
+        showNotebookQuestionCompleted(el("jc-activity-feed"), part.callID, part.state?.output);
+      }
       _currentPartType = null;
     }
     return;
@@ -2778,6 +2802,7 @@ function resetConversation({ announce = false } = {}) {
   _assistantRaw = "";
   _currentPartType = null;
   _currentPartId   = null;
+  resetNotebookEvidenceCards();
   _busy = false;
   _codexThreadId = null;
   _codexTurnId = null;
