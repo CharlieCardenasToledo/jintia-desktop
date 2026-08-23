@@ -2345,15 +2345,21 @@ test('NotebookLM MCP persistente se inicia sólo con Node, bin y PATH administra
     'crate::runtimes::managed_node_runtime_path()?',
     'build_managed_mcp_server_command',
     'Stdio::piped()',
-    'Stdio::inherit()',
-    '.spawn()',
+    'crate::process::logs::spawn_log_writer',
   ]) {
     assert.match(spawn, new RegExp(required.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')));
   }
+  // Substring directo en vez del helper de escape de arriba: ese helper no
+  // escapa correctamente paréntesis consecutivos (p. ej. "supervisor().spawn(cmd)"),
+  // así que para un literal con esa forma conviene comparar sin regex.
+  assert.ok(spawn.includes('crate::process::supervisor().spawn(cmd)'));
   assert.ok(spawn.indexOf('managed_mcp()?') < spawn.indexOf('managed_node_runtime_path()?'));
   assert.ok(spawn.indexOf('managed_node_runtime_path()?') < spawn.indexOf('build_managed_mcp_server_command'));
   assert.doesNotMatch(spawn, /Command::new\(\s*&managed\.node\s*\)/s);
   assert.doesNotMatch(spawn, /var_os\("PATH"\)|std::env::var\("PATH"\)|split_paths|env_clear|Command::new\("(?:node|npm|npx)"\)|powershell|sh\s+-c|bash\s+-c/);
+  // Incidente: stderr heredaba la consola de Jintia (que en producción no
+  // existe) en vez de anexarse a un log — no debe volver a pasar.
+  assert.doesNotMatch(spawn, /\.stderr\(Stdio::inherit\(\)\)/);
 
   const retryStart = mcp.indexOf('fn spawn_connection()');
   const retryEnd = mcp.indexOf('\npub(crate) fn call_tool', retryStart);
@@ -2383,8 +2389,8 @@ test('NotebookLM MCP persistente no hereda NODE_OPTIONS del host', async () => {
   assert.match(spawn, /managed_node_runtime_path\(\)\?/);
   assert.match(spawn, /build_managed_mcp_server_command/);
   assert.match(spawn, /Stdio::piped\(\)/);
-  assert.match(spawn, /Stdio::inherit\(\)/);
-  assert.match(spawn, /\.spawn\(\)/);
+  assert.match(spawn, /crate::process::logs::spawn_log_writer/);
+  assert.match(spawn, /crate::process::supervisor\(\)\.spawn\(cmd\)/);
   assert.doesNotMatch(spawn, /env_remove\("NODE_OPTIONS"\)/);
 });
 

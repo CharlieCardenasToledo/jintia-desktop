@@ -107,18 +107,25 @@ fn build_turn_start_params(thread_id: &str, message: &str, model: Option<&str>, 
 
 impl CodexProcess {
     fn spawn(app: tauri::AppHandle, binary: &str) -> Result<Self, String> {
-        let mut child = std::process::Command::new(binary)
-            .args(["app-server", "--listen", "stdio://"])
+        let mut cmd = std::process::Command::new(binary);
+        cmd.args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
+            .stderr(Stdio::piped());
+        let mut child = crate::process::supervisor()
+            .spawn(cmd)
             .map_err(|e| format!("No se pudo iniciar Codex app-server: {e}"))?;
 
         let stdin = child.stdin.take()
             .ok_or("No se pudo capturar stdin de Codex")?;
         let stdout = child.stdout.take()
             .ok_or("No se pudo capturar stdout de Codex")?;
+        // Antes se descartaba con Stdio::null(): sin ventana de consola visible,
+        // ese stderr era la única forma de diagnosticar un fallo de arranque
+        // de Codex después de cerrar la app. Ahora se anexa a un log.
+        if let Some(stderr) = child.stderr.take() {
+            crate::process::logs::spawn_log_writer(stderr, "codex");
+        }
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let pending_clone = pending.clone();
@@ -404,7 +411,24 @@ impl CodexManager {
     }
 
     pub fn stop(&self) {
-        *self.process.lock().unwrap() = None;
+        // Antes esto solo soltaba el Arc (`= None`), lo cual NO mata el
+        // proceso: std::process::Child no implementa "kill on drop", y
+        // además otros clones del Arc pueden seguir vivos en llamadas JSON-RPC
+        // en curso, así que ni siquiera garantizaba llegar a 0 referencias.
+        // Matar el Child explícitamente aquí es correcto sin importar cuántos
+        // clones del Arc existan.
+        if let Some(process) = self.process.lock().unwrap().take() {
+            if let Ok(mut child) = process._child.lock() {
+                crate::process::kill_child_tree(&mut child);
+            }
+        }
+    }
+
+    /// Alias de `stop()`: Codex solo mantiene un app-server a la vez, así que
+    /// "detener" y "detener todos" son la misma operación. Existe para que
+    /// `on_window_event` (lib.rs) trate a los tres managers de forma uniforme.
+    pub fn stop_all(&self) {
+        self.stop();
     }
 
     pub fn is_running(&self) -> bool {

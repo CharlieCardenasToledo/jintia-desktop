@@ -13,6 +13,7 @@ mod opencode;
 mod palette;
 mod paths;
 mod pdfs;
+mod process;
 mod release;
 mod runtimes;
 mod toolchain;
@@ -1266,6 +1267,14 @@ pub fn run() {
                 if let Some(mgr) = window.try_state::<claude::ClaudeManager>() {
                     mgr.stop_all();
                 }
+                if let Some(mgr) = window.try_state::<codex::CodexManager>() {
+                    mgr.stop_all();
+                }
+                // NotebookLM MCP vive en un `static` (mcp::client::CONNECTION),
+                // no en state gestionado por Tauri: sin esta llamada explícita
+                // su proceso sobrevive al cierre de Jintia (ver shutdown() para
+                // el porqué exacto — Rust no destruye statics al salir).
+                mcp::shutdown();
             }
         })
         .run(tauri::generate_context!())

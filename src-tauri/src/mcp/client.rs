@@ -93,17 +93,13 @@ impl McpConnection {
     pub(crate) fn spawn() -> Result<Self, String> {
         let managed = managed_mcp()?;
         let managed_path = crate::runtimes::managed_node_runtime_path()?;
-        let mut child =
-            build_managed_mcp_server_command(&managed.node, &managed.bin, &managed_path)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .map_err(|error| {
-                    format!(
-                        "No se pudo iniciar gemini-notebook-mcp. Verifica Node.js y npx: {error}"
-                    )
-                })?;
+        let mut cmd = build_managed_mcp_server_command(&managed.node, &managed.bin, &managed_path);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = crate::process::supervisor().spawn(cmd).map_err(|error| {
+            format!("No se pudo iniciar gemini-notebook-mcp. Verifica Node.js y npx: {error}")
+        })?;
 
         let stdout = child
             .stdout
@@ -113,6 +109,12 @@ impl McpConnection {
             .stdin
             .take()
             .ok_or_else(|| "No se pudo escribir al MCP.".to_string())?;
+        // Antes se heredaba la consola de Jintia, que en producción no existe
+        // (proceso sin ventana). Sin este log, un fallo de NotebookLM sería
+        // indiagnosticable una vez cerrada la app.
+        if let Some(stderr) = child.stderr.take() {
+            crate::process::logs::spawn_log_writer(stderr, "notebooklm-mcp");
+        }
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout).lines();
@@ -176,6 +178,22 @@ impl McpConnection {
 
     pub(crate) fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
+    }
+}
+
+/// Cierra la conexión administrada de NotebookLM MCP, si hay una activa. Se
+/// llama al cerrar la ventana de Jintia (lib.rs), igual que
+/// `OpenCodeManager::stop_all`/`ClaudeManager::stop_all`/`CodexManager::stop_all`.
+///
+/// Importante: `CONNECTION` es un `static`, y Rust NUNCA ejecuta `Drop` sobre
+/// statics al terminar el proceso (a diferencia de state gestionado por
+/// Tauri, que sí se destruye normalmente). El `impl Drop for McpConnection`
+/// (ver mcp/mod.rs) es una buena red de seguridad para cuando la conexión se
+/// reemplaza en caliente, pero por sí solo NUNCA se dispara al cerrar la
+/// app — de ahí la necesidad de esta llamada explícita.
+pub(crate) fn shutdown() {
+    if let Ok(mut guard) = CONNECTION.lock() {
+        drop(guard.take());
     }
 }
 

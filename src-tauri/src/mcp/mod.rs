@@ -6,6 +6,7 @@ pub mod notebooks;
 pub use auth::{
     cancel_auth, check_auth, start_auth, start_auth_operation,
 };
+pub(crate) use client::shutdown;
 pub use config::{codex_mcp_configured, configure_codex_mcp, configure_mcp};
 pub use notebooks::{list_account_notebooks, list_notebooks};
 

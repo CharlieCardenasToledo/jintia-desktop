@@ -7,9 +7,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 struct OpenCodeProcess {
     child: Child,
     port: u16,
@@ -283,13 +280,14 @@ impl OpenCodeManager {
         // globalmente.
         let managed_path = Self::managed_process_path();
 
-        // Windows: ocultar ventana de terminal y evitar herencia de consola.
-        // Se usa CREATE_NO_WINDOW (0x08000000) y se redirige stdio a null
-        // para no dejar ventanas visibles. El proceso no se inserta en el
-        // HashMap hasta que el health check pasa, por lo que en timeout hay
-        // que matar explícitamente al Child huérfano (fix P0 — procesos huérfanos).
+        // El proceso no se inserta en el HashMap hasta que el health check
+        // pasa, por lo que en timeout hay que matar explícitamente al Child
+        // huérfano (fix P0 — procesos huérfanos). Ocultar ventana / aislar
+        // grupo de procesos ya no se decide aquí: lo aplica
+        // process::supervisor() de forma uniforme para todo proceso
+        // administrado (OpenCode, Claude, Codex, NotebookLM MCP).
         #[cfg(target_os = "windows")]
-        let mut child = {
+        let mut cmd = {
             let mut cmd = Command::new("cmd");
             cmd.args([
                 "/c",
@@ -299,43 +297,24 @@ impl OpenCodeManager {
                 "127.0.0.1",
                 "--port",
                 &port.to_string(),
-            ])
-            .current_dir(work_dir)
-            .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
-            .env("PATH", &managed_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .stdin(Stdio::null())
-            .creation_flags(0x08000000); // CREATE_NO_WINDOW
-            cmd.spawn()
-                .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?
+            ]);
+            cmd
         };
-
         #[cfg(not(target_os = "windows"))]
-        let mut child = {
+        let mut cmd = {
             let mut cmd = Command::new(bin);
-            cmd.args([
-                "serve",
-                "--hostname",
-                "127.0.0.1",
-                "--port",
-                &port.to_string(),
-            ])
-            .current_dir(work_dir)
+            cmd.args(["serve", "--hostname", "127.0.0.1", "--port", &port.to_string()]);
+            cmd
+        };
+        cmd.current_dir(work_dir)
             .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
             .env("PATH", &managed_path)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .stdin(Stdio::null());
-            // En Unix, crear nuevo grupo de procesos para poder matar árbol completo en stop_all
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt as _;
-                cmd.process_group(0);
-            }
-            cmd.spawn()
-                .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?
-        };
+        let mut child = crate::process::supervisor()
+            .spawn(cmd)
+            .map_err(|e| format!("No se pudo iniciar OpenCode: {e}"))?;
 
         // Esperar hasta 20s a que el proceso esté listo
         let client = OpenCodeClient::new(port);
@@ -374,33 +353,7 @@ impl OpenCodeManager {
     }
 
     fn kill_child_tree(child: &mut Child) {
-        #[cfg(target_os = "windows")]
-        {
-            // En Windows, el proceso es cmd /c opencode serve — matar solo el Child deja huérfano a node/opencode.
-            // Intentar kill de árbol vía taskkill; fallback a kill directo.
-            let pid = child.id();
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .stdout(Stdio::null()).stderr(Stdio::null())
-                .status();
-            let _ = child.kill();
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            // `process_group(0)` en start() crea un nuevo grupo cuyo GID es el
-            // PID del hijo: matar solo `child` (como se hacía antes) no
-            // garantiza que mueran los procesos que ese hijo haya lanzado
-            // (p.ej. node/opencode reales bajo el shell). Enviar la señal al
-            // grupo completo (`kill -<pid>`) sí lo hace, igual que `taskkill
-            // /T` en Windows. Se apoya en el binario `kill` en vez de sumar
-            // una dependencia (`nix`/`libc`) solo para esto.
-            let pid = child.id();
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", &format!("-{pid}")])
-                .stdout(Stdio::null()).stderr(Stdio::null())
-                .status();
-            let _ = child.kill();
-        }
+        crate::process::kill_child_tree(child);
     }
 
     pub fn stop(&self, course_path: &str) {

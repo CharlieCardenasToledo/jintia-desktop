@@ -184,13 +184,14 @@ impl ClaudeManager {
         })?;
         let args = build_submit_args(&request, tools.as_deref(), permission_mode.as_deref());
 
-        let mut child = std::process::Command::new(&binary)
-            .args(&args)
+        let mut cmd = std::process::Command::new(&binary);
+        cmd.args(&args)
             .current_dir(&request.cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped());
+        let mut child = crate::process::supervisor()
+            .spawn(cmd)
             .map_err(|e| format!("No se pudo iniciar Claude Code: {e}"))?;
 
         let stdout = child.stdout.take().ok_or("No se pudo capturar stdout de Claude Code")?;
@@ -282,7 +283,7 @@ impl ClaudeManager {
     pub fn interrupt_turn(&self, request_id: &str) -> Result<(), String> {
         let mut active = self.active.lock().unwrap();
         if let Some(mut child) = active.remove(request_id) {
-            child.kill().map_err(|e| format!("No se pudo detener Claude Code: {e}"))?;
+            crate::process::kill_child_tree(&mut child);
         }
         Ok(())
     }
@@ -293,7 +294,7 @@ impl ClaudeManager {
     pub fn stop_all(&self) {
         let mut active = self.active.lock().unwrap();
         for (_, mut child) in active.drain() {
-            let _ = child.kill();
+            crate::process::kill_child_tree(&mut child);
         }
     }
 }

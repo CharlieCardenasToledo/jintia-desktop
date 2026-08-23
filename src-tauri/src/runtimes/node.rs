@@ -60,6 +60,13 @@ pub(crate) fn managed_node_command(
 ) -> Command {
     let mut command = Command::new(program);
     command.env_remove("NODE_OPTIONS");
+    // Todo lo que corre bajo el runtime Node administrado por Jintia (skill,
+    // npm, engine.rs, y el MCP de NotebookLM vía build_managed_mcp_server_command)
+    // es un proceso interno, nunca algo que el usuario deba ver como consola.
+    crate::process::background::configure_background_process(
+        &mut command,
+        crate::process::background::process_mode(),
+    );
     command
 }
 
