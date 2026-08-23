@@ -5744,7 +5744,7 @@ test('Ask Jintia integra el historial en contexto, colapsa el menú y mantiene o
   assert.match(chat, /aria-controls="jc-sources-panel"/);
   assert.match(chat, /id="jc-sources-content"[\s\S]*?id="jc-history-section"/);
   assert.match(chat, />Enlaces citados</);
-  assert.match(chat, />Conversaciones</);
+  assert.match(chat, />Historial de trabajo</);
   assert.match(chat, /\.jc-icon-button \{ min-width: 44px; min-height: 44px; \}/);
   assert.match(chat, /ic\("pencil", 16\)/);
   assert.match(chat, /ic\("trash-2", 16\)/);

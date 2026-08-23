@@ -192,7 +192,7 @@ function startOpenCodeProgressTimer() {
   _openCodeProgressTimer = setInterval(() => {
     if (_provider !== "opencode" || !_busy || !_openCodeTurnStartedAt) return;
     const seconds = Math.floor((Date.now() - _openCodeTurnStartedAt) / 1000);
-    if (seconds >= 15) setStatus(`Jintia Chat trabajando… ${formatElapsed(seconds)}`, "working");
+    if (seconds >= 15) setStatus(`Trabajo en curso… ${formatElapsed(seconds)}`, "working");
     providerLog("opencode", "turn.waiting", { elapsedSeconds: seconds, sessionId: _sessionId });
   }, 15000);
 }
@@ -289,17 +289,19 @@ function ensureChatStyles() {
     @keyframes jc-msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .jc-msg-in { animation: jc-msg-in 0.2s ease-out forwards; }
 
-    .jc-route-step { position: relative; padding-left: 2.75rem; }
-    .jc-route-step::before { content: ""; position: absolute; left: 1.08rem; top: 2rem; bottom: -1.1rem; width: 1px; background: linear-gradient(var(--jc-line), rgba(183,229,225,0)); }
-    .jc-route-step:last-child::before { display: none; }
-    .jc-route-node { position: absolute; left: .25rem; top: .1rem; z-index: 1; display: grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid var(--jc-line); border-radius: .65rem; background: var(--jc-surface); box-shadow: 0 4px 12px rgba(13,27,42,.08); }
-    .jc-route-node img { width: 1.05rem; height: 1.2rem; object-fit: contain; }
-    /* Variante para el indicador de "pensando": usa JintiaLoader (morph +
-       giro) en vez de la marca estática, así que sustituye al ícono normal
-       en vez de sumarse a él. Fondo suave para que no quede sobre blanco
-       plano. */
-    .jc-route-node--thinking { background: var(--jc-teal-soft); }
+    /* Jintia no es un chat: cada bloque es un trabajo (Solicitud → Resultado),
+       no un turno de burbujas con avatar. jc-route-step se conserva como
+       nombre (identifica el wrapper para insertar/retirar bloques) pero ya
+       no dibuja avatar ni línea de tiempo tipo mensajería. */
+    .jc-route-step { position: relative; }
+    .jc-work-label { display: flex; align-items: center; gap: .4rem; margin-bottom: .5rem; font-size: .68rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--jc-teal); }
+    .jc-work-label .jc-work-label-dot { width: .4rem; height: .4rem; border-radius: 999px; background: currentColor; flex: none; }
+    .jc-thinking-loader { display: inline-flex; width: 1rem; height: 1rem; flex: none; }
+    .jc-thinking-loader svg, .jc-thinking-loader img { width: 100%; height: 100%; }
+    .jc-work-label--muted { color: #64748b; }
     .jc-message-card { width: min(100%, 72ch); border: 1px solid #e2e8f0; border-radius: 1rem; background: #fff; box-shadow: 0 3px 12px rgba(13,27,42,.045); }
+    .jc-request { width: min(100%, 72ch); }
+    .jc-request-text { font-size: .875rem; line-height: 1.65; color: var(--jc-ink); border-left: 2px solid var(--jc-line); padding-left: .85rem; white-space: pre-wrap; }
     .jc-message-actions { opacity: .88; transition: opacity .15s ease; }
     .jc-message-card:hover .jc-message-actions,
     .jc-message-card:focus-within .jc-message-actions { opacity: 1; }
@@ -374,16 +376,6 @@ function appendMessage(html) {
   feed.appendChild(node);
   refreshIcons();
   scrollFeed();
-}
-
-function assistantNode() {
-  return `<span class="jc-route-node" aria-hidden="true"><img src="/brand/jintia-mark.svg" alt=""></span>`;
-}
-
-// Variante animada de assistantNode() solo para el indicador de "pensando":
-// respeta prefers-reduced-motion por sí sola (animación definida dentro del SVG).
-function thinkingNode() {
-  return `<span class="jc-route-node jc-route-node--thinking" aria-hidden="true">${jintiaLoaderPlaceholder(22)}</span>`;
 }
 
 // Manejador compartido de botones "starter": rellena el compositor sin
@@ -513,9 +505,9 @@ function showThinkingBubble() {
   wrap.className = "jc-route-step mb-5 jc-msg-in";
   wrap.setAttribute("role", "status");
   wrap.innerHTML = `
-    ${thinkingNode()}
     <div class="jc-message-card min-w-0 flex-1 px-4 py-3 text-sm text-slate-600">
-      <div id="jc-thinking-message" class="font-medium">Jintia está consultando el contexto…</div>
+      <div class="jc-work-label jc-work-label--muted"><span class="jc-thinking-loader" aria-hidden="true">${jintiaLoaderPlaceholder(16)}</span>Trabajo en curso</div>
+      <div id="jc-thinking-message" class="font-medium">Analizando el contexto…</div>
       <div id="jc-thinking-detail" class="mt-1 hidden text-xs text-slate-500"></div>
       <details id="jc-thinking-technical-wrap" class="mt-2 hidden">
         <summary class="cursor-pointer text-xs font-semibold text-slate-500">Ver detalle técnico</summary>
@@ -560,10 +552,9 @@ function createAssistantBubble() {
   const wrap = document.createElement("div");
   wrap.className = "jc-route-step mb-5 jc-msg-in";
   wrap.innerHTML = `
-    ${assistantNode()}
-    <article class="jc-message-card" aria-label="Respuesta de Jintia">
-      <span class="sr-only">Jintia:</span>
-      <div class="jc-md px-4 py-3 text-sm leading-relaxed text-slate-800"></div>
+    <article class="jc-message-card" aria-label="Resultado">
+      <div class="px-4 pt-3"><span class="jc-work-label"><span class="jc-work-label-dot" aria-hidden="true"></span>Resultado</span></div>
+      <div class="jc-md px-4 pb-3 text-sm leading-relaxed text-slate-800"></div>
     </article>`;
   feed.appendChild(wrap);
   // La actividad es un estado vivo del turno: debe permanecer debajo del
@@ -581,8 +572,9 @@ function messageHtml(msg) {
     .join("\n")
     .trim();
   if (!text || role !== "user") return null;
-  return `<div class="flex justify-end mb-5 jc-msg-in">
-    <div class="max-w-[60ch] rounded-2xl rounded-br-md bg-brand-900 px-4 py-3 text-sm leading-relaxed text-white"><span class="sr-only">Tú: </span>${escapeHtml(text)}</div>
+  return `<div class="jc-request mb-5 jc-msg-in">
+    <span class="jc-work-label jc-work-label--muted"><span class="jc-work-label-dot" aria-hidden="true"></span>Solicitud</span>
+    <div class="jc-request-text">${escapeHtml(text)}</div>
   </div>`;
 }
 
@@ -974,7 +966,7 @@ async function switchToSession(sessionId, coursePath) {
   }
 
   setSendEnabled(true);
-  setStatus("Jintia Chat listo", "ready");
+  setStatus("Espacio de trabajo listo", "ready");
 }
 
 // Burbuja de respuesta completa (para historial cargado, no streaming)
@@ -1014,20 +1006,25 @@ function appendErrorMessage(text) {
   const wrap = document.createElement("div");
   wrap.className = "jc-route-step mb-5 jc-msg-in";
   wrap.innerHTML = `
-    <span class="jc-route-node grid place-items-center" style="border-color:#fecaca;background:#fef2f2;color:#dc2626" aria-hidden="true">${ic("circle-alert", 16)}</span>
     <article class="jc-message-card" role="alert" style="border-color:#fecaca;background:#fef2f2">
-      <span class="sr-only">Error de Codex:</span>
-      <div class="px-4 py-3 text-sm leading-relaxed text-red-800">${escapeHtml(text)}</div>
+      <div class="px-4 pt-3"><span class="jc-work-label" style="color:#dc2626">${ic("circle-alert", 13)}No se pudo completar esta etapa</span></div>
+      <div class="px-4 pb-3 text-sm leading-relaxed text-red-800">${escapeHtml(text)}</div>
     </article>`;
   feed.appendChild(wrap);
   refreshIcons();
   scrollFeed();
 }
 
-// Cierra el turno de la burbuja de asistente en curso: si tiene contenido
-// real lo renderiza, y si quedó vacía (p. ej. un part sin deltas visibles)
-// la retira del hilo en vez de dejar una tarjeta "Jintia:" fantasma.
+// Cierra el turno: revela el resultado completo de una sola vez (Jintia no
+// narra su respuesta token a token, ver el manejo de message.part.delta en
+// handleSSE/ensureCodexListener/ensureClaudeListener — solo acumulan
+// _assistantRaw en silencio mientras dura el turno). Si el turno terminó sin
+// contenido real, no deja una tarjeta "Resultado" vacía.
 function settleAssistantBubble() {
+  if (!_assistantEl && _assistantRaw.trim()) {
+    hideThinkingBubble();
+    _assistantEl = createAssistantBubble();
+  }
   if (_assistantEl) {
     if (_assistantRaw.trim()) {
       finalizeAssistantBubble(_assistantEl, _assistantRaw);
@@ -1052,10 +1049,10 @@ async function respondToOpenCodePermission(props) {
   const { id, permission, patterns, metadata } = props;
   const target = metadata?.filepath || metadata?.command || (patterns || [])[0] || "";
   const label = OPENCODE_PERMISSION_LABELS[permission] || `usar "${permission}"`;
-  setStatus("Jintia Chat pide tu autorización…", "working");
-  appendRuntimeActivity(`Jintia Chat necesita permiso para ${label}.`, "warning");
+  setStatus("Autorización requerida…", "working");
+  appendRuntimeActivity(`Se necesita autorización para ${label}.`, "warning");
   const allowed = await confirmDialog({
-    title: "Jintia Chat pide autorización",
+    title: "Autorización requerida",
     message: target ? `Quiere ${label}:\n${target}` : `Quiere ${label}.`,
     confirmLabel: "Permitir",
     cancelLabel: "Denegar",
@@ -1070,7 +1067,7 @@ async function respondToOpenCodePermission(props) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     setStatus(allowed ? "Permiso concedido, continuando…" : "Permiso denegado, continuando…", "working");
   } catch (error) {
-    toast(`No se pudo responder al permiso de Jintia Chat: ${error}`, "error", 6000);
+    toast(`No se pudo responder la autorización: ${error}`, "error", 6000);
   }
 }
 
@@ -1087,7 +1084,7 @@ async function respondToOpenCodeQuestion(props) {
   const { id, questions } = props;
   const feed = el("jc-activity-feed");
   if (!feed || !Array.isArray(questions) || !questions.length) return;
-  setStatus("Jintia Chat necesita tu respuesta…", "working");
+  setStatus("Decisión requerida…", "working");
 
   const answers = [];
   for (const q of questions) {
@@ -1095,9 +1092,9 @@ async function respondToOpenCodeQuestion(props) {
       const wrap = document.createElement("div");
       wrap.className = "jc-route-step mb-5 jc-msg-in";
       wrap.innerHTML = `
-        ${assistantNode()}
-        <article class="jc-message-card" aria-label="Pregunta de Jintia Chat">
+        <article class="jc-message-card" aria-label="Decisión requerida">
           <div class="px-4 py-3 text-sm leading-relaxed text-slate-800">
+            <div class="jc-work-label"><span class="jc-work-label-dot" aria-hidden="true"></span>Decisión requerida</div>
             <p class="text-[11px] font-bold uppercase tracking-wider text-teal-800">${escapeHtml(q.header || "Pregunta")}</p>
             <p class="mt-1 font-semibold text-slate-900">${escapeHtml(q.question || "")}</p>
             <div class="mt-3 flex flex-col gap-2" data-jc-question-options></div>
@@ -1143,7 +1140,7 @@ async function respondToOpenCodeQuestion(props) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     setStatus("Respuesta enviada, continuando…", "working");
   } catch (error) {
-    toast(`No se pudo responder a Jintia Chat: ${error}`, "error", 6000);
+    toast(`No se pudo continuar el trabajo: ${error}`, "error", 6000);
   }
 }
 
@@ -1167,8 +1164,8 @@ function handleSSE(event) {
   // ── Permisos: OpenCode detiene la herramienta hasta recibir respuesta ──
   // El bug que esto evita: sin este manejador, una petición de permiso
   // (p. ej. escribir fuera de la carpeta del curso) se queda esperando
-  // para siempre y el turno completo se cuelga con "Jintia Chat
-  // trabajando…" sin límite, sin ningún indicio de qué lo bloquea.
+  // para siempre y el turno completo se cuelga con "Trabajo en curso…"
+  // sin límite, sin ningún indicio de qué lo bloquea.
   if (event.type === "permission.asked" || event.type === "permission.v2.asked") {
     if (props.sessionID !== _sessionId) return;
     respondToOpenCodePermission(props);
@@ -1194,8 +1191,8 @@ function handleSSE(event) {
       // marcadores de control sin contenido legible: no deben mostrarse
       // como actividad (evita filtrar nombres técnicos crudos al usuario).
       if (part.type === "reasoning" || part.type === "tool") {
-        const label = part.type === "reasoning" ? "Jintia Chat está razonando…" : `Jintia Chat está usando una herramienta${part.tool ? ` (${part.tool})` : ""}…`;
-        setStatus(label.replaceAll("OpenCode", "Jintia Chat"), "working");
+        const label = part.type === "reasoning" ? "Analizando contenido…" : `Ejecutando una tarea${part.tool ? ` (${part.tool})` : ""}…`;
+        setStatus(label.replaceAll("OpenCode", "Jintia"), "working");
         appendRuntimeActivity(label);
         // Desde aquí en adelante no es seguro repetir el prompt original si
         // hay que cambiar de modelo: ya se ejecutó (o se está ejecutando)
@@ -1217,17 +1214,11 @@ function handleSSE(event) {
     if (typeof props.delta !== "string" || !props.delta) return;
 
     if (_currentPartType === "text") {
-      // Respuesta real → burbuja principal (texto plano durante el stream)
-      if (!_assistantEl) {
-        hideThinkingBubble();
-        _assistantEl  = createAssistantBubble();
-        _assistantRaw = "";
-      }
-      if (_assistantEl) {
-        _assistantRaw += props.delta;
-        _assistantEl.textContent = _assistantRaw;
-        scrollFeed();
-      }
+      // El resultado se acumula en silencio y se revela completo al cerrar
+      // el turno (ver settleAssistantBubble) — Jintia no narra su respuesta
+      // token a token como un chatbot.
+      if (!_assistantRaw) updateThinkingActivity({ message: "Preparando el resultado…" });
+      _assistantRaw += props.delta;
     }
     // Ignorar deltas sin part activo (step-start, step-finish, etc.)
     return;
@@ -1242,14 +1233,14 @@ function handleSSE(event) {
       stopOpenCodeProgressTimer();
       clearOpenCodeStallWatchdog();
       _turnSupervisor = null;
-      appendRuntimeActivity("Jintia Chat completó la respuesta.");
+      appendRuntimeActivity("Trabajo completado.");
       settleAssistantBubble();
       _currentPartType = null;
       _busy = false;
       hideThinkingBubble();
       setSendEnabled(true);
       setAbortVisible(false);
-      setStatus("Jintia Chat listo", "ready");
+      setStatus("Espacio de trabajo listo", "ready");
     }
     if (st === "retry") {
       // Forma confirmada en el propio código fuente de OpenCode
@@ -1258,7 +1249,7 @@ function handleSSE(event) {
       // "next" es el timestamp (ms) del próximo reintento automático.
       const status = props.status || {};
       const waitSecs = typeof status.next === "number" ? Math.max(0, Math.round((status.next - Date.now()) / 1000)) : null;
-      const base = status.action?.message || status.message || "Jintia Chat está reintentando…";
+      const base = status.action?.message || status.message || "Restableciendo el proceso…";
 
       // OpenCode puede quedarse en este estado sin llegar nunca a
       // session.error (bug documentado de su propio retry policy). No
@@ -1277,7 +1268,7 @@ function handleSSE(event) {
       // Solo avisar con un toast la primera vez, para no bombardear en cada
       // reintento del backoff exponencial (hasta 5 intentos automáticos).
       if (status.attempt === 1) {
-        toast(status.action?.title ? `${status.action.title}: ${base}` : `Jintia Chat: ${base}`, "warning", 6000);
+        toast(status.action?.title ? `${status.action.title}: ${base}` : base, "warning", 6000);
       }
     }
     return;
@@ -1302,7 +1293,7 @@ function handleSSE(event) {
       return;
     }
 
-    appendRuntimeActivity(props.error?.message || props.message || "Jintia Chat reportó un error.", "error");
+    appendRuntimeActivity(props.error?.message || props.message || "No se pudo completar el trabajo.", "error");
     stopOpenCodeProgressTimer();
     clearOpenCodeStallWatchdog();
     _turnSupervisor = null;
@@ -1314,7 +1305,7 @@ function handleSSE(event) {
     setSendEnabled(true);
     setAbortVisible(false);
     setStatus("Error", "error");
-    const msg = props.error?.message || props.message || "Error desconocido de Jintia Chat";
+    const msg = props.error?.message || props.message || "Error desconocido";
     appendErrorMessage(msg);
   }
 }
@@ -1356,7 +1347,7 @@ async function triggerOpenCodeFailover(reason, statusOrError) {
   if (!next) {
     _busy = false;
     _turnSupervisor = null;
-    if (_assistantEl && _assistantRaw) finalizeAssistantBubble(_assistantEl, _assistantRaw);
+    settleAssistantBubble();
     hideThinkingBubble();
     setSendEnabled(true);
     setAbortVisible(false);
@@ -1405,7 +1396,7 @@ async function triggerOpenCodeFailover(reason, statusOrError) {
 async function recoverOpenCodeServer() {
   const supervisor = _turnSupervisor;
   if (!_course?.project_path) return;
-  appendRuntimeActivity("Jintia Chat dejó de responder. Reiniciando el motor…", "warning");
+  appendRuntimeActivity("El motor dejó de responder. Reiniciando…", "warning");
   setStatus("Reiniciando el motor…", "working");
   try {
     const info = await invoke("agent_restart_engine", { coursePath: _course.project_path });
@@ -1432,7 +1423,7 @@ async function recoverOpenCodeServer() {
       showThinkingBubble();
       setStatus(`Continuando con ${supervisor.currentModel?.name || "el modelo"}…`, "working");
     } else {
-      setStatus("Jintia Chat listo", "ready");
+      setStatus("Espacio de trabajo listo", "ready");
     }
   } catch (err) {
     providerLog("opencode", "failover.restart_error", { error: String(err) });
@@ -1442,7 +1433,7 @@ async function recoverOpenCodeServer() {
     setSendEnabled(true);
     setAbortVisible(false);
     setStatus("Error", "error");
-    appendErrorMessage("No se pudo recuperar Jintia Chat tras reiniciar el motor. Intenta de nuevo.");
+    appendErrorMessage("No se pudo recuperar el motor tras reiniciarlo. Intenta de nuevo.");
   }
 }
 
@@ -1636,7 +1627,7 @@ async function connectAndGreet(coursePath) {
 // ── Iniciar runtime OpenCode ───────────────────────────────────────────────
 async function startRuntime(coursePath) {
   providerLog("opencode", "runtime.start", { coursePath });
-  setStatus("Iniciando Jintia Chat…", "working");
+  setStatus("Iniciando el espacio de trabajo…", "working");
   const connectBtn = el("jc-btn-connect");
   if (connectBtn) connectBtn.disabled = true;
   try {
@@ -1650,7 +1641,7 @@ async function startRuntime(coursePath) {
       syncPanelLayout({ force: true });
       loadSessions(coursePath);    // sin await — paralelo
     }
-    setStatus(_runtimeReady ? "Jintia Chat listo" : "Offline", _runtimeReady ? "ready" : "error");
+    setStatus(_runtimeReady ? "Espacio de trabajo listo" : "Offline", _runtimeReady ? "ready" : "error");
     if (!_runtimeReady) {
       console.error("[jintia-chat] opencode_start_course no retornó ready:", info);
       if (connectBtn) connectBtn.disabled = false;
@@ -1702,7 +1693,7 @@ function updateProviderUI() {
     } else {
       // Para Codex, loadCodexModels() habilita el select en cuanto llega el catálogo real.
       modelSel.disabled = isCodex ? true : !_runtimeReady;
-      modelSel.title = isCodex ? "Modelo de Codex (ChatGPT)" : "Modelo de IA (Jintia Chat)";
+      modelSel.title = isCodex ? "Modelo de Codex (ChatGPT)" : "Modelo de IA";
     }
   }
   const effortField = el("jc-effort-field");
@@ -1712,9 +1703,11 @@ function updateProviderUI() {
     ? "Motor: Claude Code con tu sesión de Claude. Puede leer y editar archivos de la asignatura sin pedir confirmación por cada acción."
     : isCodex
       ? "Motor: Codex con tu sesión de ChatGPT"
-      : "Jintia Chat con motor OpenCode y Jintia Skill";
+      : "Motor automático (OpenCode + Jintia Skill)";
   const historySection = el("jc-history-section");
   if (historySection) historySection.hidden = isCodex || isClaude;
+  const engineSummary = el("jc-engine-summary");
+  if (engineSummary) engineSummary.textContent = isClaude ? "Claude Code" : isCodex ? "ChatGPT" : "Automático";
   syncPanelLayout({ force: true });
   _composerReady = isCodex || isClaude || _runtimeReady;
   updateComposerState();
@@ -1969,7 +1962,7 @@ async function connectCodexEagerly() {
         await ensureCodexListener();
       }
 
-      setStatus("ChatGPT listo", "ready");
+      setStatus("Espacio de trabajo listo", "ready");
       return true;
     } finally {
       setSendEnabled(true);
@@ -2035,7 +2028,7 @@ async function sendMessageViaCodex(text) {
   showThinkingBubble();
   _codexCommandOutput = new Map();
   _codexLegacyWarningShown = false;
-  setStatus("ChatGPT está pensando…", "working");
+  setStatus("Procesando solicitud…", "working");
   startCodexThinkingWatchdog();
 
   try {
@@ -2067,14 +2060,10 @@ async function ensureCodexListener() {
     if (params.threadId !== _codexThreadId) return;
     if (_codexTurnId && params.turnId !== _codexTurnId) return;
     clearCodexThinkingWatchdog();
-    hideThinkingBubble();
-    if (!_assistantEl) {
-      _assistantEl = createAssistantBubble();
-      _assistantRaw = "";
-    }
+    // El resultado se acumula en silencio y se revela completo al terminar
+    // el turno (ver turn.completed más abajo) — no token a token.
+    if (!_assistantRaw) updateThinkingActivity({ message: "Preparando el resultado…" });
     _assistantRaw += params.delta || "";
-    _assistantEl.textContent = _assistantRaw;
-    scrollFeed();
   });
   const completedUnlisten = await listen("codex:turn/completed", (event) => {
     console.log("[codex-js] evento turn.completed", event.payload);
@@ -2084,28 +2073,27 @@ async function ensureCodexListener() {
     if (_codexTurnId && turn.id && turn.id !== _codexTurnId) return;
 
     clearCodexThinkingWatchdog();
-    hideThinkingBubble();
     const failed = turn.status === "failed";
-    if (_assistantEl && _assistantRaw) {
-      finalizeAssistantBubble(_assistantEl, _assistantRaw);
-    } else if (failed) {
-      appendErrorMessage(turn.error?.message || "Codex no pudo completar esta respuesta.");
-    } else {
-      const text = (turn.items || [])
-        .filter(item => item.type === "agentMessage")
-        .map(item => item.text || "")
-        .join("\n")
-        .trim();
-      if (text) appendAssistantMessage(text);
+    const hadStreamedText = _assistantRaw.trim().length > 0;
+    settleAssistantBubble();
+    if (!hadStreamedText) {
+      if (failed) {
+        appendErrorMessage(turn.error?.message || "Codex no pudo completar esta respuesta.");
+      } else {
+        const text = (turn.items || [])
+          .filter(item => item.type === "agentMessage")
+          .map(item => item.text || "")
+          .join("\n")
+          .trim();
+        if (text) appendAssistantMessage(text);
+      }
     }
-    _assistantEl = null;
-    _assistantRaw = "";
     _codexCommandOutput.clear();
     _codexTurnId = null;
     _busy = false;
     setSendEnabled(true);
     setAbortVisible(false);
-    setStatus(failed ? "Error en Codex" : turn.status === "interrupted" ? "Respuesta detenida" : "ChatGPT listo", failed ? "error" : "ready");
+    setStatus(failed ? "No se pudo completar esta etapa" : turn.status === "interrupted" ? "Trabajo detenido" : "Espacio de trabajo listo", failed ? "error" : "ready");
 
     // Si el límite llegó a mitad de una conversación (no se detectó al
     // conectar), saltar a OpenCode ahora en vez de dejar el chat sin salida.
@@ -2245,11 +2233,11 @@ async function ensureCodexListener() {
     const message = params.error?.message || "Codex reportó un error.";
     if (params.willRetry) {
       toast(`Codex tuvo un problema y está reintentando: ${message}`, "warning", 6000);
-      setStatus("Reintentando…", "working");
+      setStatus("Restableciendo el proceso…", "working");
       return;
     }
     clearCodexThinkingWatchdog();
-    setStatus("Error en Codex", "error");
+    setStatus("No se pudo completar esta etapa", "error");
   });
 
   // El app-server empuja esto solo cada vez que cambia la cuota, sin que
@@ -2280,7 +2268,7 @@ async function respondToCodexApproval(event, {
   const { id, params } = event.payload || {};
   if (params?.threadId && params.threadId !== _codexThreadId) return;
   clearCodexThinkingWatchdog();
-  setStatus("Codex pide tu autorización…", "working");
+  setStatus("Autorización requerida…", "working");
   updateThinkingActivity({
     message: legacy ? "Codex solicita una herramienta heredada." : "Codex necesita tu autorización.",
     detail: legacy ? "Jintia recomienda denegar esta acción y continuar con Vivliostyle." : "Revisa el comando y la carpeta antes de decidir.",
@@ -2370,7 +2358,7 @@ async function connectClaudeEagerly() {
       if (!ok) return false;
       await ensureClaudeListener();
       providerLog("claude", "listeners.ready");
-      setStatus("Claude Code listo", "ready");
+      setStatus("Espacio de trabajo listo", "ready");
       return true;
     } finally {
       providerLog("claude", "connect.end", { ready: _composerReady });
@@ -2433,7 +2421,7 @@ async function sendMessageViaClaude(text) {
   }
 
   showThinkingBubble();
-  setStatus("Claude Code está pensando…", "working");
+  setStatus("Procesando solicitud…", "working");
   startClaudeThinkingWatchdog();
 
   _claudeRequestId = crypto.randomUUID();
@@ -2480,59 +2468,51 @@ async function ensureClaudeListener() {
       providerLog("claude", "event.delta", { requestId: payload.requestId, sessionId: payload.sessionId, textLength: payload.text?.length || 0 });
       if (payload.requestId !== _claudeRequestId) return;
       clearClaudeThinkingWatchdog();
-      hideThinkingBubble();
-      if (!_assistantEl) {
-        _assistantEl = createAssistantBubble();
-        _assistantRaw = "";
-      }
+      // El resultado se acumula en silencio y se revela completo al terminar
+      // el turno (ver onCompleted más abajo) — no token a token.
+      if (!_assistantRaw) updateThinkingActivity({ message: "Preparando el resultado…" });
       _assistantRaw += payload.text || "";
-      _assistantEl.textContent = _assistantRaw;
-      scrollFeed();
     },
     onRetry: (payload) => {
       providerLog("claude", "event.api_retry", payload);
       if (payload.requestId !== _claudeRequestId) return;
       toast("Claude Code tuvo un problema y está reintentando la solicitud.", "warning", 5000);
-      setStatus("Reintentando…", "working");
+      setStatus("Restableciendo el proceso…", "working");
     },
     onCompleted: (payload) => {
       providerLog("claude", "event.completed", { ...payload, result: payload.result?.slice?.(0, 300) });
       if (payload.requestId !== _claudeRequestId) return;
       clearClaudeThinkingWatchdog();
-      hideThinkingBubble();
       if (payload.sessionId) _claudeSessionId = payload.sessionId;
-      if (_assistantEl && _assistantRaw) {
-        finalizeAssistantBubble(_assistantEl, _assistantRaw);
-      } else if (!payload.success) {
-        appendErrorMessage(payload.result || "Claude Code no pudo completar esta respuesta.");
-      } else if (payload.result) {
-        appendAssistantMessage(payload.result);
+      const hadStreamedText = _assistantRaw.trim().length > 0;
+      settleAssistantBubble();
+      if (!hadStreamedText) {
+        if (!payload.success) {
+          appendErrorMessage(payload.result || "Claude Code no pudo completar esta respuesta.");
+        } else if (payload.result) {
+          appendAssistantMessage(payload.result);
+        }
       }
-      _assistantEl = null;
-      _assistantRaw = "";
       _claudeRequestId = null;
       _busy = false;
       setSendEnabled(true);
       setAbortVisible(false);
-      setStatus(payload.success ? "Claude Code listo" : "Error en Claude Code", payload.success ? "ready" : "error");
+      setStatus(payload.success ? "Espacio de trabajo listo" : "No se pudo completar esta etapa", payload.success ? "ready" : "error");
     },
     onError: (payload) => {
       providerLog("claude", "event.error", payload);
       if (payload.requestId !== _claudeRequestId) return;
       clearClaudeThinkingWatchdog();
-      hideThinkingBubble();
-      if (_assistantEl && _assistantRaw) {
-        finalizeAssistantBubble(_assistantEl, _assistantRaw);
-      } else {
+      const hadStreamedText = _assistantRaw.trim().length > 0;
+      settleAssistantBubble();
+      if (!hadStreamedText) {
         appendErrorMessage(payload.message || "Claude Code reportó un error.");
       }
-      _assistantEl = null;
-      _assistantRaw = "";
       _claudeRequestId = null;
       _busy = false;
       setSendEnabled(true);
       setAbortVisible(false);
-      setStatus("Error en Claude Code", "error");
+      setStatus("No se pudo completar esta etapa", "error");
     },
   });
 }
@@ -2596,7 +2576,7 @@ async function sendMessage() {
     startOpenCodeStallWatchdog();
     providerLog("opencode", "turn.accepted", { sessionId: _sessionId });
     showThinkingBubble();
-    setStatus("Jintia está pensando…", "working");
+    setStatus("Procesando solicitud…", "working");
   } catch (err) {
     providerLog("opencode", "turn.error", { error: String(err), sessionId: _sessionId });
     _turnSupervisor = null;
@@ -2696,39 +2676,39 @@ export function renderJintiaChat() {
               <button id="jc-toggle-sources" type="button" class="jc-touch-action inline-flex min-h-10 items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 text-xs font-bold text-teal-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600" aria-controls="jc-sources-panel" aria-expanded="false">${ic("book-open", 16)} <span id="jc-source-chip-label">Sin fuentes</span></button>
               <span id="jc-status-badge" role="status" aria-live="polite" aria-atomic="true" class="inline-flex min-h-8 items-center rounded-full border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">Desconectado</span>
               <button id="jc-btn-connect" class="${cx(ui.button.base, ui.button.secondary, ui.button.sm)}"><span>Conectar</span></button>
-              <button id="jc-btn-new-session" class="jc-touch-action ${cx(ui.button.base, ui.button.ghost, ui.button.sm)}" disabled>${ic("plus", 15)} Nueva conversación</button>
+              <button id="jc-btn-new-session" class="jc-touch-action ${cx(ui.button.base, ui.button.ghost, ui.button.sm)}" disabled>${ic("plus", 15)} Nuevo trabajo</button>
             </div>
           </div>
-          <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"><span id="jc-context-course" class="font-semibold text-slate-700"></span><span aria-hidden="true">/</span><span id="jc-context-week"></span><details class="ml-auto"><summary class="cursor-pointer font-semibold text-slate-600 hover:text-slate-900">Opciones avanzadas</summary><div class="absolute right-6 z-30 mt-2 w-72 space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-xl"><div><label for="jc-provider-select" class="mb-1 block text-xs font-semibold text-slate-700">Proveedor de IA</label><select id="jc-provider-select" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"><option value="opencode" ${_provider === "opencode" ? "selected" : ""}>OpenCode</option><option value="codex" ${_provider === "codex" ? "selected" : ""}>ChatGPT (Codex)</option><option value="claude" ${_provider === "claude" ? "selected" : ""}>Claude Code</option></select></div><div><label for="jc-model-select" class="mb-1 block text-xs font-semibold text-slate-700">Modelo</label><select id="jc-model-select" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs disabled:bg-slate-100"><option value="">Cargando modelo…</option></select></div><div id="jc-effort-field" hidden><label for="jc-effort-select" class="mb-1 block text-xs font-semibold text-slate-700">Esfuerzo de razonamiento</label><select id="jc-effort-select" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs disabled:bg-slate-100"><option value="">—</option></select></div><p id="jc-codex-usage" hidden class="text-xs font-semibold"></p><p id="jc-engine-detail" class="text-xs leading-relaxed text-slate-500"></p></div></details></div>
+          <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"><span id="jc-context-course" class="font-semibold text-slate-700"></span><span aria-hidden="true">/</span><span id="jc-context-week"></span><details class="ml-auto"><summary class="cursor-pointer font-semibold text-slate-600 hover:text-slate-900">Motor: <span id="jc-engine-summary">Automático</span></summary><div class="absolute right-6 z-30 mt-2 w-72 space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-xl"><div><label for="jc-provider-select" class="mb-1 block text-xs font-semibold text-slate-700">Motor de ejecución</label><select id="jc-provider-select" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs"><option value="opencode" ${_provider === "opencode" ? "selected" : ""}>Automático (recomendado)</option><option value="codex" ${_provider === "codex" ? "selected" : ""}>ChatGPT (avanzado)</option><option value="claude" ${_provider === "claude" ? "selected" : ""}>Claude Code (avanzado)</option></select></div><details class="jc-diagnostic-details border-t border-slate-100 pt-2"><summary class="cursor-pointer text-xs font-semibold text-slate-500">Detalle técnico</summary><div class="mt-2 space-y-3"><div><label for="jc-model-select" class="mb-1 block text-xs font-semibold text-slate-700">Modelo</label><select id="jc-model-select" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs disabled:bg-slate-100"><option value="">Cargando modelo…</option></select></div><div id="jc-effort-field" hidden><label for="jc-effort-select" class="mb-1 block text-xs font-semibold text-slate-700">Esfuerzo de razonamiento</label><select id="jc-effort-select" disabled class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs disabled:bg-slate-100"><option value="">—</option></select></div><p id="jc-codex-usage" hidden class="text-xs font-semibold"></p><p id="jc-engine-detail" class="text-xs leading-relaxed text-slate-500"></p></div></details></div></details></div>
         </header>
 
         <div id="jc-activity-feed" role="log" aria-live="polite" aria-relevant="additions text" aria-busy="false" class="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6">
           <div class="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center gap-5 py-10 text-center">
             <img src="/brand/jintia-mark.svg" alt="" class="h-14 w-14 rounded-2xl border border-teal-100 bg-white p-2 shadow-sm">
-            <div><h2 class="text-xl font-semibold text-slate-900" style="font-family: var(--font-display, 'Syne', sans-serif);">¿Qué quieres construir hoy?</h2><p class="mt-2 max-w-xl text-sm leading-relaxed text-slate-600">Jintia combina el contexto de tu asignatura, la semana activa y las fuentes conectadas.</p></div>
+            <div><h2 class="text-xl font-semibold text-slate-900" style="font-family: var(--font-display, 'Syne', sans-serif);">${escapeHtml([_course?.code, _course?.name].filter(Boolean).join(" · ") || "Selecciona una asignatura")}</h2><p class="mt-2 max-w-xl text-sm leading-relaxed text-slate-600">${escapeHtml(weekLabel())} · indica el trabajo o cambio que necesitas para esta semana.</p></div>
             <div class="grid w-full max-w-2xl gap-2 sm:grid-cols-2">
-              <button type="button" data-jc-starter="Resume los conceptos clave de esta semana usando las fuentes del curso." class="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:border-teal-300 hover:bg-teal-50"><span class="text-teal-800">Preguntar</span> · conceptos clave</button>
-              <button type="button" data-jc-starter="Propón una actividad práctica para esta semana." class="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:border-teal-300 hover:bg-teal-50"><span class="text-teal-800">Crear</span> · actividad práctica</button>
-              <button type="button" data-jc-starter="Revisa la guía activa y señala mejoras concretas." class="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:border-teal-300 hover:bg-teal-50"><span class="text-teal-800">Revisar</span> · guía activa</button>
-              <button type="button" data-jc-starter="Valida la guía activa y enumera los problemas que encuentres." class="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:border-teal-300 hover:bg-teal-50"><span class="text-teal-800">Validar</span> · consistencia</button>
+              <button type="button" data-jc-starter="Continúa o genera la guía semanal usando el sílabo y las fuentes conectadas." class="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:border-teal-300 hover:bg-teal-50">Continuar guía</button>
+              <button type="button" data-jc-starter="Revisa la guía activa y señala problemas pedagógicos concretos." class="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:border-teal-300 hover:bg-teal-50">Revisar contenido</button>
+              <button type="button" data-jc-starter="Diseña una actividad práctica alineada al resultado de aprendizaje de esta semana." class="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:border-teal-300 hover:bg-teal-50">Diseñar actividad</button>
+              <button type="button" data-jc-starter="Valida que la guía esté lista para publicarse: consistencia, evidencia y bibliografía." class="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-800 hover:border-teal-300 hover:bg-teal-50">Validar publicación</button>
             </div>
           </div>
         </div>
 
         <div class="shrink-0 border-t border-slate-200 bg-white px-4 py-4 sm:px-6">
-          <div class="mx-auto max-w-3xl"><label for="jc-input" class="mb-2 block text-xs font-bold text-slate-700">¿Qué quieres hacer con esta asignatura?</label><div class="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 shadow-sm transition focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/20"><textarea id="jc-input" rows="1" placeholder="Ejemplo: revisa la guía y propone tres mejoras" class="flex-1 resize-none bg-transparent text-sm leading-relaxed text-slate-900 placeholder-slate-400 focus:outline-none" style="max-height: 160px; overflow-y: auto;" disabled></textarea><div class="flex shrink-0 items-center gap-2"><button id="jc-btn-abort" class="jc-composer-action inline-flex min-h-10 items-center gap-2 rounded-lg border-0 bg-transparent px-3 text-xs font-bold text-red-700 hover:bg-red-50" aria-label="Detener respuesta" hidden>${ic("square", 14)} Detener</button><button id="jc-btn-send" class="jc-composer-action ${cx(ui.button.base, ui.button.primary)} min-h-10 min-w-10" aria-label="Enviar mensaje" disabled>${ic("send", 16)}</button></div></div><p class="mt-2 text-center text-[11px] leading-relaxed text-slate-500">Enter para enviar · Shift+Enter para nueva línea · Verifica las citas antes de usar el contenido</p></div>
+          <div class="mx-auto max-w-3xl"><label for="jc-input" class="mb-2 block text-xs font-bold text-slate-700">Indica el trabajo o cambio que necesitas</label><div class="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 shadow-sm transition focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/20"><textarea id="jc-input" rows="1" placeholder="Ej.: revisar la actividad evaluativa de la semana 3" class="flex-1 resize-none bg-transparent text-sm leading-relaxed text-slate-900 placeholder-slate-400 focus:outline-none" style="max-height: 160px; overflow-y: auto;" disabled></textarea><div class="flex shrink-0 items-center gap-2"><button id="jc-btn-abort" class="jc-composer-action inline-flex min-h-10 items-center gap-2 rounded-lg border-0 bg-transparent px-3 text-xs font-bold text-red-700 hover:bg-red-50" aria-label="Detener trabajo" hidden>${ic("square", 14)} Detener</button><button id="jc-btn-send" class="jc-composer-action ${cx(ui.button.base, ui.button.primary)} min-h-10 min-w-10" aria-label="Iniciar trabajo" disabled>${ic("send", 16)}</button></div></div><p class="mt-2 text-center text-[11px] leading-relaxed text-slate-500">Enter para iniciar · Shift+Enter para nueva línea · Verifica las citas antes de usar el contenido</p></div>
           </div>
       </div>
 
-      <aside id="jc-sources-panel" aria-label="Fuentes, enlaces e historial" class="jc-sources-panel hidden w-80 shrink-0 flex-col border-l border-slate-200 bg-slate-50 xl:flex">
-        <div class="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3"><div><h2 class="text-sm font-bold text-slate-900">Contexto</h2><p class="mt-0.5 text-[10px] text-slate-500">Fuentes y conversaciones</p></div><button id="jc-close-sources" type="button" class="jc-icon-button grid place-items-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 xl:hidden" aria-label="Cerrar contexto">${ic("x", 18)}</button></div>
+      <aside id="jc-sources-panel" aria-label="Recursos: fuentes, documentos e historial" class="jc-sources-panel hidden w-80 shrink-0 flex-col border-l border-slate-200 bg-slate-50 xl:flex">
+        <div class="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3"><div><h2 class="text-sm font-bold text-slate-900">Recursos</h2><p class="mt-0.5 text-[10px] text-slate-500">Fuentes y documentos</p></div><button id="jc-close-sources" type="button" class="jc-icon-button grid place-items-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 xl:hidden" aria-label="Cerrar recursos">${ic("x", 18)}</button></div>
         <div class="min-h-0 flex-1 overflow-y-auto">
           <div id="jc-sources-content" class="space-y-4 p-4"></div>
           <section id="jc-history-section" class="border-t border-slate-200 bg-white px-4 py-4" aria-labelledby="jc-history-title">
-            <div class="mb-3 flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-teal-50 text-teal-800" aria-hidden="true">${ic("route", 16)}</span><div><h3 id="jc-history-title" class="text-xs font-bold uppercase tracking-wider text-slate-700">Conversaciones</h3><p class="text-[10px] text-slate-500">Historial de esta asignatura</p></div></div>
-            <label for="jc-history-search" class="sr-only">Buscar conversación</label>
-            <div class="mb-2 flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/20">${ic("search", 14)}<input id="jc-history-search" type="search" placeholder="Buscar conversación" class="min-h-10 min-w-0 flex-1 border-0 bg-transparent py-2 text-xs text-slate-900 placeholder-slate-400 outline-none"></div>
-            <div id="jc-sessions-list" class="flex flex-col gap-0.5"><div class="px-3 py-4 text-xs leading-relaxed text-slate-500">Conecta Jintia Chat para ver el historial.</div></div>
+            <div class="mb-3 flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-teal-50 text-teal-800" aria-hidden="true">${ic("route", 16)}</span><div><h3 id="jc-history-title" class="text-xs font-bold uppercase tracking-wider text-slate-700">Historial de trabajo</h3><p class="text-[10px] text-slate-500">Trabajos de esta asignatura</p></div></div>
+            <label for="jc-history-search" class="sr-only">Buscar en el historial</label>
+            <div class="mb-2 flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/20">${ic("search", 14)}<input id="jc-history-search" type="search" placeholder="Buscar en el historial" class="min-h-10 min-w-0 flex-1 border-0 bg-transparent py-2 text-xs text-slate-900 placeholder-slate-400 outline-none"></div>
+            <div id="jc-sessions-list" class="flex flex-col gap-0.5"><div class="px-3 py-4 text-xs leading-relaxed text-slate-500">Conecta el espacio de trabajo para ver el historial.</div></div>
           </section>
         </div>
       </aside>
@@ -2745,8 +2725,6 @@ export function renderJintiaChat() {
   if (weekSelect) weekSelect.value = _selectedWeek;
 
   bindChatEvents();
-  const jintiaChatOption = el("jc-provider-select")?.querySelector('option[value="opencode"]');
-  if (jintiaChatOption) jintiaChatOption.textContent = "Jintia Chat";
   updateContextSummary();
   renderSourcesPanel();
   updateProviderUI();
@@ -2792,11 +2770,11 @@ function resetConversation({ announce = false } = {}) {
     setStatus("Conectando con Claude Code…", "working");
   } else {
     setSendEnabled(_runtimeReady);
-    setStatus(_runtimeReady ? "Jintia Chat listo" : "Desconectado", _runtimeReady ? "ready" : "neutral");
+    setStatus(_runtimeReady ? "Espacio de trabajo listo" : "Desconectado", _runtimeReady ? "ready" : "neutral");
   }
-  if (_course) appendGreetingMessage(`Nueva conversación para **${_course.name || _course.code || "la asignatura"}** en **${weekLabel()}**. ¿Qué quieres hacer?`);
+  if (_course) appendGreetingMessage(`Nuevo trabajo para **${_course.name || _course.code || "la asignatura"}** en **${weekLabel()}**. ¿Qué quieres hacer?`);
   renderSourcesPanel();
-  if (announce) toast("Nueva conversación iniciada", "success", 2000);
+  if (announce) toast("Nuevo trabajo iniciado", "success", 2000);
   el("jc-input")?.focus();
 }
 
@@ -2980,19 +2958,15 @@ function bindChatEvents() {
         clearOpenCodeStallWatchdog();
       }
       // Renderizar lo que haya llegado hasta el momento
-      if (_assistantEl && _assistantRaw) {
-        finalizeAssistantBubble(_assistantEl, _assistantRaw);
-      }
+      settleAssistantBubble();
       hideThinkingBubble();
       clearClaudeThinkingWatchdog();
-      _assistantEl     = null;
-      _assistantRaw    = "";
   _currentPartType = null;
   _currentPartId   = null;
       _busy = false;
       _codexTurnId = null;
       _claudeRequestId = null;
-      setStatus("Respuesta detenida", "ready");
+      setStatus("Trabajo detenido", "ready");
       setSendEnabled(true);
       setAbortVisible(false);
     } catch (err) {
