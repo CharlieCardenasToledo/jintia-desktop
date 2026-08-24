@@ -6,6 +6,7 @@ import { navigate } from "../router.js";
 import { ui, cx, projectColorMap } from "../uiClasses.js";
 import { ic, refreshIcons } from "../icons.js";
 import { jintiaLoaderPlaceholder, mountAllJintiaLoaders } from "../components/JintiaLoader.js";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 // Project colors are now centralized in styles.css as CSS custom properties.
 // Reference them via projectColorMap from uiClasses for maintenance.
@@ -87,6 +88,10 @@ function shellMarkup() {
       </section>
 
       <section class="min-h-0 flex-1" id="pdf-results" aria-live="polite">${resultsMarkup()}</section>
+    </div>
+    <div class="fixed inset-0 z-[5000] hidden items-center justify-center bg-slate-900/45 p-3 sm:p-6" id="pdf-preview-modal">
+      <div class="flex h-[calc(100vh-24px)] w-full max-w-[900px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:h-[calc(100vh-48px)]"
+        id="pdf-preview-box" role="dialog" aria-modal="true" aria-labelledby="pdf-preview-title"></div>
     </div>`;
 }
 
@@ -163,6 +168,9 @@ function pdfRow(pdf) {
         </div>
       </div>
       <div class="flex shrink-0 gap-2">
+        <button type="button" class="${cx(ui.button.base, ui.button.secondary, "min-h-11 flex-1 sm:flex-none")}" data-pdf-action="preview" data-pdf-path="${escapeHtml(pdf.path)}">
+          ${ic("eye", 17)}Vista previa
+        </button>
         <button type="button" class="${cx(ui.button.base, ui.button.primary, "min-h-11 flex-1 sm:flex-none")}" data-pdf-action="open" data-pdf-path="${escapeHtml(pdf.path)}">
           ${ic("external-link", 17)}Abrir
         </button>
@@ -243,7 +251,51 @@ function bindPageEvents() {
     updateResults();
   });
   document.getElementById("pdf-refresh")?.addEventListener("click", refreshPdfs);
+  const previewOverlay = document.getElementById("pdf-preview-modal");
+  previewOverlay?.addEventListener("click", event => {
+    if (event.target === previewOverlay) closePdfPreview();
+  });
+  previewOverlay?.addEventListener("keydown", event => {
+    if (event.key === "Escape") closePdfPreview();
+  });
   bindResultEvents();
+}
+
+// ── Vista previa embebida (iframe con el visor de PDF de WebView2) ─────────
+// No usa el visor nativo del SO (openGeneratedPdf/tauri-plugin-opener): el
+// pedido explícito era poder verlo "dentro" de Jintia, sin salir de la app.
+let _previewOpener = null;
+
+function openPdfPreview(pdf, opener) {
+  if (!pdf?.path) return;
+  _previewOpener = opener || document.activeElement;
+  const overlay = document.getElementById("pdf-preview-modal");
+  const box = document.getElementById("pdf-preview-box");
+  if (!overlay || !box) return;
+  box.innerHTML = `
+    <div class="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+      <div class="min-w-0">
+        <h2 id="pdf-preview-title" class="truncate text-base font-bold text-app-text" title="${escapeHtml(pdf.name)}">${escapeHtml(pdf.name)}</h2>
+        <p class="mt-1 truncate text-xs text-app-muted" title="${escapeHtml(pdf.relativePath)}">${escapeHtml(pdf.relativePath)}</p>
+      </div>
+      <button type="button" class="${cx(ui.button.base, ui.button.ghost, "h-11 w-11 shrink-0 p-0")}" id="pdf-preview-close" aria-label="Cerrar vista previa">${ic("x", 20)}</button>
+    </div>
+    <iframe src="${escapeHtml(convertFileSrc(pdf.path))}" class="min-h-0 w-full flex-1" title="Vista previa de ${escapeHtml(pdf.name)}"></iframe>`;
+  refreshIcons();
+  document.getElementById("pdf-preview-close")?.addEventListener("click", closePdfPreview);
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+  queueMicrotask(() => document.getElementById("pdf-preview-close")?.focus());
+}
+
+function closePdfPreview() {
+  const overlay = document.getElementById("pdf-preview-modal");
+  const box = document.getElementById("pdf-preview-box");
+  overlay?.classList.add("hidden");
+  overlay?.classList.remove("flex");
+  if (box) box.innerHTML = ""; // libera el iframe en vez de dejarlo cargado en segundo plano
+  _previewOpener?.focus?.();
+  _previewOpener = null;
 }
 
 function bindResultEvents() {
@@ -253,6 +305,10 @@ function bindResultEvents() {
     button.addEventListener("click", async () => {
       const path = button.dataset.pdfPath;
       const action = button.dataset.pdfAction;
+      if (action === "preview") {
+        openPdfPreview(_pdfs.find(pdf => pdf.path === path), button);
+        return;
+      }
       button.disabled = true;
       try {
         const result = action === "open"
